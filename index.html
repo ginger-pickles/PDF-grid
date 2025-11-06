@@ -20,86 +20,562 @@
     <script type="text/babel">
         const { useState, useRef } = React;
 
+        // ============================================================================
+        // CONFIGURATION
+        // ============================================================================
+
+        const CONFIG = {
+          // Auto-load
+          AUTO_LOAD_PDF: 'demo.pdf', // Set to null to disable auto-load, or filename to try loading
+
+          // CORS Proxy for external PDFs
+          // Use when loading PDFs from servers that don't send CORS headers
+          // Options: null (disabled), 'https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='
+          CORS_PROXY: 'https://corsproxy.io/?',
+
+          // PDF Rendering
+          PDF_RENDER_SCALE: 2.0,
+
+          // Grid Layout
+          GRID_SPACING_RATIO: 0.05, // Spacing as ratio of page width
+
+          // Tile System
+          DEFAULT_TILE_SIZE: 512,
+          MIN_TILE_SIZE: 512,
+          TILE_SIZE_MULTIPLIER: 256,
+          TILE_JPEG_QUALITY: 0.85,
+
+          // Caching
+          MAX_CACHE_SIZE: 300,
+
+          // Performance
+          RENDER_BATCH_SIZE: 5, // Yield to browser every N pages
+          TILE_REFRESH_INTERVAL: 3, // Refresh tiles every N pages during loading
+
+          // OpenSeadragon
+          OSD_MIN_ZOOM: 0.1,
+          OSD_MAX_ZOOM: 10,
+          OSD_VISIBILITY_RATIO: 0.2,
+
+          // UI
+          BACKGROUND_COLOR: '#1f2937'
+        };
+
+        // ============================================================================
+        // PDF UTILITIES MODULE
+        // ============================================================================
+
+        const PDFUtils = {
+          /**
+           * Initialize PDF.js worker
+           */
+          initWorker() {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          },
+
+          /**
+           * Load PDF from file
+           */
+          async loadPDFFromFile(file) {
+            if (!file || file.type !== 'application/pdf') {
+              throw new Error('Invalid file type. Please provide a PDF file.');
+            }
+
+            const arrayBuffer = await file.arrayBuffer();
+            return await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          },
+
+          /**
+           * Load PDF from URL
+           * Let PDF.js handle the fetch directly for better CORS handling
+           */
+          async loadPDFFromURL(url) {
+            let finalUrl = url;
+
+            // Apply CORS proxy if configured and URL is external
+            if (CONFIG.CORS_PROXY && this._isExternalURL(url)) {
+              finalUrl = CONFIG.CORS_PROXY + encodeURIComponent(url);
+              console.log(`Using CORS proxy: ${finalUrl}`);
+            }
+
+            return await pdfjsLib.getDocument({ url: finalUrl }).promise;
+          },
+
+          /**
+           * Check if URL is external (cross-origin)
+           */
+          _isExternalURL(url) {
+            // Relative URLs are not external
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              return false;
+            }
+
+            try {
+              const urlObj = new URL(url);
+              return urlObj.origin !== window.location.origin;
+            } catch (e) {
+              return false;
+            }
+          },
+
+          /**
+           * Render a single PDF page to canvas
+           */
+          async renderPageToCanvas(page, scale = CONFIG.PDF_RENDER_SCALE) {
+            const viewport = page.getViewport({ scale });
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            await page.render({
+              canvasContext: context,
+              viewport: viewport
+            }).promise;
+
+            return canvas;
+          },
+
+          /**
+           * Render all pages of a PDF document
+           */
+          async renderAllPages(pdf, onProgress) {
+            const pageCanvases = [];
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const canvas = await this.renderPageToCanvas(page);
+              pageCanvases.push(canvas);
+
+              if (onProgress) {
+                onProgress(i, pdf.numPages);
+              }
+
+              // Yield to browser occasionally
+              if (i % CONFIG.RENDER_BATCH_SIZE === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+            }
+
+            return pageCanvases;
+          }
+        };
+
+        // ============================================================================
+        // GRID PATTERN MODULE
+        // ============================================================================
+
+        const GridPattern = {
+          /**
+           * Generate rotating grid pattern
+           * For N pages, creates N×N grid where each row rotates the sequence
+           */
+          generate(totalPages, cols) {
+            const pattern = [];
+            const rows = totalPages; // N×N grid
+
+            for (let row = 0; row < rows; row++) {
+              const rowPages = [];
+              for (let col = 0; col < cols; col++) {
+                // Rotating pattern: each row starts at (row) offset from page 1
+                const pageIndex = ((row + col) % totalPages);
+                rowPages.push(pageIndex + 1); // Pages are 1-indexed
+              }
+              pattern.push(rowPages);
+            }
+
+            return pattern;
+          },
+
+          /**
+           * Calculate grid dimensions
+           */
+          calculateDimensions(numPages, pageWidth, pageHeight) {
+            const gridSize = numPages;
+            const spacing = Math.floor(pageWidth * CONFIG.GRID_SPACING_RATIO);
+
+            const totalWidth = gridSize * pageWidth + (gridSize - 1) * spacing;
+            const totalHeight = gridSize * pageHeight + (gridSize - 1) * spacing;
+
+            return {
+              gridSize,
+              spacing,
+              totalWidth,
+              totalHeight,
+              pageWidth,
+              pageHeight
+            };
+          }
+        };
+
+        // ============================================================================
+        // TILE CACHE MODULE
+        // ============================================================================
+
+        /**
+         * Simple FIFO cache optimized for static content (PDF tiles)
+         * Uses single Map lookup per get() for maximum performance
+         */
+        class TileCache {
+          constructor(maxSize = CONFIG.MAX_CACHE_SIZE) {
+            this.cache = new Map();
+            this.maxSize = maxSize;
+          }
+
+          get(key) {
+            // Single Map lookup - no reorganization needed
+            return this.cache.get(key) || null;
+          }
+
+          set(key, value) {
+            // Only evict if cache is full and key doesn't exist
+            if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+              // Remove oldest entry (first in Map)
+              const firstKey = this.cache.keys().next().value;
+              this.cache.delete(firstKey);
+            }
+            this.cache.set(key, value);
+          }
+
+          has(key) {
+            return this.cache.has(key);
+          }
+
+          size() {
+            return this.cache.size;
+          }
+
+          clear() {
+            this.cache.clear();
+          }
+        }
+
+        // ============================================================================
+        // TILE SOURCE MODULE
+        // ============================================================================
+
+        class CustomTileSource {
+          constructor(gridDims, pattern, pageCanvases, numPages) {
+            this.gridDims = gridDims;
+            this.pattern = pattern;
+            this.pageCanvases = pageCanvases;
+            this.numPages = numPages;
+            this.cache = new TileCache();
+
+            // Calculate tile parameters
+            this.tileSize = Math.max(
+              CONFIG.MIN_TILE_SIZE,
+              Math.ceil(Math.max(gridDims.pageWidth, gridDims.pageHeight) / CONFIG.TILE_SIZE_MULTIPLIER) * CONFIG.TILE_SIZE_MULTIPLIER
+            );
+
+            const maxDimension = Math.max(gridDims.totalWidth, gridDims.totalHeight);
+            this.maxLevel = Math.ceil(Math.log2(maxDimension / this.tileSize));
+
+            // Create reusable tile canvas
+            this.tileCanvas = document.createElement('canvas');
+            this.tileCanvas.width = this.tileSize;
+            this.tileCanvas.height = this.tileSize;
+            this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
+
+            console.log(`Tile size: ${this.tileSize}, Max level: ${this.maxLevel}`);
+          }
+
+          /**
+           * Get OpenSeadragon tile source configuration
+           */
+          getOSDConfig() {
+            return {
+              height: this.gridDims.totalHeight,
+              width: this.gridDims.totalWidth,
+              tileSize: this.tileSize,
+              minLevel: 0,
+              maxLevel: this.maxLevel,
+              getTileUrl: this.generateTile.bind(this)
+            };
+          }
+
+          /**
+           * Generate a tile at specified level and coordinates
+           */
+          generateTile(level, x, y) {
+            const key = `${level}_${x}_${y}`;
+
+            // Only cache if all pages are loaded
+            const allPagesLoaded = this.pageCanvases.length >= this.numPages;
+
+            // Check cache (single lookup, no redundant has() call)
+            if (allPagesLoaded) {
+              const cached = this.cache.get(key);
+              if (cached) {
+                return cached;
+              }
+            }
+
+            // Generate tile
+            const scale = Math.pow(2, level - this.maxLevel);
+            const tileUrl = this._renderTile(level, x, y, scale, key);
+
+            // Cache if all pages loaded
+            if (allPagesLoaded) {
+              this.cache.set(key, tileUrl);
+            }
+
+            return tileUrl;
+          }
+
+          /**
+           * Render tile content
+           */
+          _renderTile(level, x, y, scale, key) {
+            const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+
+            // Calculate tile boundaries in full-resolution grid coordinates
+            const tileLeft = x * this.tileSize / scale;
+            const tileTop = y * this.tileSize / scale;
+            const tileRight = Math.min(tileLeft + this.tileSize / scale, totalWidth);
+            const tileBottom = Math.min(tileTop + this.tileSize / scale, totalHeight);
+
+            // Debug first few tiles
+            if (this.cache.size() < 3) {
+              console.log(`\nGenerating tile ${key}:`);
+              console.log(`  Bounds: (${tileLeft.toFixed(0)}, ${tileTop.toFixed(0)}) to (${tileRight.toFixed(0)}, ${tileBottom.toFixed(0)})`);
+              console.log(`  Scale: ${scale.toFixed(4)}, Level: ${level}`);
+            }
+
+            // Clear tile with background color
+            this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
+            this.tileCtx.fillRect(0, 0, this.tileSize, this.tileSize);
+
+            let pagesDrawn = 0;
+
+            // Draw portions of pages that intersect this tile
+            for (let row = 0; row < gridSize; row++) {
+              for (let col = 0; col < gridSize; col++) {
+                if (this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key)) {
+                  pagesDrawn++;
+                }
+              }
+            }
+
+            if (this.cache.size() < 5) {
+              console.log(`  Drew ${pagesDrawn} page(s) in tile ${key}`);
+            }
+
+            // Convert to data URL
+            return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+          }
+
+          /**
+           * Draw page intersection with tile
+           */
+          _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey) {
+            const { pageWidth, pageHeight, spacing } = this.gridDims;
+
+            // Calculate page position in grid
+            const pageLeft = col * (pageWidth + spacing);
+            const pageTop = row * (pageHeight + spacing);
+            const pageRight = pageLeft + pageWidth;
+            const pageBottom = pageTop + pageHeight;
+
+            // Check intersection
+            if (pageRight <= tileLeft || pageLeft >= tileRight ||
+                pageBottom <= tileTop || pageTop >= tileBottom) {
+              return false;
+            }
+
+            // Get page canvas
+            const pageNum = this.pattern[row][col];
+            const pageCanvas = this.pageCanvases[pageNum - 1];
+
+            if (this.cache.size() < 3) {
+              console.log(`  Grid(${row},${col}): Page ${pageNum} at (${pageLeft.toFixed(0)},${pageTop.toFixed(0)}) - ${pageCanvas ? 'LOADED' : 'not loaded'}`);
+            }
+
+            if (!pageCanvas) {
+              return false;
+            }
+
+            // Calculate intersection rectangle
+            const intersectLeft = Math.max(tileLeft, pageLeft);
+            const intersectTop = Math.max(tileTop, pageTop);
+            const intersectRight = Math.min(tileRight, pageRight);
+            const intersectBottom = Math.min(tileBottom, pageBottom);
+
+            // Source coordinates (within the page)
+            const srcX = intersectLeft - pageLeft;
+            const srcY = intersectTop - pageTop;
+            const srcW = intersectRight - intersectLeft;
+            const srcH = intersectBottom - intersectTop;
+
+            // Destination coordinates (within the tile)
+            const destX = (intersectLeft - tileLeft) * scale;
+            const destY = (intersectTop - tileTop) * scale;
+            const destW = srcW * scale;
+            const destH = srcH * scale;
+
+            // Draw
+            this.tileCtx.drawImage(
+              pageCanvas,
+              srcX, srcY, srcW, srcH,
+              destX, destY, destW, destH
+            );
+
+            return true;
+          }
+        }
+
+        // ============================================================================
+        // OPENSEADRAGON MANAGER MODULE
+        // ============================================================================
+
+        const OSDManager = {
+          /**
+           * Initialize OpenSeadragon viewer
+           */
+          initialize(tileSource, pageWidth, pageHeight) {
+            const viewer = OpenSeadragon({
+              id: 'openseadragon-viewer',
+              prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
+              tileSources: tileSource.getOSDConfig(),
+              showNavigator: true,
+              navigatorPosition: 'BOTTOM_RIGHT',
+              showRotationControl: true,
+              minZoomLevel: CONFIG.OSD_MIN_ZOOM,
+              maxZoomLevel: CONFIG.OSD_MAX_ZOOM,
+              visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
+              constrainDuringPan: false,
+              homeFillsViewer: false,
+              immediateRender: true,
+              preload: true
+            });
+
+            // Set initial view to first page
+            viewer.addHandler('open', function() {
+              const viewportRect = viewer.viewport.imageToViewportRectangle(
+                0, 0, pageWidth, pageHeight
+              );
+              viewer.viewport.fitBounds(viewportRect, true);
+            });
+
+            return viewer;
+          }
+        };
+
+        // ============================================================================
+        // MAIN COMPONENT
+        // ============================================================================
+
         const PDFGridViewer = () => {
           const [pdfFile, setPdfFile] = useState(null);
           const [numPages, setNumPages] = useState(0);
           const [isLoading, setIsLoading] = useState(false);
           const [loadingStatus, setLoadingStatus] = useState('');
           const [pagesLoaded, setPagesLoaded] = useState(0);
+          const [urlInput, setUrlInput] = useState('');
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
-          const pageCanvasesRef = useRef([]); // Store individual page canvases
-          const pdfDocRef = useRef(null); // Store PDF document
-          const tileCacheRef = useRef(null); // Store tile cache reference
+          const pageCanvasesRef = useRef([]);
+          const pdfDocRef = useRef(null);
+          const tileSourceRef = useRef(null);
 
-          // Set up PDF.js worker
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          // Initialize PDF.js worker on mount
+          React.useEffect(() => {
+            PDFUtils.initWorker();
+          }, []);
 
-          // Generate the rotating grid pattern
-          const generateGridPattern = (totalPages, cols) => {
-            const pattern = [];
-            const rows = totalPages; // For N pages, we want N rows to make N×N grid
-            
-            for (let row = 0; row < rows; row++) {
-              const rowPages = [];
-              for (let col = 0; col < cols; col++) {
-                // Rotating pattern: each row starts at (row) offset from page 1
-                const pageIndex = ((row + col) % totalPages);
-                rowPages.push(pageIndex + 1); // Pages are 1-indexed for display
+          // Auto-load PDF on mount (from query parameter or config)
+          React.useEffect(() => {
+            const autoLoadPDF = async () => {
+              // Check for URL query parameter first
+              const urlParams = new URLSearchParams(window.location.search);
+              const urlParam = urlParams.get('url');
+
+              if (urlParam) {
+                try {
+                  console.log(`Loading PDF from query parameter: ${urlParam}`);
+                  await loadPDFFromURL(urlParam);
+                  return;
+                } catch (error) {
+                  console.error(`Failed to load PDF from URL parameter: ${error.message}`);
+                  alert(`Failed to load PDF from URL: ${error.message}`);
+                  return;
+                }
               }
-              pattern.push(rowPages);
+
+              // Fall back to config auto-load
+              if (!CONFIG.AUTO_LOAD_PDF) return;
+
+              try {
+                console.log(`Attempting to auto-load: ${CONFIG.AUTO_LOAD_PDF}`);
+                await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF);
+              } catch (error) {
+                console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
+                // Silently fail - user can upload manually
+              }
+            };
+
+            autoLoadPDF();
+          }, []);
+
+          /**
+           * Common PDF loading logic for both file upload and URL loading
+           */
+          const loadPDF = async (pdf, filename = 'PDF') => {
+            setNumPages(pdf.numPages);
+            pdfDocRef.current = pdf;
+
+            console.log(`[v1.4] Loaded ${filename} with ${pdf.numPages} pages`);
+
+            // Render all pages
+            setLoadingStatus('Rendering all pages...');
+            const pageCanvases = await PDFUtils.renderAllPages(pdf, (current, total) => {
+              setPagesLoaded(current);
+              setLoadingStatus(`Rendering page ${current}/${total}...`);
+            });
+
+            pageCanvasesRef.current = pageCanvases;
+
+            const pageWidth = pageCanvases[0].width;
+            const pageHeight = pageCanvases[0].height;
+
+            console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
+
+            // Initialize viewer
+            setLoadingStatus('Initializing viewer...');
+            initializeViewer(pdf.numPages, pageWidth, pageHeight);
+
+            setLoadingStatus('');
+            setIsLoading(false);
+          };
+
+          const loadPDFFromURL = async (url) => {
+            setIsLoading(true);
+            setLoadingStatus('Loading PDF...');
+            setPdfFile({ name: url }); // Store URL as "file" for display
+
+            try {
+              const pdf = await PDFUtils.loadPDFFromURL(url);
+              await loadPDF(pdf, url);
+            } catch (error) {
+              console.error('Error loading PDF from URL:', error);
+              setIsLoading(false);
+              throw error; // Re-throw for auto-load handler
             }
-            
-            return pattern;
           };
 
           const handleFileUpload = async (event) => {
             const file = event.target.files[0];
-            if (!file || file.type !== 'application/pdf') {
-              alert('Please upload a PDF file');
-              return;
-            }
+            if (!file) return;
 
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile(file);
 
             try {
-              const arrayBuffer = await file.arrayBuffer();
-              const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-              setNumPages(pdf.numPages);
-              pdfDocRef.current = pdf;
-
-              console.log(`[v1.3.0] Loaded PDF with ${pdf.numPages} pages`);
-              
-              // Render ALL pages before initializing the viewer
-              setLoadingStatus('Rendering all pages...');
-              const pageCanvases = [];
-              
-              for (let i = 1; i <= pdf.numPages; i++) {
-                const pageCanvas = await renderPage(pdf, i);
-                pageCanvases.push(pageCanvas);
-                setPagesLoaded(i);
-                setLoadingStatus(`Rendering page ${i}/${pdf.numPages}...`);
-                
-                // Yield to browser occasionally
-                if (i % 5 === 0) {
-                  await new Promise(resolve => setTimeout(resolve, 0));
-                }
-              }
-              
-              pageCanvasesRef.current = pageCanvases;
-              
-              const pageWidth = pageCanvases[0].width;
-              const pageHeight = pageCanvases[0].height;
-              
-              console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
-              
-              // Now initialize viewer with all pages ready
-              setLoadingStatus('');
-              setIsLoading(false);
-              initializeViewer(pdf.numPages, pageWidth, pageHeight);
-              
+              const pdf = await PDFUtils.loadPDFFromFile(file);
+              await loadPDF(pdf, file.name);
             } catch (error) {
               console.error('Error loading PDF:', error);
               alert('Error loading PDF: ' + error.message);
@@ -107,72 +583,25 @@
             }
           };
 
-          // Render a single PDF page to canvas
-          const renderPage = async (pdf, pageNum) => {
-            const page = await pdf.getPage(pageNum);
-            const scale = 2.0;
-            const viewport = page.getViewport({ scale });
-            
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            
-            await page.render({
-              canvasContext: context,
-              viewport: viewport
-            }).promise;
-            
-            return canvas;
+          const handleUrlLoad = async () => {
+            const url = urlInput.trim();
+            if (!url) {
+              alert('Please enter a URL');
+              return;
+            }
+
+            try {
+              await loadPDFFromURL(url);
+              setUrlInput(''); // Clear input on success
+            } catch (error) {
+              alert('Error loading PDF from URL: ' + error.message);
+            }
           };
 
-          // Render remaining pages in background
-          const renderRemainingPages = async (pdf, pageWidth, pageHeight) => {
-            console.log('Starting background page rendering...');
-            
-            for (let i = 2; i <= pdf.numPages; i++) {
-              const pageCanvas = await renderPage(pdf, i);
-              pageCanvasesRef.current.push(pageCanvas);
-              setPagesLoaded(i);
-              
-              // Every 3 pages, force complete tile regeneration
-              if (i % 3 === 0 || i === pdf.numPages) {
-                console.log(`Refreshing tiles after loading page ${i}...`);
-                
-                if (osdViewerRef.current) {
-                  try {
-                    // Get the tiledImage
-                    const tiledImage = osdViewerRef.current.world.getItemAt(0);
-                    
-                    // Force OpenSeadragon to clear ALL tiles and re-request them
-                    // This is the nuclear option - completely reset the tiledImage
-                    tiledImage._resetTiles();
-                    
-                    // Mark that we need to draw
-                    tiledImage._needsDraw = true;
-                    
-                    // Force immediate update
-                    osdViewerRef.current.forceRedraw();
-                    
-                    console.log(`  Reset all tiles in OpenSeadragon`);
-                  } catch (error) {
-                    console.error('Error refreshing tiles:', error);
-                  }
-                }
-              }
-              
-              // Log progress every 10 pages
-              if (i % 10 === 0) {
-                console.log(`Rendered ${i}/${pdf.numPages} pages`);
-              }
-              
-              // Yield to browser occasionally
-              if (i % 5 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
+          const handleUrlKeyPress = (event) => {
+            if (event.key === 'Enter') {
+              handleUrlLoad();
             }
-            
-            console.log(`All ${pdf.numPages} pages rendered!`);
           };
 
           const initializeViewer = (numPages, pageWidth, pageHeight) => {
@@ -187,193 +616,35 @@
               return;
             }
 
-            const gridSize = numPages;
-            const pattern = generateGridPattern(numPages, gridSize);
-            const spacing = Math.floor(pageWidth * 0.05);
+            // Generate grid pattern and dimensions
+            const pattern = GridPattern.generate(numPages, numPages);
+            const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight);
 
-            // Calculate total grid dimensions
-            const totalWidth = gridSize * pageWidth + (gridSize - 1) * spacing;
-            const totalHeight = gridSize * pageHeight + (gridSize - 1) * spacing;
-            
-            console.log(`Page: ${pageWidth}x${pageHeight}, Spacing: ${spacing}`);
-            console.log(`Grid: ${gridSize}×${gridSize}, Total: ${totalWidth}x${totalHeight}`);
-            console.log(`Full pattern:`, pattern);
-            
-            // Debug: Print out where each page SHOULD appear
+            console.log(`Page: ${pageWidth}x${pageHeight}, Spacing: ${gridDims.spacing}`);
+            console.log(`Grid: ${gridDims.gridSize}×${gridDims.gridSize}, Total: ${gridDims.totalWidth}x${gridDims.totalHeight}`);
+
+            // Debug: Print first few page positions
             console.log('Expected page positions in grid:');
-            for (let row = 0; row < Math.min(3, gridSize); row++) {
-              for (let col = 0; col < Math.min(3, gridSize); col++) {
+            for (let row = 0; row < Math.min(3, gridDims.gridSize); row++) {
+              for (let col = 0; col < Math.min(3, gridDims.gridSize); col++) {
                 const pageNum = pattern[row][col];
-                const px = col * (pageWidth + spacing);
-                const py = row * (pageHeight + spacing);
+                const px = col * (pageWidth + gridDims.spacing);
+                const py = row * (pageHeight + gridDims.spacing);
                 console.log(`  Page ${pageNum} at grid(${row},${col}): pixel position (${px}, ${py})`);
               }
             }
-            
-            // Use tile size at least as large as a page
-            const tileSize = Math.max(512, Math.ceil(Math.max(pageWidth, pageHeight) / 256) * 256);
-            const maxDimension = Math.max(totalWidth, totalHeight);
-            const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
-            
-            console.log(`Grid: ${gridSize}×${gridSize}, Total: ${totalWidth}x${totalHeight}`);
-            console.log(`Tile size: ${tileSize}, Max level: ${maxLevel}`);
-            
-            // Tile cache
-            const tileCache = new Map();
-            tileCacheRef.current = tileCache;
-            const maxCacheSize = 300;
-            
-            // Create reusable tile canvas
-            const tileCanvas = document.createElement('canvas');
-            tileCanvas.width = tileSize;
-            tileCanvas.height = tileSize;
-            const tileCtx = tileCanvas.getContext('2d', { alpha: false });
-            
-            // Custom tile source that generates tiles from page canvases
-            const customTileSource = {
-              height: totalHeight,
-              width: totalWidth,
-              tileSize: tileSize,
-              minLevel: 0,
-              maxLevel: maxLevel,
-              getTileUrl: function(level, x, y) {
-                const key = `${level}_${x}_${y}`;
-                
-                // Only use cache if all pages are loaded
-                const allPagesLoaded = pageCanvasesRef.current.length >= numPages;
-                
-                // Check cache only if all pages loaded
-                if (allPagesLoaded && tileCache.has(key)) {
-                  const cached = tileCache.get(key);
-                  // Move to end (LRU)
-                  tileCache.delete(key);
-                  tileCache.set(key, cached);
-                  return cached;
-                }
-                
-                // Generate tile from page canvases
-                const scale = Math.pow(2, level - maxLevel);
-                
-                // Calculate tile boundaries in full-resolution grid coordinates
-                const tileLeft = x * tileSize / scale;
-                const tileTop = y * tileSize / scale;
-                const tileRight = Math.min(tileLeft + tileSize / scale, totalWidth);
-                const tileBottom = Math.min(tileTop + tileSize / scale, totalHeight);
-                
-                // Debug: log first few tiles with DETAILS
-                if (tileCache.size < 3) {
-                  console.log(`\nGenerating tile ${key}:`);
-                  console.log(`  Tile bounds: (${tileLeft.toFixed(0)}, ${tileTop.toFixed(0)}) to (${tileRight.toFixed(0)}, ${tileBottom.toFixed(0)})`);
-                  console.log(`  Scale: ${scale.toFixed(4)}, Level: ${level}`);
-                }
-                
-                // Clear tile
-                tileCtx.fillStyle = '#1f2937';
-                tileCtx.fillRect(0, 0, tileSize, tileSize);
-                
-                let pagesDrawn = 0;
-                
-                // Draw portions of pages that intersect this tile
-                for (let row = 0; row < gridSize; row++) {
-                  for (let col = 0; col < gridSize; col++) {
-                    // Calculate this page's position in the grid
-                    const pageLeft = col * (pageWidth + spacing);
-                    const pageTop = row * (pageHeight + spacing);
-                    const pageRight = pageLeft + pageWidth;
-                    const pageBottom = pageTop + pageHeight;
-                    
-                    // Check if this page intersects the tile (use <= to catch boundaries)
-                    if (pageRight <= tileLeft || pageLeft >= tileRight ||
-                        pageBottom <= tileTop || pageTop >= tileBottom) {
-                      continue; // No intersection
-                    }
-                    
-                    // Get the page number at this grid position
-                    const pageNum = pattern[row][col];
-                    const pageCanvas = pageCanvasesRef.current[pageNum - 1];
-                    
-                    if (tileCache.size < 3) {
-                      console.log(`  Grid(${row},${col}): Page ${pageNum} at (${pageLeft.toFixed(0)},${pageTop.toFixed(0)}) intersects tile - ${pageCanvas ? 'LOADED' : 'not loaded'}`);
-                    }
-                    
-                    if (!pageCanvas) {
-                      continue; // Page not rendered yet
-                    }
-                    
-                    // Calculate intersection
-                    const intersectLeft = Math.max(tileLeft, pageLeft);
-                    const intersectTop = Math.max(tileTop, pageTop);
-                    const intersectRight = Math.min(tileRight, pageRight);
-                    const intersectBottom = Math.min(tileBottom, pageBottom);
-                    
-                    // Source coordinates (within the page)
-                    const srcX = intersectLeft - pageLeft;
-                    const srcY = intersectTop - pageTop;
-                    const srcW = intersectRight - intersectLeft;
-                    const srcH = intersectBottom - intersectTop;
-                    
-                    // Destination coordinates (within the tile)
-                    const destX = (intersectLeft - tileLeft) * scale;
-                    const destY = (intersectTop - tileTop) * scale;
-                    const destW = srcW * scale;
-                    const destH = srcH * scale;
-                    
-                    // Draw this portion
-                    tileCtx.drawImage(
-                      pageCanvas,
-                      srcX, srcY, srcW, srcH,
-                      destX, destY, destW, destH
-                    );
-                    
-                    pagesDrawn++;
-                  }
-                }
-                
-                if (tileCache.size < 5) {
-                  console.log(`  Drew ${pagesDrawn} page(s) in tile ${key}`);
-                }
-                
-                // Convert to data URL
-                const tileUrl = tileCanvas.toDataURL('image/jpeg', 0.85);
-                
-                // Cache only if all pages are loaded
-                if (allPagesLoaded) {
-                  tileCache.set(key, tileUrl);
-                  if (tileCache.size > maxCacheSize) {
-                    const firstKey = tileCache.keys().next().value;
-                    tileCache.delete(firstKey);
-                  }
-                }
-                
-                return tileUrl;
-              }
-            };
-            
-            // Initialize OpenSeadragon
-            const viewer = OpenSeadragon({
-              id: 'openseadragon-viewer',
-              prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
-              tileSources: customTileSource,
-              showNavigator: true,
-              navigatorPosition: 'BOTTOM_RIGHT',
-              showRotationControl: true,
-              minZoomLevel: 0.1,
-              maxZoomLevel: 10,
-              visibilityRatio: 0.2,
-              constrainDuringPan: false,
-              homeFillsViewer: false,
-              immediateRender: true,
-              preload: true
-            });
-            
-            // Set initial view to first page
-            viewer.addHandler('open', function() {
-              const viewportRect = viewer.viewport.imageToViewportRectangle(
-                0, 0, pageWidth, pageHeight
-              );
-              viewer.viewport.fitBounds(viewportRect, true);
-            });
-            
+
+            // Create tile source
+            const tileSource = new CustomTileSource(
+              gridDims,
+              pattern,
+              pageCanvasesRef.current,
+              numPages
+            );
+            tileSourceRef.current = tileSource;
+
+            // Initialize OpenSeadragon viewer
+            const viewer = OSDManager.initialize(tileSource, pageWidth, pageHeight);
             osdViewerRef.current = viewer;
           };
 
@@ -382,23 +653,46 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.3.0</h1>
-                  
-                  <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
-                    {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
-                    <input
-                      type="file"
-                      accept="application/pdf"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                  </label>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.4</h1>
+
+                  <div className="flex items-center gap-3">
+                    {/* URL Input */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={urlInput}
+                        onChange={(e) => setUrlInput(e.target.value)}
+                        onKeyPress={handleUrlKeyPress}
+                        placeholder="Enter PDF URL..."
+                        className="px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded focus:outline-none focus:border-blue-500 w-64"
+                        disabled={isLoading}
+                      />
+                      <button
+                        onClick={handleUrlLoad}
+                        disabled={isLoading}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Load URL
+                      </button>
+                    </div>
+
+                    {/* File Upload */}
+                    <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
+                      {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
                 </div>
-                
+
                 {numPages > 0 && (
                   <div className="mt-2 text-sm text-gray-400 max-w-7xl mx-auto">
                     {numPages} pages • Grid size: {numPages}×{numPages}
-                    {pagesLoaded < numPages && 
+                    {pagesLoaded < numPages &&
                       ` • Loaded ${pagesLoaded}/${numPages} pages`
                     }
                   </div>
