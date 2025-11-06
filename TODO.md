@@ -1,5 +1,16 @@
 # TODO
 
+## PERFORMANCE
+
+Adjust the tile size to allow for deeper zoom into each page.
+
+Reduce the overall size of the viewport; it is presently possible to pan the composit canvas too far.
+
+Improve presentation on mobile; reduce size of header.
+
+Fix helper footer, which does not display on mobile.
+
+
 ## FUNCTIONALITY
 
 Automatically load a demo PDF from the inside the directory from which index.html is served.
