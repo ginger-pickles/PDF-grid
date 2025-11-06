@@ -1,16 +1,20 @@
 # PDF Grid Viewer
 
-A single-file web-based PDF viewer that displays pages in a continuous rotating grid pattern, allowing patterns in the document to emerge.
+A viewer that displays pages in a continuous rotating grid pattern, allowing patterns in the document to emerge.
 
-## Live Demo
+**Live Demo**
 
 https://ginger-pickles.github.io/PDF-grid/
 
 ## Usage
 
-1. Visit the live demo URL
+This is a standalone HTML file `index.html` that can be opened directly in a modern web browser.
+
+1. Visit the live demo URL or save the file locally and open in a web browser
 2. Click "Upload PDF" and select a PDF file
 3. Use mouse to pan (drag) and zoom (scroll)
+
+## Discussion
 
 **Features:**
 
@@ -33,5 +37,3 @@ This is a React-based web application that:
 -   Babel standalone for JSX compilation
 
 
-## Local Usage
-This is a standalone HTML file `index.html` that can be opened directly in a modern web browser.
