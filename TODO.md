@@ -4,11 +4,6 @@
 
 Adjust the tile size to allow for deeper zoom into each page.
 
-Reduce the overall size of the viewport; it is presently possible to pan the composit canvas too far.
-
-Improve presentation on mobile; reduce size of header.
-
-Fix helper footer, which does not display on mobile.
 
 
 ## FUNCTIONALITY
@@ -28,4 +23,8 @@ Incorporate external libraries somehow rather than pulling from whereever they c
 
 ## INTERFACE
 
-Fix user interface: "Double click to center" is misleading; change text to "click to center."
+Reduce the overall size of the viewport; it is presently possible to pan the composit canvas too far.
+
+Improve presentation on mobile; reduce size of header.
+
+Fix helper footer, which does not display on mobile.
