@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PDF Grid Viewer v1.4.1</title>
+    <title>PDF Grid Viewer v1.4.2</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -89,8 +89,8 @@
 
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
-          OSD_MAX_ZOOM: 50, // Allow deep zoom into page details
-          OSD_MAX_ZOOM_PIXEL_RATIO: 2.0, // Allow zoom to 2x the original pixel resolution
+          OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
+          OSD_MAX_ZOOM_PIXEL_RATIO: 8.0, // Allow zoom to 8x the original pixel resolution (quarter-page or smaller)
           OSD_VISIBILITY_RATIO: 0.9, // 90% of grid must remain visible (allows limited panning beyond edges when zoomed in)
 
           // UI
@@ -478,7 +478,15 @@
           /**
            * Initialize OpenSeadragon viewer
            */
-          initialize(tileSource, pageWidth, pageHeight) {
+          initialize(tileSource, pageWidth, pageHeight, gridSize) {
+            // Calculate minZoomImageRatio based on grid size
+            // Small grids: 0.95 (tight constraint with 5% margins)
+            // Large grids: scales down to allow zooming in to individual pages
+            // Formula: max(0.05, min(0.95, 10 / gridSize))
+            const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
+
+            console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
+
             const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
@@ -491,7 +499,7 @@
               showFullPageControl: true, // Keep fullscreen button
               maxZoomLevel: CONFIG.OSD_MAX_ZOOM,
               maxZoomPixelRatio: CONFIG.OSD_MAX_ZOOM_PIXEL_RATIO,
-              minZoomImageRatio: 0.95, // Allow ~5% margins around grid
+              minZoomImageRatio: minZoomImageRatio, // Dynamically calculated based on grid size
               visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
               constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
@@ -598,7 +606,7 @@
             setNumPages(pdf.numPages);
             pdfDocRef.current = pdf;
 
-            console.log(`[v1.4.1] Loaded ${filename} with ${pdf.numPages} pages`);
+            console.log(`[v1.4.2] Loaded ${filename} with ${pdf.numPages} pages`);
 
             // Render all pages
             setLoadingStatus('Rendering all pages...');
@@ -744,7 +752,7 @@
             tileSourceRef.current = tileSource;
 
             // Initialize OpenSeadragon viewer
-            const viewer = OSDManager.initialize(tileSource, pageWidth, pageHeight);
+            const viewer = OSDManager.initialize(tileSource, pageWidth, pageHeight, gridDims.gridSize);
             osdViewerRef.current = viewer;
           };
 
