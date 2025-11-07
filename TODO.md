@@ -6,6 +6,8 @@ Refactor to support more than a hundred or so pages without crashing
 
 Incorporate external libraries somehow rather than pulling from whereever they come from now.
 
+Optimize page refresh performance - currently re-renders all pages on every refresh (see notes.md for canvas storage vs progressive rendering options)
+
 
 ## FUNCTIONALITY
 
