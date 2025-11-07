@@ -13,4 +13,6 @@ Add support to switch between different page layouts: Rotating grid (default), S
 
 Add the ability to switch, with buttons, between PDFs residing in the local direcotry from which index.html is served.
 
+Add browser history support for back/forward navigation between local PDFs (see notes.md for implementation details)
+
 
