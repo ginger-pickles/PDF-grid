@@ -806,6 +806,12 @@
               // Fall back to config auto-load (lowest priority)
               if (!CONFIG.AUTO_LOAD_PDF) return;
 
+              // Skip auto-load for file:// protocol (browser security restrictions)
+              if (window.location.protocol === 'file:') {
+                console.log('Auto-load disabled for file:// protocol. Please serve via HTTP (e.g., python -m http.server) to use auto-load, or drag & drop a PDF to get started.');
+                return;
+              }
+
               try {
                 console.log(`Attempting to auto-load: ${CONFIG.AUTO_LOAD_PDF}`);
                 await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF);
