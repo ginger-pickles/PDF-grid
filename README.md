@@ -12,11 +12,13 @@ This is a standalone HTML file `index.html` that can be opened directly in a mod
 
 **Quick Start:**
 1. Visit the live demo URL or save the file locally and open in a web browser
-2. Load a PDF using one of three methods:
-   - **Upload:** Click "Upload PDF" and select a file
-   - **URL:** Enter a URL in the text field and click "Load URL"
+2. Load a PDF using one of four methods:
+   - **Upload:** Click "Local PDF" and select a file from your device
+   - **Drag-and-Drop:** Drag a PDF file onto the viewer
+   - **URL:** Enter a URL in the text field and click "Open URL" (or press Enter)
    - **Query parameter:** Add `?url=https://example.com/file.pdf` to the page URL
 3. Use mouse to pan (drag) and zoom (scroll)
+4. Local PDFs persist across page refreshes (stored for 7 days)
 
 **Auto-Load for Development:**
 
@@ -55,6 +57,10 @@ Note: CORS proxies are third-party services - use with caution for sensitive doc
 This is a React-based web application that:
 
 -   Uploads and displays PDF files in a rotating grid pattern
+-   Drag-and-drop support for easy PDF loading
+-   Dynamic page title showing current PDF filename
+-   Local PDF persistence across refreshes (hybrid sessionStorage/IndexedDB with 7-day expiry)
+-   Download button for saving PDFs locally
 -   Auto-loads demo PDF for rapid development workflow
 -   Uses PDF.js for PDF rendering
 -   Uses OpenSeadragon for smooth pan/zoom viewing
