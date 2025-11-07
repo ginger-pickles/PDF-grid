@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PDF Grid Viewer v1.4.2</title>
+    <title>PDF Grid Viewer v1.4.3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -537,6 +537,7 @@
           const [loadingStatus, setLoadingStatus] = useState('');
           const [pagesLoaded, setPagesLoaded] = useState(0);
           const [urlInput, setUrlInput] = useState('');
+          const [showHelp, setShowHelp] = useState(false);
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
           const pageCanvasesRef = useRef([]);
@@ -606,7 +607,7 @@
             setNumPages(pdf.numPages);
             pdfDocRef.current = pdf;
 
-            console.log(`[v1.4.2] Loaded ${filename} with ${pdf.numPages} pages`);
+            console.log(`[v1.4.3] Loaded ${filename} with ${pdf.numPages} pages`);
 
             // Render all pages
             setLoadingStatus('Rendering all pages...');
@@ -638,6 +639,10 @@
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
               await loadPDF(pdf, url);
+              // Only display URL in field if it's an actual URL (not a local filename like demo.pdf)
+              if (url.startsWith('http://') || url.startsWith('https://')) {
+                setUrlInput(url);
+              }
             } catch (error) {
               console.error('Error loading PDF from URL:', error);
               setIsLoading(false);
@@ -652,6 +657,7 @@
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile(file);
+            setUrlInput(''); // Clear URL input when uploading a file
 
             try {
               const pdf = await PDFUtils.loadPDFFromFile(file);
@@ -691,7 +697,7 @@
 
             try {
               await loadPDFFromURL(url);
-              setUrlInput(''); // Clear input on success
+              // URL is now displayed in the input field by loadPDFFromURL
             } catch (error) {
               let errorMsg = 'Error loading PDF from URL:\n\n' + error.message;
 
@@ -761,13 +767,23 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-2 md:p-3">
                 <div className="flex items-center gap-2 max-w-7xl mx-auto">
+                  {/* Help Button */}
+                  <button
+                    onClick={() => setShowHelp(!showHelp)}
+                    className="w-8 h-8 md:w-10 md:h-10 flex items-center justify-center bg-gray-700 hover:bg-gray-600 active:bg-gray-500 text-white rounded cursor-pointer transition-colors text-lg font-bold"
+                    title="Help & About"
+                  >
+                    ?
+                  </button>
+
                   {/* URL Input */}
                   <input
                     type="text"
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
                     onKeyPress={handleUrlKeyPress}
-                    placeholder="Enter PDF URL..."
+                    onFocus={(e) => e.target.select()}
+                    placeholder="Enter PDF URL or choose local file..."
                     className="flex-1 px-2 md:px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-sm"
                     disabled={isLoading}
                   />
@@ -777,13 +793,13 @@
                     className="px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap text-sm"
                   >
                     <span className="md:hidden">URL</span>
-                    <span className="hidden md:inline">Load URL</span>
+                    <span className="hidden md:inline">Open URL</span>
                   </button>
 
                   {/* File Upload */}
                   <label className="px-3 md:px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded cursor-pointer transition-colors text-center text-sm whitespace-nowrap">
                     <span className="md:hidden">PDF</span>
-                    <span className="hidden md:inline">Upload PDF</span>
+                    <span className="hidden md:inline">Local PDF</span>
                     <input
                       type="file"
                       accept="application/pdf"
@@ -796,6 +812,64 @@
 
               {/* Viewer Area */}
               <div className="flex-1 relative">
+                {/* Help/About Overlay */}
+                {showHelp && (
+                  <div className="absolute top-0 left-0 right-0 z-20 bg-gray-800 border-b border-gray-700 shadow-lg max-h-full overflow-y-auto">
+                    <div className="max-w-4xl mx-auto p-4 md:p-6">
+                      <div className="flex justify-between items-start mb-4">
+                        <h2 className="text-xl font-bold text-white">PDF Grid Viewer v1.4.3</h2>
+                        <button
+                          onClick={() => setShowHelp(false)}
+                          className="text-gray-400 hover:text-white text-2xl leading-none"
+                          title="Close"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <div className="text-gray-300 space-y-4 text-sm md:text-base">
+                        <div>
+                          <h3 className="font-semibold text-white mb-2">What is this?</h3>
+                          <p>A viewer that displays PDF pages in a continuous rotating grid pattern (N×N where N = number of pages). Each row rotates the page sequence, allowing visual patterns in the document to emerge.</p>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-white mb-2">Controls</h3>
+                          <ul className="list-disc list-inside space-y-1">
+                            <li><strong>Pan:</strong> Click and drag to move around</li>
+                            <li><strong>Zoom:</strong> Scroll wheel or pinch to zoom in/out</li>
+                            <li><strong>Home:</strong> Click the home button (top-right) to reset view</li>
+                            <li><strong>Fullscreen:</strong> Click the fullscreen button for immersive viewing</li>
+                          </ul>
+                        </div>
+
+                        <div>
+                          <h3 className="font-semibold text-white mb-2">Loading PDFs</h3>
+                          <ul className="list-disc list-inside space-y-1">
+                            <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter)</li>
+                            <li><strong>Local File:</strong> Click "Local PDF" to choose a file from your device</li>
+                            <li><strong>Query Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL</li>
+                          </ul>
+                        </div>
+
+                        <div className="text-xs text-gray-400 pt-2 border-t border-gray-700">
+                          <p>Built with PDF.js, OpenSeadragon, React, and Tailwind CSS</p>
+                          <p className="mt-1">
+                            <a
+                              href="https://github.com/ginger-pickles/PDF-grid"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:text-blue-300 underline"
+                            >
+                              View on GitHub
+                            </a>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {!pdfFile ? (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center text-gray-400">
