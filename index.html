@@ -789,6 +789,13 @@
                   setIsLoading(true);
                   setLoadingStatus('Loading stored PDF...');
                   setPdfFile({ name: stored.filename }); // Set pdfFile so viewer displays
+                  setUrlInput(stored.filename); // Show filename in URL bar
+
+                  // Clear URL parameter from browser address bar (shouldn't be there, but just in case)
+                  if (window.location.search) {
+                    const newUrl = window.location.pathname;
+                    window.history.replaceState({}, '', newUrl);
+                  }
 
                   const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
                   await loadPDF(pdf, stored.filename);
@@ -891,7 +898,14 @@
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile(file);
-            setUrlInput(''); // Clear URL input when uploading a file
+            setUrlInput(file.name); // Show filename in URL bar
+
+            // Clear URL parameter from browser address bar (if present)
+            // This ensures refresh loads the stored local file, not the URL parameter
+            if (window.location.search) {
+              const newUrl = window.location.pathname;
+              window.history.replaceState({}, '', newUrl);
+            }
 
             try {
               // Read file as ArrayBuffer for storage
