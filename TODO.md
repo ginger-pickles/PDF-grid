@@ -2,27 +2,24 @@
 
 ## PERFORMANCE
 
-Adjust the tile size to allow for deeper zoom into each page.
-
-
-
-## FUNCTIONALITY
-
-
-
-Add the ability to switch between PDFs residing in the local direcotry from which index.html is served.
-
-Add support for drag-and-drop loading of local PDF.
-
-Add a button that downloads the PDF to be the user's machine.
+Refactor to support more than a hundred or so pages without crashing
 
 Incorporate external libraries somehow rather than pulling from whereever they come from now.
 
 
 ## INTERFACE
 
-Reduce the overall size of the viewport; it is presently possible to pan the composit canvas too far.
+Have the page title change dynamically to take the title or filename of the PDF file
 
-Improve presentation on mobile; reduce size of header.
 
-Fix helper footer, which does not display on mobile.
+## FUNCTIONALITY
+
+Add support to switch between different page layouts: Rotating grid (default), Skewed/Staggered, Conventional grid, Scroll, Two-up, Infinite(?), etc
+
+Add support for drag-and-drop loading of local PDF.
+
+Add the ability to switch, with buttons, between PDFs residing in the local direcotry from which index.html is served.
+
+Add a button that downloads the PDF to be the user's machine.
+
+
