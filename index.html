@@ -765,14 +765,16 @@
           // Auto-load PDF on mount (priority: URL parameter > stored PDF > config)
           React.useEffect(() => {
             const autoLoadPDF = async () => {
-              // Check for URL query parameter first (highest priority)
+              // Check URL parameters first (highest priority)
               const urlParams = new URLSearchParams(window.location.search);
               const urlParam = urlParams.get('url');
+              const pdfParam = urlParams.get('pdf');
 
+              // Priority 1: ?url= parameter (remote URL)
               if (urlParam) {
                 try {
-                  console.log(`Loading PDF from query parameter: ${urlParam}`);
-                  await loadPDFFromURL(urlParam);
+                  console.log(`Loading PDF from URL parameter: ${urlParam}`);
+                  await loadPDFFromURL(urlParam, true); // skipHistory=true to avoid double-pushing
                   return;
                 } catch (error) {
                   console.error(`Failed to load PDF from URL parameter: ${error.message}`);
@@ -781,33 +783,72 @@
                 }
               }
 
-              // Check for stored local PDF (second priority)
-              try {
-                const stored = await PDFStorage.load();
-                if (stored) {
-                  console.log(`Loading stored PDF from previous session: ${stored.filename}`);
-                  setIsLoading(true);
-                  setLoadingStatus('Loading stored PDF...');
-                  setPdfFile({ name: stored.filename }); // Set pdfFile so viewer displays
-                  setUrlInput(stored.filename); // Show filename in URL bar
+              // Priority 2: ?pdf= parameter (local file from storage or server)
+              if (pdfParam) {
+                const pdfFilename = decodeURIComponent(pdfParam);
 
-                  // Clear URL parameter from browser address bar (shouldn't be there, but just in case)
-                  if (window.location.search) {
-                    const newUrl = window.location.pathname;
-                    window.history.replaceState({}, '', newUrl);
+                // First try loading from storage
+                try {
+                  const stored = await PDFStorage.load();
+                  if (stored && stored.filename === pdfFilename) {
+                    console.log(`Loading local PDF from storage: ${pdfFilename}`);
+                    setIsLoading(true);
+                    setLoadingStatus('Loading stored PDF...');
+                    setPdfFile({ name: stored.filename });
+                    setUrlInput(stored.filename);
+
+                    const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                    await loadPDF(pdf, stored.filename);
+                    return;
                   }
-
-                  const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
-                  await loadPDF(pdf, stored.filename);
-                  return;
+                } catch (error) {
+                  console.error(`Failed to load from storage:`, error);
                 }
-              } catch (error) {
-                console.error(`Failed to load stored PDF:`, error);
-                setIsLoading(false);
-                // Show error and clear bad storage
-                alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage and showing demo.`);
-                await PDFStorage.clear();
-                // Continue to config auto-load
+
+                // If not in storage, try fetching from server (only works when served via HTTP)
+                if (window.location.protocol !== 'file:') {
+                  try {
+                    console.log(`PDF not in storage, attempting to fetch from server: ${pdfFilename}`);
+                    await loadPDFFromURL(pdfFilename, true); // Load relative path, skipHistory=true
+                    return;
+                  } catch (error) {
+                    console.error(`Failed to fetch PDF from server: ${error.message}`);
+                    alert(`PDF "${pdfFilename}" not found in storage or on server.`);
+                    // Fall through to next priority
+                  }
+                } else {
+                  console.log(`PDF "${pdfFilename}" not in storage, and file:// protocol prevents server fetch`);
+                  // Fall through to next priority
+                }
+              }
+
+              // Priority 3: Stored local PDF (no parameter, just from storage)
+              if (!urlParam && !pdfParam) {
+                try {
+                  const stored = await PDFStorage.load();
+                  if (stored) {
+                    console.log(`Loading stored PDF from previous session: ${stored.filename}`);
+                    setIsLoading(true);
+                    setLoadingStatus('Loading stored PDF...');
+                    setPdfFile({ name: stored.filename });
+                    setUrlInput(stored.filename);
+
+                    // Add ?pdf= parameter to URL
+                    const newUrl = `${window.location.pathname}?pdf=${encodeURIComponent(stored.filename)}`;
+                    window.history.replaceState({ type: 'local', filename: stored.filename }, '', newUrl);
+
+                    const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                    await loadPDF(pdf, stored.filename);
+                    return;
+                  }
+                } catch (error) {
+                  console.error(`Failed to load stored PDF:`, error);
+                  setIsLoading(false);
+                  // Show error and clear bad storage
+                  alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage and showing demo.`);
+                  await PDFStorage.clear();
+                  // Continue to config auto-load
+                }
               }
 
               // Fall back to config auto-load (lowest priority)
@@ -829,6 +870,47 @@
             };
 
             autoLoadPDF();
+          }, []);
+
+          // Handle browser back/forward navigation
+          React.useEffect(() => {
+            const handlePopState = async (event) => {
+              console.log('Popstate event:', event.state);
+
+              // Parse URL parameters
+              const urlParams = new URLSearchParams(window.location.search);
+              const urlParam = urlParams.get('url');
+              const pdfParam = urlParams.get('pdf');
+
+              if (urlParam) {
+                // Navigate to URL
+                console.log(`Back/forward: Loading URL ${urlParam}`);
+                await loadPDFFromURL(urlParam, true); // skipHistory=true
+              } else if (pdfParam) {
+                // Navigate to local PDF
+                console.log(`Back/forward: Loading local PDF ${pdfParam}`);
+                try {
+                  const stored = await PDFStorage.load();
+                  if (stored && stored.filename === decodeURIComponent(pdfParam)) {
+                    setIsLoading(true);
+                    setLoadingStatus('Loading PDF...');
+                    setPdfFile({ name: stored.filename });
+                    setUrlInput(stored.filename);
+
+                    const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                    await loadPDF(pdf, stored.filename);
+                  } else {
+                    alert(`PDF "${pdfParam}" not found in storage. It may have expired.`);
+                  }
+                } catch (error) {
+                  console.error('Error loading PDF from history:', error);
+                  alert(`Failed to load PDF: ${error.message}`);
+                }
+              }
+            };
+
+            window.addEventListener('popstate', handlePopState);
+            return () => window.removeEventListener('popstate', handlePopState);
           }, []);
 
           /**
@@ -869,13 +951,19 @@
             setIsLoading(false);
           };
 
-          const loadPDFFromURL = async (url) => {
+          const loadPDFFromURL = async (url, skipHistory = false) => {
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile({ name: url }); // Store URL as "file" for display
 
             // Clear any stored local PDFs when loading from URL
             await PDFStorage.clear();
+
+            // Add ?url= parameter to URL for browser history and refresh (unless loading from history)
+            if (!skipHistory && (url.startsWith('http://') || url.startsWith('https://'))) {
+              const newUrl = `${window.location.pathname}?url=${encodeURIComponent(url)}`;
+              window.history.pushState({ type: 'url', url: url }, '', newUrl);
+            }
 
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
@@ -900,12 +988,9 @@
             setPdfFile(file);
             setUrlInput(file.name); // Show filename in URL bar
 
-            // Clear URL parameter from browser address bar (if present)
-            // This ensures refresh loads the stored local file, not the URL parameter
-            if (window.location.search) {
-              const newUrl = window.location.pathname;
-              window.history.replaceState({}, '', newUrl);
-            }
+            // Add ?pdf= parameter to URL for browser history and refresh
+            const newUrl = `${window.location.pathname}?pdf=${encodeURIComponent(file.name)}`;
+            window.history.pushState({ type: 'local', filename: file.name }, '', newUrl);
 
             try {
               // Read file as ArrayBuffer for storage
