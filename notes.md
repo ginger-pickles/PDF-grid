@@ -277,3 +277,143 @@ CONFIG: {
 - Test edge cases (storage full, expired PDFs, etc.)
 
 **Estimated effort:** 2-3 hours
+
+## Page Refresh Performance Optimization
+
+### Current Behavior (v1.4.4)
+
+When refreshing the page with a stored local PDF:
+1. PDF binary data (ArrayBuffer) is loaded from storage (~original file size)
+2. PDF.js parses the PDF
+3. **All pages are re-rendered to canvases** (expensive operation)
+4. OpenSeadragon viewer initializes with rendered canvases
+
+This means every refresh "chews through all the pages" again, which is slow for large PDFs (50+ pages).
+
+### Why This Happens
+
+**Storage contains:** Raw PDF binary data (compact, ~5MB for typical PDF)
+**Not stored:** Rendered page canvases (would be massive, ~1-2MB per page)
+
+**Trade-off:**
+- Compact storage (good for 7-day expiry model)
+- Slow refresh (must re-render every time)
+
+### Proposed Solutions
+
+#### Option A: Store Rendered Canvases
+
+**Approach:** Store both PDF binary AND rendered canvases in IndexedDB
+
+```javascript
+// Current storage:
+{
+  pdfData: ArrayBuffer,  // ~5MB
+  filename: string,
+  timestamp: number
+}
+
+// Proposed storage:
+{
+  pdfData: ArrayBuffer,     // ~5MB (keep for download)
+  pageCanvases: [           // ~50-100MB for 50 pages!
+    { dataUrl: string },    // Base64 encoded canvas
+    { dataUrl: string },
+    ...
+  ],
+  filename: string,
+  timestamp: number
+}
+```
+
+**Pros:**
+- Instant refresh (no re-rendering)
+- Best user experience for frequent refreshes
+
+**Cons:**
+- Massive storage increase (10-20x larger)
+- 50-page PDF: ~100MB in storage vs ~5MB currently
+- May hit IndexedDB quota limits
+- Longer initial upload time (must serialize canvases)
+
+**Implementation complexity:** Low (straightforward serialization)
+
+#### Option B: Keep Current Approach
+
+**Approach:** Accept re-rendering as necessary trade-off
+
+**Pros:**
+- Compact storage (~5MB per PDF)
+- Fits well with 7-day expiry model
+- Simple implementation
+
+**Cons:**
+- Slow refresh for large PDFs
+- Users must wait through "chewing" every time
+
+**Best for:**
+- PDFs < 30 pages (refresh is reasonably fast)
+- Users who rarely refresh
+- Storage-constrained environments
+
+#### Option C: Progressive/On-Demand Rendering
+
+**Approach:** Don't render all pages upfront; render tiles as needed during pan/zoom
+
+**Current architecture:**
+```javascript
+// All pages rendered at load time
+const pageCanvases = await PDFUtils.renderAllPages(pdf);
+// Store in memory for tile generation
+```
+
+**Proposed architecture:**
+```javascript
+// Pages rendered on-demand
+const tileSource = new ProgressiveTileSource(pdf);
+// Renders pages only when tiles from that page are requested
+// Caches rendered pages in memory (LRU)
+```
+
+**How it works:**
+1. Load PDF from storage (fast)
+2. Initialize viewer immediately (instant)
+3. Render pages progressively as user pans/zooms
+4. Keep last N rendered pages in memory cache
+5. Initial view loads first page only
+
+**Pros:**
+- Fast initial load (show viewer immediately)
+- Compact storage (no canvases stored)
+- Handles huge PDFs (100+ pages)
+- Better memory usage (only cache visible pages)
+
+**Cons:**
+- Complex architectural change
+- Need to modify TileSource to render on-demand
+- Potential tile pop-in during fast panning
+- Need LRU cache for rendered pages in memory
+
+**Implementation complexity:** High
+
+**Changes required:**
+1. Modify CustomTileSource to accept PDF object instead of pre-rendered canvases
+2. Implement page rendering inside getTileUrl()
+3. Add in-memory LRU cache for rendered pages
+4. Handle async rendering (tiles may appear with delay)
+5. Add loading indicators for tiles being rendered
+
+**Estimated effort:** 6-8 hours
+
+### Recommendation
+
+**For current use case:**
+- If PDFs are typically < 30 pages: Keep Option B (current approach)
+- If PDFs are 50+ pages and refresh is common: Implement Option C (progressive)
+- If storage space is abundant: Consider Option A (canvas storage)
+
+**Long-term best solution:** Option C (progressive rendering)
+- Handles all PDF sizes
+- Minimal storage footprint
+- Best UX (instant viewer initialization)
+- Aligns with TODO item "support more than a hundred pages"
