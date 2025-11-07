@@ -63,6 +63,9 @@
           // Version
           VERSION: '1.5.0',
 
+          // Debug
+          DEBUG_MODE: false, // Enable verbose logging and detailed error messages
+
           // Auto-load
           AUTO_LOAD_PDF: 'demo.pdf', // Set to null to disable auto-load, or filename to try loading
 
@@ -101,6 +104,44 @@
 
           // UI
           BACKGROUND_COLOR: '#1f2937'
+        };
+
+        // ============================================================================
+        // ERROR CODES
+        // ============================================================================
+
+        const ErrorCodes = {
+          // File errors
+          INVALID_FILE: 'INVALID_FILE',
+          FILE_READ_ERROR: 'FILE_READ_ERROR',
+
+          // Network errors
+          NETWORK_ERROR: 'NETWORK_ERROR',
+          CORS_ERROR: 'CORS_ERROR',
+          FETCH_ERROR: 'FETCH_ERROR',
+
+          // PDF errors
+          PDF_PARSE_ERROR: 'PDF_PARSE_ERROR',
+          PDF_RENDER_ERROR: 'PDF_RENDER_ERROR',
+          INVALID_PDF: 'INVALID_PDF',
+
+          // Storage errors
+          STORAGE_QUOTA_ERROR: 'STORAGE_QUOTA_ERROR',
+          STORAGE_READ_ERROR: 'STORAGE_READ_ERROR',
+          STORAGE_WRITE_ERROR: 'STORAGE_WRITE_ERROR',
+
+          // Viewer errors
+          VIEWER_INIT_ERROR: 'VIEWER_INIT_ERROR',
+
+          // Unknown
+          UNKNOWN_ERROR: 'UNKNOWN_ERROR'
+        };
+
+        // Debug logging helper
+        const debug = (...args) => {
+          if (CONFIG.DEBUG_MODE) {
+            console.log('[DEBUG]', ...args);
+          }
         };
 
         // ============================================================================
@@ -257,6 +298,84 @@
               pageWidth,
               pageHeight
             };
+          }
+        };
+
+        // ============================================================================
+        // URL AND HISTORY MANAGER MODULE
+        // ============================================================================
+
+        /**
+         * Manages URL parameters and browser history for PDF loading
+         */
+        const URLManager = {
+          /**
+           * Parse current URL parameters
+           * @returns {{url: string|null, pdf: string|null}}
+           */
+          getParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+              url: params.get('url'),
+              pdf: params.get('pdf') ? decodeURIComponent(params.get('pdf')) : null
+            };
+          },
+
+          /**
+           * Generate URL string for given type and value
+           * @param {string} type - 'url', 'pdf', or 'clear'
+           * @param {string} value - Parameter value
+           * @returns {string} Generated URL
+           */
+          buildURL(type, value) {
+            const base = window.location.pathname;
+
+            if (type === 'clear' || !value) {
+              return base;
+            }
+
+            if (type === 'url') {
+              return `${base}?url=${encodeURIComponent(value)}`;
+            }
+
+            if (type === 'pdf') {
+              return `${base}?pdf=${encodeURIComponent(value)}`;
+            }
+
+            return base;
+          },
+
+          /**
+           * Push new state to browser history
+           * @param {string} type - 'url' or 'pdf'
+           * @param {string} value - Parameter value
+           */
+          pushState(type, value) {
+            const newUrl = this.buildURL(type, value);
+            const state = { type, value };
+
+            debug('URLManager.pushState:', { type, value, newUrl });
+            window.history.pushState(state, '', newUrl);
+          },
+
+          /**
+           * Replace current history state
+           * @param {string} type - 'url', 'pdf', or 'clear'
+           * @param {string} value - Parameter value
+           */
+          replaceState(type, value) {
+            const newUrl = this.buildURL(type, value);
+            const state = type === 'clear' ? {} : { type, value };
+
+            debug('URLManager.replaceState:', { type, value, newUrl });
+            window.history.replaceState(state, '', newUrl);
+          },
+
+          /**
+           * Clear URL parameters
+           */
+          clear() {
+            this.replaceState('clear', null);
           }
         };
 
@@ -766,9 +885,7 @@
           React.useEffect(() => {
             const autoLoadPDF = async () => {
               // Check URL parameters first (highest priority)
-              const urlParams = new URLSearchParams(window.location.search);
-              const urlParam = urlParams.get('url');
-              const pdfParam = urlParams.get('pdf');
+              const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
 
               // Priority 1: ?url= parameter (remote URL)
               if (urlParam) {
@@ -834,8 +951,7 @@
                     setUrlInput(stored.filename);
 
                     // Add ?pdf= parameter to URL
-                    const newUrl = `${window.location.pathname}?pdf=${encodeURIComponent(stored.filename)}`;
-                    window.history.replaceState({ type: 'local', filename: stored.filename }, '', newUrl);
+                    URLManager.replaceState('pdf', stored.filename);
 
                     const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
                     await loadPDF(pdf, stored.filename);
@@ -878,9 +994,7 @@
               console.log('Popstate event:', event.state);
 
               // Parse URL parameters
-              const urlParams = new URLSearchParams(window.location.search);
-              const urlParam = urlParams.get('url');
-              const pdfParam = urlParams.get('pdf');
+              const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
 
               if (urlParam) {
                 // Navigate to URL
@@ -961,8 +1075,7 @@
 
             // Add ?url= parameter to URL for browser history and refresh (unless loading from history)
             if (!skipHistory && (url.startsWith('http://') || url.startsWith('https://'))) {
-              const newUrl = `${window.location.pathname}?url=${encodeURIComponent(url)}`;
-              window.history.pushState({ type: 'url', url: url }, '', newUrl);
+              URLManager.pushState('url', url);
             }
 
             try {
@@ -989,8 +1102,7 @@
             setUrlInput(file.name); // Show filename in URL bar
 
             // Add ?pdf= parameter to URL for browser history and refresh
-            const newUrl = `${window.location.pathname}?pdf=${encodeURIComponent(file.name)}`;
-            window.history.pushState({ type: 'local', filename: file.name }, '', newUrl);
+            URLManager.pushState('pdf', file.name);
 
             try {
               // Read file as ArrayBuffer for storage
@@ -1226,17 +1338,21 @@
                       <div className="text-gray-300 space-y-4 text-sm md:text-base">
                         <div>
 
-                          <p>This tool displays an entire PDF file at a glance, with pages advancing both horizontally (like a book) and vertically (like a scroll). Unlike a conventionlly wrapped grid of pages, adjacent pages are always neighbors. The intent is to show the whole at once, allowing visual patterns to emerge.</p>
+                          <p>This tool displays the pages of a PDF in a staggered repeating grid; advancing both horizontally (like a book) and vertically (like a scroll).
+                          Adjacent pages are always sequential neighbors, transforming a one-dimensional stream of pages into a continuous two-dimensional space; unlike a conventional left-to-right wrapped grid, where pages in rows above and below are far away from each other.
+                          Zooming out shows the whole at once, where structure and patterns emerge.</p>
                         </div>
 
                         <div>
-                          <h3 className="font-semibold text-white mb-2">Loading PDFs</h3>
-                          <p>A demo PDF should already be loaded.</p>
+                          <h3 className="font-semibold text-white mb-2">Loading Data</h3>
+                          <p>A demo PDF may already be loaded. Try inspecting something big, like a magazine or book!</p>
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
-                            <li><strong>Local File:</strong> Click "Local PDF" to choose a file from your device.</li>
+                            <li><strong>Remote Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
                             <li><strong>Drag-and-Drop:</strong> Drag a PDF file from your computer onto the viewer.</li>
-                            <li><strong>Query Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
+                            <li><strong>Local File:</strong> Click "Local PDF" to choose a file from your device.</li>
+                            <li><strong>Local Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?pdf=file.pdf</code> to the page URL.</li>
+
                           </ul>
                         </div>
 
