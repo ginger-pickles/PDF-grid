@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PDF Grid Viewer v1.4.3</title>
+    <title>PDF Grid Viewer v1.4.4</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -60,6 +60,9 @@
         // ============================================================================
 
         const CONFIG = {
+          // Version
+          VERSION: '1.4.4',
+
           // Auto-load
           AUTO_LOAD_PDF: 'demo.pdf', // Set to null to disable auto-load, or filename to try loading
 
@@ -92,6 +95,9 @@
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
           OSD_MAX_ZOOM_PIXEL_RATIO: 8.0, // Allow zoom to 8x the original pixel resolution (quarter-page or smaller)
           OSD_VISIBILITY_RATIO: 0.9, // 90% of grid must remain visible (allows limited panning beyond edges when zoomed in)
+
+          // Storage
+          STORAGE_EXPIRY_DAYS: 7, // Auto-delete stored local PDFs after N days
 
           // UI
           BACKGROUND_COLOR: '#1f2937'
@@ -295,6 +301,195 @@
             this.cache.clear();
           }
         }
+
+        // ============================================================================
+        // PDF STORAGE MODULE
+        // ============================================================================
+
+        /**
+         * Hybrid storage for local PDF persistence across page refreshes
+         * Uses sessionStorage (clears on tab close) with IndexedDB fallback (for large files)
+         */
+        const PDFStorage = {
+          STORAGE_KEY: 'pdf-grid-viewer-pdf',
+          DB_NAME: 'pdf-grid-viewer',
+          DB_VERSION: 1,
+          STORE_NAME: 'pdfs',
+
+          /**
+           * Save PDF to storage (try sessionStorage first, fall back to IndexedDB)
+           */
+          async save(pdfData, filename) {
+            const data = {
+              pdfData: Array.from(new Uint8Array(pdfData)), // Convert to array for JSON
+              filename: filename,
+              timestamp: Date.now()
+            };
+
+            // Try sessionStorage first (auto-clears on tab close)
+            try {
+              sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
+              console.log('Saved PDF to sessionStorage:', filename);
+              return;
+            } catch (e) {
+              // Quota exceeded or other error - fall back to IndexedDB
+              console.log('sessionStorage failed, using IndexedDB:', e.message);
+            }
+
+            // Fall back to IndexedDB for large files
+            try {
+              await this._saveToIndexedDB(data);
+              console.log('Saved PDF to IndexedDB:', filename);
+            } catch (e) {
+              console.error('Failed to save PDF to storage:', e);
+            }
+          },
+
+          /**
+           * Load PDF from storage (check sessionStorage first, then IndexedDB)
+           */
+          async load() {
+            const expiryMs = CONFIG.STORAGE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+
+            // Try sessionStorage first
+            try {
+              const item = sessionStorage.getItem(this.STORAGE_KEY);
+              if (item) {
+                const data = JSON.parse(item);
+                if (this._isValid(data, expiryMs)) {
+                  console.log('Loaded PDF from sessionStorage:', data.filename);
+                  return {
+                    pdfData: new Uint8Array(data.pdfData).buffer,
+                    filename: data.filename
+                  };
+                } else {
+                  // Expired - clear it
+                  sessionStorage.removeItem(this.STORAGE_KEY);
+                }
+              }
+            } catch (e) {
+              console.error('Error reading sessionStorage:', e);
+            }
+
+            // Try IndexedDB
+            try {
+              const data = await this._loadFromIndexedDB();
+              if (data && this._isValid(data, expiryMs)) {
+                console.log('Loaded PDF from IndexedDB:', data.filename);
+                return {
+                  pdfData: new Uint8Array(data.pdfData).buffer,
+                  filename: data.filename
+                };
+              } else if (data) {
+                // Expired - clear it
+                await this._deleteFromIndexedDB();
+              }
+            } catch (e) {
+              console.error('Error reading IndexedDB:', e);
+            }
+
+            return null;
+          },
+
+          /**
+           * Clear all stored PDFs
+           */
+          async clear() {
+            try {
+              sessionStorage.removeItem(this.STORAGE_KEY);
+            } catch (e) {
+              console.error('Error clearing sessionStorage:', e);
+            }
+
+            try {
+              await this._deleteFromIndexedDB();
+            } catch (e) {
+              console.error('Error clearing IndexedDB:', e);
+            }
+
+            console.log('Cleared all stored PDFs');
+          },
+
+          /**
+           * Check if stored data is valid and not expired
+           */
+          _isValid(data, expiryMs) {
+            if (!data || !data.pdfData || !data.filename || !data.timestamp) {
+              return false;
+            }
+            const age = Date.now() - data.timestamp;
+            return age < expiryMs;
+          },
+
+          /**
+           * Save to IndexedDB
+           */
+          async _saveToIndexedDB(data) {
+            const db = await this._openDB();
+            return new Promise((resolve, reject) => {
+              const tx = db.transaction(this.STORE_NAME, 'readwrite');
+              const store = tx.objectStore(this.STORE_NAME);
+              const request = store.put(data, this.STORAGE_KEY);
+              request.onsuccess = () => resolve();
+              request.onerror = () => reject(request.error);
+            });
+          },
+
+          /**
+           * Load from IndexedDB
+           */
+          async _loadFromIndexedDB() {
+            try {
+              const db = await this._openDB();
+              return new Promise((resolve, reject) => {
+                const tx = db.transaction(this.STORE_NAME, 'readonly');
+                const store = tx.objectStore(this.STORE_NAME);
+                const request = store.get(this.STORAGE_KEY);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+              });
+            } catch (e) {
+              // DB might not exist yet
+              return null;
+            }
+          },
+
+          /**
+           * Delete from IndexedDB
+           */
+          async _deleteFromIndexedDB() {
+            try {
+              const db = await this._openDB();
+              return new Promise((resolve, reject) => {
+                const tx = db.transaction(this.STORE_NAME, 'readwrite');
+                const store = tx.objectStore(this.STORE_NAME);
+                const request = store.delete(this.STORAGE_KEY);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+              });
+            } catch (e) {
+              // DB might not exist yet - that's okay
+              return;
+            }
+          },
+
+          /**
+           * Open IndexedDB connection
+           */
+          async _openDB() {
+            return new Promise((resolve, reject) => {
+              const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => resolve(request.result);
+              request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+                  db.createObjectStore(this.STORE_NAME);
+                }
+              };
+            });
+          }
+        };
 
         // ============================================================================
         // TILE SOURCE MODULE
@@ -538,6 +733,7 @@
           const [pagesLoaded, setPagesLoaded] = useState(0);
           const [urlInput, setUrlInput] = useState('');
           const [showHelp, setShowHelp] = useState(false);
+          const [currentFilename, setCurrentFilename] = useState('');
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
           const pageCanvasesRef = useRef([]);
@@ -566,10 +762,10 @@
             };
           }, []);
 
-          // Auto-load PDF on mount (from query parameter or config)
+          // Auto-load PDF on mount (priority: URL parameter > stored PDF > config)
           React.useEffect(() => {
             const autoLoadPDF = async () => {
-              // Check for URL query parameter first
+              // Check for URL query parameter first (highest priority)
               const urlParams = new URLSearchParams(window.location.search);
               const urlParam = urlParams.get('url');
 
@@ -585,7 +781,29 @@
                 }
               }
 
-              // Fall back to config auto-load
+              // Check for stored local PDF (second priority)
+              try {
+                const stored = await PDFStorage.load();
+                if (stored) {
+                  console.log(`Loading stored PDF from previous session: ${stored.filename}`);
+                  setIsLoading(true);
+                  setLoadingStatus('Loading stored PDF...');
+                  setPdfFile({ name: stored.filename }); // Set pdfFile so viewer displays
+
+                  const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                  await loadPDF(pdf, stored.filename);
+                  return;
+                }
+              } catch (error) {
+                console.error(`Failed to load stored PDF:`, error);
+                setIsLoading(false);
+                // Show error and clear bad storage
+                alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage and showing demo.`);
+                await PDFStorage.clear();
+                // Continue to config auto-load
+              }
+
+              // Fall back to config auto-load (lowest priority)
               if (!CONFIG.AUTO_LOAD_PDF) return;
 
               try {
@@ -606,8 +824,15 @@
           const loadPDF = async (pdf, filename = 'PDF') => {
             setNumPages(pdf.numPages);
             pdfDocRef.current = pdf;
+            setCurrentFilename(filename);
 
-            console.log(`[v1.4.3] Loaded ${filename} with ${pdf.numPages} pages`);
+            // Update page title - extract filename from URL if needed
+            const displayName = filename.startsWith('http://') || filename.startsWith('https://')
+              ? decodeURIComponent(filename.split('/').pop() || 'PDF')
+              : filename;
+            document.title = `${displayName} - PDF Grid Viewer`;
+
+            console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
 
             // Render all pages
             setLoadingStatus('Rendering all pages...');
@@ -636,6 +861,9 @@
             setLoadingStatus('Loading PDF...');
             setPdfFile({ name: url }); // Store URL as "file" for display
 
+            // Clear any stored local PDFs when loading from URL
+            await PDFStorage.clear();
+
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
               await loadPDF(pdf, url);
@@ -660,8 +888,14 @@
             setUrlInput(''); // Clear URL input when uploading a file
 
             try {
+              // Read file as ArrayBuffer for storage
+              const fileData = await file.arrayBuffer();
+
               const pdf = await PDFUtils.loadPDFFromFile(file);
               await loadPDF(pdf, file.name);
+
+              // Save to storage for persistence across refreshes
+              await PDFStorage.save(fileData, file.name);
             } catch (error) {
               console.error('Error loading PDF:', error);
               alert('Error loading PDF: ' + error.message);
@@ -762,6 +996,59 @@
             osdViewerRef.current = viewer;
           };
 
+          /**
+           * Drag-and-drop handlers
+           */
+          const handleDragOver = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          };
+
+          const handleDrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (isLoading) return;
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+              const file = files[0];
+              if (file.type === 'application/pdf') {
+                await handleFileUpload({ target: { files: [file] } });
+              } else {
+                alert('Please drop a PDF file');
+              }
+            }
+          };
+
+          /**
+           * Download current PDF
+           */
+          const handleDownload = async () => {
+            if (!pdfDocRef.current || !currentFilename) {
+              alert('No PDF loaded');
+              return;
+            }
+
+            try {
+              const pdf = pdfDocRef.current;
+              const data = await pdf.getData();
+              const blob = new Blob([data], { type: 'application/pdf' });
+              const url = URL.createObjectURL(blob);
+
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = currentFilename.replace(/^https?:\/\/.*\//, '') || 'download.pdf';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            } catch (error) {
+              console.error('Error downloading PDF:', error);
+              alert('Failed to download PDF');
+            }
+          };
+
           return (
             <div className="w-full h-full bg-gray-900 flex flex-col">
               {/* Header */}
@@ -811,13 +1098,17 @@
               </div>
 
               {/* Viewer Area */}
-              <div className="flex-1 relative">
+              <div
+                className="flex-1 relative"
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
                 {/* Help/About Overlay */}
                 {showHelp && (
                   <div className="absolute top-0 left-0 right-0 z-20 bg-gray-800 border-b border-gray-700 shadow-lg max-h-full overflow-y-auto">
                     <div className="max-w-4xl mx-auto p-4 md:p-6">
                       <div className="flex justify-between items-start mb-4">
-                        <h2 className="text-xl font-bold text-white">PDF Grid Viewer v1.4.3</h2>
+                        <h2 className="text-xl font-bold text-white">PDF Grid Viewer v{CONFIG.VERSION}</h2>
                         <button
                           onClick={() => setShowHelp(false)}
                           className="text-gray-400 hover:text-white text-2xl leading-none"
@@ -839,6 +1130,7 @@
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
                             <li><strong>Local File:</strong> Click "Local PDF" to choose a file from your device.</li>
+                            <li><strong>Drag-and-Drop:</strong> Drag a PDF file from your computer onto the viewer.</li>
                             <li><strong>Query Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
                           </ul>
                         </div>
@@ -852,6 +1144,17 @@
                             <li><strong>Fullscreen:</strong> Click the fullscreen button for immersive viewing.</li>
                           </ul>
                         </div>
+
+                        {pdfFile && (
+                          <div className="pt-2 border-t border-gray-700">
+                            <button
+                              onClick={handleDownload}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
+                            >
+                              Download PDF
+                            </button>
+                          </div>
+                        )}
 
                         <div>
 
@@ -886,9 +1189,11 @@
                       <svg className="w-24 h-24 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                       </svg>
-                      <p className="text-lg">Upload a PDF to get started</p>
-                      <p className="text-sm mt-2">Pages will appear in a rotating grid pattern</p>
-                    </div>
+                      <p className="text-lg">Drag & drop a PDF to get started</p>
+                      <p className="text-sm mt-2">Pages will appear in a rotating grid pattern; zoom out to see the whole at once.</p>
+                      <p className="text-sm mt-2">Local files are stored locally and not uploaded to any server. View page source code to verify.</p>
+                      <p className="text-sm mt-2">This app is a single HTML file. Save it to your device to run offline.</p>
+                      </div>
                   </div>
                 ) : null}
                 
