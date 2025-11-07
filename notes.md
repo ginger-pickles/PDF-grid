@@ -158,3 +158,122 @@ app.get('/proxy', async (req, res) => {
 
 app.listen(3000);
 ```
+
+## Browser History Support for Local PDFs
+
+### Current Behavior (v1.4.4)
+- Uses `history.replaceState()` to clear URL parameters when loading local files
+- Single-file storage policy (one PDF at a time in sessionStorage/IndexedDB)
+- No back/forward navigation between different local PDFs
+- Pressing back/forward goes to pages visited before the app
+
+### Proposed Implementation
+
+To support browser back/forward navigation between local PDFs:
+
+#### 1. Use `pushState()` Instead of `replaceState()`
+
+```javascript
+// Current (replaces history entry):
+window.history.replaceState({}, '', newUrl);
+
+// Proposed (creates new history entry):
+window.history.pushState({
+  pdfId: uniqueId,
+  filename: file.name
+}, '', newUrl);
+```
+
+#### 2. Multi-File Storage Model
+
+Change from single-file to multi-file storage:
+
+```javascript
+// Current storage structure:
+{
+  pdfData: ArrayBuffer,
+  filename: string,
+  timestamp: number
+}
+
+// Proposed storage structure:
+{
+  pdfs: {
+    [uniqueId]: {
+      pdfData: ArrayBuffer,
+      filename: string,
+      timestamp: number,
+      lastAccessed: number
+    }
+  },
+  history: [uniqueId1, uniqueId2, uniqueId3...] // Ordered list
+}
+```
+
+#### 3. Listen to `popstate` Events
+
+```javascript
+window.addEventListener('popstate', (event) => {
+  if (event.state && event.state.pdfId) {
+    // Load PDF from storage using pdfId
+    const stored = await PDFStorage.loadById(event.state.pdfId);
+    if (stored) {
+      await loadPDF(stored.pdf, stored.filename);
+    }
+  }
+});
+```
+
+#### 4. Storage Cleanup Strategy
+
+Need to prevent storage bloat:
+
+**Option A: LRU with size limit**
+- Keep last N PDFs (e.g., 10)
+- Evict least recently accessed when limit reached
+- Use lastAccessed timestamp
+
+**Option B: History-based**
+- Keep only PDFs in browser history
+- Clean up when history entry is removed (difficult to detect)
+
+**Option C: Hybrid**
+- Keep last N PDFs OR last 7 days (whichever is more restrictive)
+- Track total storage size, warn if > X MB
+
+#### 5. Configuration
+
+Add to CONFIG:
+
+```javascript
+CONFIG: {
+  // ...existing config
+  MAX_STORED_PDFS: 10,          // Maximum local PDFs to keep
+  MAX_STORAGE_MB: 100,           // Maximum total storage size
+  ENABLE_HISTORY: true           // Enable back/forward navigation
+}
+```
+
+### Trade-offs
+
+**Pros:**
+- Natural browser navigation (back/forward buttons work)
+- Better user experience for comparing multiple PDFs
+- Matches user expectations from web browsing
+
+**Cons:**
+- Increased storage usage (multiple PDFs instead of one)
+- More complex state management
+- Need cleanup logic to prevent bloat
+- Higher memory usage if many large PDFs loaded
+
+### Implementation Complexity
+
+**Medium complexity:**
+- Modify PDFStorage module to support multiple PDFs
+- Add popstate event listener
+- Implement LRU cleanup logic
+- Update file upload/load logic to use pushState()
+- Test edge cases (storage full, expired PDFs, etc.)
+
+**Estimated effort:** 2-3 hours
