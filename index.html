@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer v1.3.0</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>PDF Grid Viewer v1.4.1</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -11,7 +13,40 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; }
+        :root {
+            --vh: 1vh;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100vh;
+            height: calc(var(--vh, 1vh) * 100);
+        }
+        #root {
+            width: 100%;
+            height: 100%;
+        }
+        /* Prevent iOS Safari from bouncing */
+        body, #root {
+            overscroll-behavior: none;
+            -webkit-overflow-scrolling: touch;
+        }
+        /* Navigator sizing - responsive */
+        .navigator {
+            max-width: 25vw !important;
+            max-height: 25vw !important;
+            width: 200px !important;
+            height: 200px !important;
+        }
+        @media (min-width: 768px) {
+            .navigator {
+                width: 200px !important;
+                height: 200px !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -53,9 +88,10 @@
           TILE_REFRESH_INTERVAL: 3, // Refresh tiles every N pages during loading
 
           // OpenSeadragon
-          OSD_MIN_ZOOM: 0.1,
-          OSD_MAX_ZOOM: 10,
-          OSD_VISIBILITY_RATIO: 0.2,
+          OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
+          OSD_MAX_ZOOM: 50, // Allow deep zoom into page details
+          OSD_MAX_ZOOM_PIXEL_RATIO: 2.0, // Allow zoom to 2x the original pixel resolution
+          OSD_VISIBILITY_RATIO: 0.9, // 90% of grid must remain visible (allows limited panning beyond edges when zoomed in)
 
           // UI
           BACKGROUND_COLOR: '#1f2937'
@@ -91,15 +127,23 @@
            * Let PDF.js handle the fetch directly for better CORS handling
            */
           async loadPDFFromURL(url) {
-            let finalUrl = url;
-
             // Apply CORS proxy if configured and URL is external
             if (CONFIG.CORS_PROXY && this._isExternalURL(url)) {
-              finalUrl = CONFIG.CORS_PROXY + encodeURIComponent(url);
-              console.log(`Using CORS proxy: ${finalUrl}`);
+              const proxiedUrl = CONFIG.CORS_PROXY + encodeURIComponent(url);
+              console.log(`Using CORS proxy: ${proxiedUrl}`);
+
+              // Fetch via proxy and get binary data
+              const response = await fetch(proxiedUrl);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch PDF via proxy: ${response.status} ${response.statusText}`);
+              }
+
+              const arrayBuffer = await response.arrayBuffer();
+              return await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             }
 
-            return await pdfjsLib.getDocument({ url: finalUrl }).promise;
+            // For non-external URLs, let PDF.js handle it directly
+            return await pdfjsLib.getDocument({ url: url }).promise;
           },
 
           /**
@@ -435,21 +479,32 @@
            * Initialize OpenSeadragon viewer
            */
           initialize(tileSource, pageWidth, pageHeight) {
-            const viewer = OpenSeadragon({
+            const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileSource.getOSDConfig(),
               showNavigator: true,
-              navigatorPosition: 'BOTTOM_RIGHT',
-              showRotationControl: true,
-              minZoomLevel: CONFIG.OSD_MIN_ZOOM,
+              navigatorPosition: 'TOP_RIGHT',
+              showRotationControl: false, // Hide rotation buttons
+              showZoomControl: false, // Hide zoom in/out buttons
+              showHomeControl: true, // Keep home button
+              showFullPageControl: true, // Keep fullscreen button
               maxZoomLevel: CONFIG.OSD_MAX_ZOOM,
+              maxZoomPixelRatio: CONFIG.OSD_MAX_ZOOM_PIXEL_RATIO,
+              minZoomImageRatio: 0.95, // Allow ~5% margins around grid
               visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
-              constrainDuringPan: false,
+              constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
               immediateRender: true,
               preload: true
-            });
+            };
+
+            // Only set minZoomLevel if specified
+            if (CONFIG.OSD_MIN_ZOOM !== null) {
+              viewerConfig.minZoomLevel = CONFIG.OSD_MIN_ZOOM;
+            }
+
+            const viewer = OpenSeadragon(viewerConfig);
 
             // Set initial view to first page
             viewer.addHandler('open', function() {
@@ -483,6 +538,23 @@
           // Initialize PDF.js worker on mount
           React.useEffect(() => {
             PDFUtils.initWorker();
+          }, []);
+
+          // Fix iOS Safari viewport height
+          React.useEffect(() => {
+            const setVH = () => {
+              const vh = window.innerHeight * 0.01;
+              document.documentElement.style.setProperty('--vh', `${vh}px`);
+            };
+
+            setVH();
+            window.addEventListener('resize', setVH);
+            window.addEventListener('orientationchange', setVH);
+
+            return () => {
+              window.removeEventListener('resize', setVH);
+              window.removeEventListener('orientationchange', setVH);
+            };
           }, []);
 
           // Auto-load PDF on mount (from query parameter or config)
@@ -526,7 +598,7 @@
             setNumPages(pdf.numPages);
             pdfDocRef.current = pdf;
 
-            console.log(`[v1.4] Loaded ${filename} with ${pdf.numPages} pages`);
+            console.log(`[v1.4.1] Loaded ${filename} with ${pdf.numPages} pages`);
 
             // Render all pages
             setLoadingStatus('Rendering all pages...');
@@ -590,11 +662,39 @@
               return;
             }
 
+            // Validate URL format
+            if (!url.startsWith('http://') && !url.startsWith('https://') && !url.endsWith('.pdf')) {
+              alert('Please enter a valid URL starting with http:// or https://\n\nExample: https://example.com/document.pdf');
+              return;
+            }
+
+            // Check if URL looks like a PDF
+            const urlLower = url.toLowerCase();
+            if (!urlLower.endsWith('.pdf') && !urlLower.includes('.pdf?') && !urlLower.includes('.pdf#')) {
+              const proceed = confirm(
+                'The URL doesn\'t appear to be a PDF file.\n\n' +
+                'URL: ' + url + '\n\n' +
+                'Do you want to try loading it anyway?'
+              );
+              if (!proceed) {
+                return;
+              }
+            }
+
             try {
               await loadPDFFromURL(url);
               setUrlInput(''); // Clear input on success
             } catch (error) {
-              alert('Error loading PDF from URL: ' + error.message);
+              let errorMsg = 'Error loading PDF from URL:\n\n' + error.message;
+
+              // Provide helpful hints for common errors
+              if (error.message.includes('Invalid PDF structure')) {
+                errorMsg += '\n\nTip: Make sure the URL points directly to a PDF file, not an HTML page.';
+              } else if (error.message.includes('NetworkError') || error.message.includes('CORS')) {
+                errorMsg += '\n\nTip: The server may not allow cross-origin requests. Try a different PDF URL.';
+              }
+
+              alert(errorMsg);
             }
           };
 
@@ -649,54 +749,41 @@
           };
 
           return (
-            <div className="w-full h-screen bg-gray-900 flex flex-col">
+            <div className="w-full h-full bg-gray-900 flex flex-col">
               {/* Header */}
-              <div className="bg-gray-800 border-b border-gray-700 p-4">
-                <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.4</h1>
+              <div className="bg-gray-800 border-b border-gray-700 p-2 md:p-3">
+                <div className="flex items-center gap-2 max-w-7xl mx-auto">
+                  {/* URL Input */}
+                  <input
+                    type="text"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    onKeyPress={handleUrlKeyPress}
+                    placeholder="Enter PDF URL..."
+                    className="flex-1 px-2 md:px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded focus:outline-none focus:border-blue-500 text-sm"
+                    disabled={isLoading}
+                  />
+                  <button
+                    onClick={handleUrlLoad}
+                    disabled={isLoading}
+                    className="px-3 md:px-4 py-2 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap text-sm"
+                  >
+                    <span className="md:hidden">URL</span>
+                    <span className="hidden md:inline">Load URL</span>
+                  </button>
 
-                  <div className="flex items-center gap-3">
-                    {/* URL Input */}
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={urlInput}
-                        onChange={(e) => setUrlInput(e.target.value)}
-                        onKeyPress={handleUrlKeyPress}
-                        placeholder="Enter PDF URL..."
-                        className="px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded focus:outline-none focus:border-blue-500 w-64"
-                        disabled={isLoading}
-                      />
-                      <button
-                        onClick={handleUrlLoad}
-                        disabled={isLoading}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Load URL
-                      </button>
-                    </div>
-
-                    {/* File Upload */}
-                    <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
-                      {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
-                      <input
-                        type="file"
-                        accept="application/pdf"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
+                  {/* File Upload */}
+                  <label className="px-3 md:px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded cursor-pointer transition-colors text-center text-sm whitespace-nowrap">
+                    <span className="md:hidden">PDF</span>
+                    <span className="hidden md:inline">Upload PDF</span>
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
                 </div>
-
-                {numPages > 0 && (
-                  <div className="mt-2 text-sm text-gray-400 max-w-7xl mx-auto">
-                    {numPages} pages • Grid size: {numPages}×{numPages}
-                    {pagesLoaded < numPages &&
-                      ` • Loaded ${pagesLoaded}/${numPages} pages`
-                    }
-                  </div>
-                )}
               </div>
 
               {/* Viewer Area */}
@@ -730,16 +817,6 @@
                 />
               </div>
 
-              {/* Instructions */}
-              {pdfFile && !isLoading && (
-                <div className="bg-gray-800 border-t border-gray-700 p-3">
-                  <div className="max-w-7xl mx-auto text-sm text-gray-400 flex gap-6">
-                    <span>🖱️ Drag to pan</span>
-                    <span>🔍 Scroll to zoom</span>
-                    <span>🏠 Click to center</span>
-                  </div>
-                </div>
-              )}
             </div>
           );
         };
