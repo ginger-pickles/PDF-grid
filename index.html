@@ -790,6 +790,20 @@
 
         const OSDManager = {
           /**
+           * Detect if device is primarily touch-based
+           */
+          isTouchDevice() {
+            // Check multiple signals for touch devices
+            const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+            const hasNoHover = window.matchMedia('(hover: none)').matches;
+            const hasTouchEvents = 'ontouchstart' in window;
+
+            // Device is touch-based if it has coarse pointer OR no hover capability
+            // Also check touch events as fallback for older browsers
+            return hasCoarsePointer || hasNoHover || (hasTouchEvents && !window.matchMedia('(pointer: fine)').matches);
+          },
+
+          /**
            * Initialize OpenSeadragon viewer
            */
           initialize(tileSource, pageWidth, pageHeight, gridSize) {
@@ -799,13 +813,18 @@
             // Formula: max(0.05, min(0.95, 10 / gridSize))
             const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
 
+            // Detect touch device and hide navigator on mobile
+            const isTouchDevice = this.isTouchDevice();
+            const showNavigator = !isTouchDevice;
+
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
+            console.log(`Touch device: ${isTouchDevice}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileSource.getOSDConfig(),
-              showNavigator: true,
+              showNavigator: showNavigator,
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
               showZoomControl: false, // Hide zoom in/out buttons
