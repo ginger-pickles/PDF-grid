@@ -790,7 +790,8 @@
 
         const OSDManager = {
           /**
-           * Detect if device is primarily touch-based
+           * Detect if device is a small phone (not tablet/iPad)
+           * Uses physical screen size, not just pixels
            */
           isTouchDevice() {
             // Check multiple signals for touch devices
@@ -798,9 +799,25 @@
             const hasNoHover = window.matchMedia('(hover: none)').matches;
             const hasTouchEvents = 'ontouchstart' in window;
 
-            // Device is touch-based if it has coarse pointer OR no hover capability
-            // Also check touch events as fallback for older browsers
-            return hasCoarsePointer || hasNoHover || (hasTouchEvents && !window.matchMedia('(pointer: fine)').matches);
+            // If not a touch device at all, show navigator
+            const isTouchCapable = hasCoarsePointer || hasNoHover || (hasTouchEvents && !window.matchMedia('(pointer: fine)').matches);
+            if (!isTouchCapable) {
+              return false;
+            }
+
+            // It's touch-capable, but is it a small phone or a tablet/iPad?
+            // Calculate approximate physical width in inches
+            const devicePixelRatio = window.devicePixelRatio || 1;
+            const physicalWidth = window.screen.width / devicePixelRatio;
+            const physicalHeight = window.screen.height / devicePixelRatio;
+
+            // Assume ~160 DPI for rough physical size calculation
+            // (Most phones are 326-460 DPI, tablets are 220-264 DPI)
+            const minDimension = Math.min(physicalWidth, physicalHeight);
+
+            // Hide navigator only on small screens (< 600 CSS pixels in portrait)
+            // This catches phones but not iPads/tablets (typically 768px+)
+            return minDimension < 600;
           },
 
           /**
@@ -813,12 +830,12 @@
             // Formula: max(0.05, min(0.95, 10 / gridSize))
             const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
 
-            // Detect touch device and hide navigator on mobile
-            const isTouchDevice = this.isTouchDevice();
-            const showNavigator = !isTouchDevice;
+            // Detect small phone and hide navigator on mobile
+            const isSmallPhone = this.isTouchDevice();
+            const showNavigator = !isSmallPhone;
 
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-            console.log(`Touch device: ${isTouchDevice}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
+            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
