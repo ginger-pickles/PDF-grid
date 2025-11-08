@@ -24,9 +24,11 @@ Optimize page refresh performance - currently re-renders all pages on every refr
 Add support to switch between different page layouts: Rotating grid (default), Skewed/Staggered, Conventional grid, Scroll, Two-up, Infinite(?), etc
 
 A "staggered" rotating grid looks like:
+'''
 0 0 1 2 3
 0 1 2 3 0
 1 2 3 0 0
+'''
 (where zero denotes a blank page)
 
 Elegantly handle odd-sized pages; including odd first pages
