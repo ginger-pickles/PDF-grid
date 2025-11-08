@@ -3,18 +3,22 @@
 
 ## INTERFACE
 
-Remove version number from page title
+Increase scrollwheel zoom sensitivity
 
-Catch error when demo.pdf not present on server; ensure instruction screen is shown - presently blank
+Handle situations where ?url and ?pdf parameters interact or error out depending on file:// vs http:// protocol in use
+
+Change the download command to expressly download the file to local storage, instead of loading a PDF in the browser
 
 
 ## PERFORMANCE
 
-implement progressive loading and rendering
+Implement progressive loading and rendering
 
-support more than a hundred or so pages without crashing
+Support more than a hundred or so pages without crashing
 
-Incorporate external libraries somehow rather than pulling from whereever they come from now.
+Gracefully handle pages of odd size
+
+Incorporate external libraries somehow rather than pulling from whereever they come from now
 
 Optimize page refresh performance - currently re-renders all pages on every refresh (see notes.md for canvas storage vs progressive rendering options)
 
@@ -35,4 +39,6 @@ Elegantly handle odd-sized pages; including odd first pages
 
 Add browser history support for back/forward navigation between local PDFs (see notes.md for implementation details)
 
-Add the ability to switch, with buttons, between PDFs residing in the local direcotry from which index.html is served.
+Add the ability to switch, with buttons, between PDFs residing in the local directory from which index.html is served
+
+Add the ability to export the transformed tile canvas to a reduced image
