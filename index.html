@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PDF Grid Viewer v1.5.1</title>
+    <title>PDF Grid Viewer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -1088,6 +1088,8 @@
             } catch (error) {
               console.error('Error loading PDF from URL:', error);
               setIsLoading(false);
+              setPdfFile(null); // Clear pdfFile to show instruction screen
+              setLoadingStatus('');
               throw error; // Re-throw for auto-load handler
             }
           };
