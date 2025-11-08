@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>PDF Grid Viewer v1.5.1</title>
+    <title>PDF Grid Viewer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -790,6 +790,37 @@
 
         const OSDManager = {
           /**
+           * Detect if device is a small phone (not tablet/iPad)
+           * Uses physical screen size, not just pixels
+           */
+          isTouchDevice() {
+            // Check multiple signals for touch devices
+            const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+            const hasNoHover = window.matchMedia('(hover: none)').matches;
+            const hasTouchEvents = 'ontouchstart' in window;
+
+            // If not a touch device at all, show navigator
+            const isTouchCapable = hasCoarsePointer || hasNoHover || (hasTouchEvents && !window.matchMedia('(pointer: fine)').matches);
+            if (!isTouchCapable) {
+              return false;
+            }
+
+            // It's touch-capable, but is it a small phone or a tablet/iPad?
+            // Calculate approximate physical width in inches
+            const devicePixelRatio = window.devicePixelRatio || 1;
+            const physicalWidth = window.screen.width / devicePixelRatio;
+            const physicalHeight = window.screen.height / devicePixelRatio;
+
+            // Assume ~160 DPI for rough physical size calculation
+            // (Most phones are 326-460 DPI, tablets are 220-264 DPI)
+            const minDimension = Math.min(physicalWidth, physicalHeight);
+
+            // Hide navigator only on small screens (< 600 CSS pixels in portrait)
+            // This catches phones but not iPads/tablets (typically 768px+)
+            return minDimension < 600;
+          },
+
+          /**
            * Initialize OpenSeadragon viewer
            */
           initialize(tileSource, pageWidth, pageHeight, gridSize) {
@@ -799,13 +830,18 @@
             // Formula: max(0.05, min(0.95, 10 / gridSize))
             const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
 
+            // Detect small phone and hide navigator on mobile
+            const isSmallPhone = this.isTouchDevice();
+            const showNavigator = !isSmallPhone;
+
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
+            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileSource.getOSDConfig(),
-              showNavigator: true,
+              showNavigator: showNavigator,
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
               showZoomControl: false, // Hide zoom in/out buttons
@@ -1088,6 +1124,8 @@
             } catch (error) {
               console.error('Error loading PDF from URL:', error);
               setIsLoading(false);
+              setPdfFile(null); // Clear pdfFile to show instruction screen
+              setLoadingStatus('');
               throw error; // Re-throw for auto-load handler
             }
           };
