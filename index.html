@@ -173,83 +173,77 @@
               }
             }
             
-            // Create tile storage
-            const tiles = {};
+            // Create tile storage with LRU cache
             const tileSize = 256;
+            const tileCache = createLRUCache(150); // Keep only 150 most recent tiles
             
             // Calculate max level for DZI pyramid
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`Generating tiles for ${totalWidth}x${totalHeight} image, max level: ${maxLevel}`);
+            console.log(`Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
             
-            // Create a reusable tile canvas
+            // Create a reusable tile canvas for performance
             const tileCanvas = document.createElement('canvas');
             tileCanvas.width = tileSize;
             tileCanvas.height = tileSize;
-            const tileCtx = tileCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
+            const tileCtx = tileCanvas.getContext('2d', { alpha: false });
             
-            // Generate all tiles efficiently
-            let tileCount = 0;
-            for (let level = maxLevel; level >= 0; level--) {
-              const scale = Math.pow(2, level - maxLevel);
-              const levelWidth = Math.ceil(totalWidth * scale);
-              const levelHeight = Math.ceil(totalHeight * scale);
-              const tilesX = Math.ceil(levelWidth / tileSize);
-              const tilesY = Math.ceil(levelHeight / tileSize);
-              
-              for (let ty = 0; ty < tilesY; ty++) {
-                for (let tx = 0; tx < tilesX; tx++) {
-                  // Calculate source coordinates
-                  const sx = tx * tileSize / scale;
-                  const sy = ty * tileSize / scale;
-                  const sw = Math.min(tileSize / scale, totalWidth - sx);
-                  const sh = Math.min(tileSize / scale, totalHeight - sy);
-                  
-                  // Clear and fill background
-                  tileCtx.fillStyle = '#1f2937';
-                  tileCtx.fillRect(0, 0, tileSize, tileSize);
-                  
-                  // Draw tile
-                  const dw = sw * scale;
-                  const dh = sh * scale;
-                  tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
-                  
-                  // Create blob URL (synchronously since toBlob can be slow)
-                  const key = `${level}_${tx}_${ty}`;
-                  tiles[key] = tileCanvas.toDataURL('image/jpeg', 0.85);
-                  tileCount++;
+            // Custom tile source for on-demand generation
+            const customTileSource = {
+              height: totalHeight,
+              width: totalWidth,
+              tileSize: tileSize,
+              minLevel: 0,
+              maxLevel: maxLevel,
+              getTileUrl: function(level, x, y) {
+                const key = `${level}_${x}_${y}`;
+                
+                // Check cache first
+                let tileUrl = tileCache.get(key);
+                if (tileUrl) {
+                  return tileUrl;
                 }
+                
+                // Generate tile on-demand
+                const scale = Math.pow(2, level - maxLevel);
+                const sx = x * tileSize / scale;
+                const sy = y * tileSize / scale;
+                const sw = Math.min(tileSize / scale, totalWidth - sx);
+                const sh = Math.min(tileSize / scale, totalHeight - sy);
+                
+                // Clear and fill background
+                tileCtx.fillStyle = '#1f2937';
+                tileCtx.fillRect(0, 0, tileSize, tileSize);
+                
+                // Draw tile from composite canvas
+                const dw = sw * scale;
+                const dh = sh * scale;
+                tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
+                
+                // Convert to data URL and cache
+                tileUrl = tileCanvas.toDataURL('image/jpeg', 0.85);
+                tileCache.set(key, tileUrl);
+                
+                return tileUrl;
               }
-              console.log(`Generated level ${level}: ${tilesX}x${tilesY} tiles`);
-            }
+            };
             
-            console.log(`Total tiles generated: ${tileCount}`);
-            
-            // Initialize OpenSeadragon with pre-generated tiles
+            // Initialize OpenSeadragon with custom tile source
             const viewer = OpenSeadragon({
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
-              tileSources: {
-                height: totalHeight,
-                width: totalWidth,
-                tileSize: tileSize,
-                minLevel: 0,
-                maxLevel: maxLevel,
-                getTileUrl: function(level, x, y) {
-                  return tiles[`${level}_${x}_${y}`] || '';
-                }
-              },
+              tileSources: customTileSource,
               showNavigator: true,
               navigatorPosition: 'BOTTOM_RIGHT',
               showRotationControl: true,
-              minZoomLevel: 0.1,  // Allow zooming out to see full grid
+              minZoomLevel: 0.1,
               maxZoomLevel: 10,
               visibilityRatio: 0.2,
               constrainDuringPan: false,
-              homeFillsViewer: false, // Don't auto-fit the whole image
-              immediateRender: true,  // Render tiles immediately
-              preload: true           // Preload nearby tiles
+              homeFillsViewer: false,
+              immediateRender: true,
+              preload: true
             });
             
             // Set initial view to show the first page (top-left corner)
@@ -265,6 +259,36 @@
             });
 
             osdViewerRef.current = viewer;
+          };
+
+          // Create a simple LRU cache
+          const createLRUCache = (maxSize) => {
+            const cache = new Map();
+            
+            return {
+              get: (key) => {
+                if (!cache.has(key)) return null;
+                // Move to end (most recently used)
+                const value = cache.get(key);
+                cache.delete(key);
+                cache.set(key, value);
+                return value;
+              },
+              set: (key, value) => {
+                // Remove if exists (to re-insert at end)
+                if (cache.has(key)) {
+                  cache.delete(key);
+                }
+                cache.set(key, value);
+                
+                // Evict oldest if over size
+                if (cache.size > maxSize) {
+                  const firstKey = cache.keys().next().value;
+                  cache.delete(firstKey);
+                }
+              },
+              size: () => cache.size
+            };
           };
 
           return (
