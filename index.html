@@ -76,7 +76,14 @@
           CORS_PROXY: 'https://corsproxy.io/?',
 
           // PDF Rendering
-          PDF_RENDER_SCALE: 2.0,
+          PDF_RENDER_SCALE: 2.0, // High-res scale for detail view (not used in progressive mode)
+
+          // Global View Scale Calculation
+          GLOBAL_SCALE_MIN: 0.15,  // Minimum scale for global view (below this, unrecognizable)
+          GLOBAL_SCALE_MAX: 1.0,   // Maximum scale for global view
+          GLOBAL_SCALE_SCREEN_MARGIN: 0.8, // Use 80% of screen for content
+          GLOBAL_SCALE_TARGET_SCREEN_WIDTH: 1920, // Conservative desktop estimate
+          GLOBAL_SCALE_TARGET_SCREEN_HEIGHT: 1080,
 
           // Grid Layout
           GRID_SPACING_RATIO: 0.01, // Spacing as ratio of page width
@@ -215,6 +222,47 @@
             } catch (e) {
               return false;
             }
+          },
+
+          /**
+           * Calculate optimal rendering scale for global/minimap view
+           * Based on screen size, page dimensions, and number of pages
+           * @param {number} numPages - Total number of pages in PDF
+           * @param {number} pageWidth - Page width at 1.0x scale
+           * @param {number} pageHeight - Page height at 1.0x scale
+           * @returns {number} Optimal scale for global view
+           */
+          calculateGlobalScale(numPages, pageWidth, pageHeight) {
+            // Target screen size (use actual window size or conservative fallback)
+            const targetScreenWidth = Math.min(
+              window.innerWidth || CONFIG.GLOBAL_SCALE_TARGET_SCREEN_WIDTH,
+              CONFIG.GLOBAL_SCALE_TARGET_SCREEN_WIDTH
+            );
+            const targetScreenHeight = Math.min(
+              window.innerHeight || CONFIG.GLOBAL_SCALE_TARGET_SCREEN_HEIGHT,
+              CONFIG.GLOBAL_SCALE_TARGET_SCREEN_HEIGHT
+            );
+
+            // Grid dimensions
+            const gridSize = Math.ceil(Math.sqrt(numPages));
+
+            // Pixels available per page when viewing whole grid (with margin)
+            const pixelsPerPageWidth = (targetScreenWidth * CONFIG.GLOBAL_SCALE_SCREEN_MARGIN) / gridSize;
+            const pixelsPerPageHeight = (targetScreenHeight * CONFIG.GLOBAL_SCALE_SCREEN_MARGIN) / gridSize;
+
+            // Calculate scale to match display density
+            const scaleForWidth = pixelsPerPageWidth / pageWidth;
+            const scaleForHeight = pixelsPerPageHeight / pageHeight;
+
+            // Use smaller scale (more conservative, fits both dimensions)
+            let scale = Math.min(scaleForWidth, scaleForHeight);
+
+            // Clamp to reasonable range
+            scale = Math.max(CONFIG.GLOBAL_SCALE_MIN, Math.min(CONFIG.GLOBAL_SCALE_MAX, scale));
+
+            console.log(`Global scale: ${numPages} pages → ${gridSize}×${gridSize} grid → ${scale.toFixed(3)}x (${pixelsPerPageWidth.toFixed(0)}×${pixelsPerPageHeight.toFixed(0)} px/page)`);
+
+            return scale;
           },
 
           /**
@@ -907,7 +955,9 @@
 
             try {
               const page = await this.pdf.getPage(pageNum);
-              const canvas = await PDFUtils.renderPageToCanvas(page, CONFIG.PDF_RENDER_SCALE);
+              // Use calculated global scale or fall back to config
+              const scale = window.globalRenderScale || CONFIG.PDF_RENDER_SCALE;
+              const canvas = await PDFUtils.renderPageToCanvas(page, scale);
 
               // Add to cache
               this.pageCache.set(pageNum, canvas);
@@ -1424,16 +1474,24 @@
                 pageCanvasesRef.current = [];
               }
 
-              // Render ONLY first page to get dimensions
-              setLoadingStatus('Rendering first page...');
+              // Calculate optimal scale for global view based on page count
+              setLoadingStatus('Calculating optimal scale...');
               const firstPage = await pdf.getPage(1);
-              const firstCanvas = await PDFUtils.renderPageToCanvas(firstPage, CONFIG.PDF_RENDER_SCALE);
+              const viewport1x = firstPage.getViewport({ scale: 1.0 });
+              const globalScale = PDFUtils.calculateGlobalScale(pdf.numPages, viewport1x.width, viewport1x.height);
+
+              // Render first page at calculated global scale
+              setLoadingStatus('Rendering first page...');
+              const firstCanvas = await PDFUtils.renderPageToCanvas(firstPage, globalScale);
               pageCanvasesRef.current[0] = firstCanvas;
               pageWidth = firstCanvas.width;
               pageHeight = firstCanvas.height;
               setPagesLoaded(1);
 
-              console.log(`First page rendered: ${pageWidth}x${pageHeight}`);
+              console.log(`First page rendered at ${globalScale.toFixed(3)}x: ${pageWidth}x${pageHeight}`);
+
+              // Store global scale for use by CustomTileSource
+              window.globalRenderScale = globalScale;
 
               // Initialize viewer immediately with just first page
               setLoadingStatus('Initializing viewer...');
