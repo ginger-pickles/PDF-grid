@@ -18,11 +18,11 @@ Re-enable local PDF storage for faster refresh
 
 Meet the rendering needs of two views displayed at once - minimap and deepzoom.
 
-Render low-res tiles for minimap (0.X scale) in clever order; and substitute nearest available rendered page for otherwise blank tiles; replacing when ready. Result: Minimap population is scattered amongst dispersed pages instead of sequentially; unrenderd gaps are temporarily filled with nearest neighbour, progressively resolving to complete picture.
+Render low-res tiles for minimap (0.X scale) in clever order; and substitute nearest available rendered page for otherwise blank tiles; replacing when ready. Result: Minimap is population in scattered fashion amongst dispersed pages instead of sequentially; unrendered gaps are temporarily filled with nearest neighbour and replaced as appropriate, progressively resolving to complete picture.
 
-Render screen-res tiles for deep zoom (X.0 scale)) cleverly.
+Render screen-res tiles for deep zoom (X.0 scale)) more cleverly. OSD view-aware rendering.
 
-Optimize or add distinct caches as improves performance.
+Optimize or add distinct caches for distinct tasks, as improves performance.
 
 Optimize page refresh performance; consider storing cache or canvas. (Currently re-renders all pages on every refresh; see notes.md for canvas storage vs progressive rendering options.)
 
