@@ -210,34 +210,7 @@
               tiles[key] = tileCanvas.toDataURL('image/jpeg', 0.85);
             };
             
-            // Calculate tiles needed for first page at all zoom levels
-            const firstPageTilesX = Math.ceil((pageWidth / totalWidth) * Math.ceil(totalWidth / tileSize));
-            const firstPageTilesY = Math.ceil((pageHeight / totalHeight) * Math.ceil(totalHeight / tileSize));
-            
-            console.log(`Pre-generating tiles for first page: ${firstPageTilesX}x${firstPageTilesY} at each level`);
-            
-            // Pre-generate tiles for the first page (top-left) - LOW RES FIRST for fast display
-            for (let level = 0; level <= maxLevel; level++) {  // Changed: start from 0 (lowest res)
-              const scale = Math.pow(2, level - maxLevel);
-              const levelWidth = Math.ceil(totalWidth * scale);
-              const levelHeight = Math.ceil(totalHeight * scale);
-              const tilesX = Math.ceil(levelWidth / tileSize);
-              const tilesY = Math.ceil(levelHeight / tileSize);
-              
-              // Generate tiles that overlap with first page
-              const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
-              const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
-              
-              for (let ty = 0; ty < firstPageMaxTileY; ty++) {
-                for (let tx = 0; tx < firstPageMaxTileX; tx++) {
-                  generateTile(level, tx, ty);
-                }
-              }
-            }
-            
-            console.log(`Pre-generated ${Object.keys(tiles).length} tiles for first page`);
-            
-            // Initialize OpenSeadragon immediately with first page tiles
+            // Initialize OpenSeadragon IMMEDIATELY (before generating any tiles)
             const viewer = OpenSeadragon({
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
@@ -269,6 +242,50 @@
               immediateRender: true,
               preload: true
             });
+            
+            // Set initial view to show the first page
+            viewer.addHandler('open', function() {
+              const viewportRect = viewer.viewport.imageToViewportRectangle(
+                0, 0, pageWidth, pageHeight
+              );
+              viewer.viewport.fitBounds(viewportRect, true);
+            });
+            
+            osdViewerRef.current = viewer;
+            
+            // NOW generate tiles asynchronously in the background (low-res first)
+            const generateFirstPageTiles = async () => {
+              // Generate tiles level by level (low-res to high-res)
+              for (let level = 0; level <= maxLevel; level++) {
+                const scale = Math.pow(2, level - maxLevel);
+                const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
+                const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
+                
+                for (let ty = 0; ty < firstPageMaxTileY; ty++) {
+                  for (let tx = 0; tx < firstPageMaxTileX; tx++) {
+                    generateTile(level, tx, ty);
+                    
+                    // Force viewer to update every few tiles
+                    if ((ty * firstPageMaxTileX + tx) % 3 === 0) {
+                      viewer.forceRedraw();
+                      await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                  }
+                }
+                
+                // Force redraw after each level completes
+                viewer.forceRedraw();
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+              
+              console.log(`First page tiles complete: ${Object.keys(tiles).length} tiles`);
+              
+              // Start generating remaining tiles
+              setTimeout(generateRemainingTiles, 100);
+            };
+            
+            // Start first page tile generation after a tiny delay
+            setTimeout(generateFirstPageTiles, 50);
             
             // Generate remaining tiles in the background using requestIdleCallback
             const generateRemainingTiles = () => {
@@ -330,23 +347,6 @@
                 setTimeout(generateBatch, 100);
               }
             };
-            
-            // Start background generation after a short delay
-            setTimeout(generateRemainingTiles, 500);
-            
-            // Set initial view to show the first page (top-left corner)
-            viewer.addHandler('open', function() {
-              // Calculate the viewport rectangle for the first page
-              // Convert from pixel coordinates to viewport coordinates
-              const viewportRect = viewer.viewport.imageToViewportRectangle(
-                0, 0, pageWidth, pageHeight
-              );
-              
-              // Fit the first page in the viewport
-              viewer.viewport.fitBounds(viewportRect, true);
-            });
-
-            osdViewerRef.current = viewer;
           };
 
           return (
