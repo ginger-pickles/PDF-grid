@@ -61,7 +61,7 @@
 
         const CONFIG = {
           // Version
-          VERSION: '1.6.5',
+          VERSION: '1.6.6',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -1563,7 +1563,7 @@
                   return;
                 }
 
-                console.log(`Starting background rendering of ${totalPages} pages...`);
+                // console.log(`Starting background rendering of ${totalPages} pages...`);
 
                 for (let i = 1; i <= totalPages; i++) {
                   // Render page
@@ -1572,7 +1572,7 @@
 
                   // Recreate TiledImage every 3 pages (like v1.2.8)
                   if (i % 3 === 0 || i === totalPages) {
-                    console.log(`Recreating TiledImage after page ${i}...`);
+                    // console.log(`Recreating TiledImage after page ${i}...`);
 
                     // Preserve current viewport
                     const currentBounds = viewer.viewport.getBounds();
@@ -1594,9 +1594,9 @@
                   }
 
                   // Log progress every 10 pages
-                  if (i % 10 === 0) {
-                    console.log(`Rendered ${i}/${totalPages} pages`);
-                  }
+                  // if (i % 10 === 0) {
+                  //   console.log(`Rendered ${i}/${totalPages} pages`);
+                  // }
 
                   // Yield to browser every 5 pages
                   if (i % 5 === 0) {
@@ -1604,7 +1604,7 @@
                   }
                 }
 
-                console.log(`All ${totalPages} pages rendered!`);
+                // console.log(`All ${totalPages} pages rendered!`);
                 setPagesLoaded(0);
               };
 
