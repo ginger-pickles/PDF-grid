@@ -1183,12 +1183,9 @@
 
             const viewer = OpenSeadragon(viewerConfig);
 
-            // Set initial view to first page
+            // Set initial view to whole grid (zoomed out)
             viewer.addHandler('open', function() {
-              const viewportRect = viewer.viewport.imageToViewportRectangle(
-                0, 0, pageWidth, pageHeight
-              );
-              viewer.viewport.fitBounds(viewportRect, true);
+              viewer.viewport.goHome(true); // Show entire grid
             });
 
             return viewer;
