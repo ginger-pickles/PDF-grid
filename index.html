@@ -174,14 +174,20 @@
             }
             
             // Create tile storage
-            const tileSize = 256;
+            // Use tile size at least as large as a page for one-tile-per-page at initial zoom
+            const tileSize = Math.max(512, Math.ceil(Math.max(pageWidth, pageHeight) / 256) * 256);
             const tiles = {};
             
             // Calculate max level for DZI pyramid
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`[v1.1.7] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            console.log(`[v1.1.8] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            
+            // Use larger tile size - make it at least as large as a single page
+            // This ensures one tile = one page at the initial zoom level
+            const effectiveTileSize = Math.max(tileSize, pageWidth, pageHeight);
+            console.log(`Page size: ${pageWidth}x${pageHeight}, Using tile size: ${tileSize}`);
             
             // Create a reusable tile canvas for performance
             const tileCanvas = document.createElement('canvas');
