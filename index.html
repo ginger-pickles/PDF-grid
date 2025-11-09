@@ -181,7 +181,7 @@
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`[v1.1.4] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            console.log(`[v1.1.6] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
             
             // Create a reusable tile canvas for performance
             const tileCanvas = document.createElement('canvas');
@@ -261,20 +261,17 @@
                 const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
                 const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
                 
+                // Generate ALL tiles for this level without redrawing
                 for (let ty = 0; ty < firstPageMaxTileY; ty++) {
                   for (let tx = 0; tx < firstPageMaxTileX; tx++) {
                     generateTile(level, tx, ty);
-                    
-                    // Force viewer to update every few tiles
-                    if ((ty * firstPageMaxTileX + tx) % 3 === 0) {
-                      viewer.forceRedraw();
-                      await new Promise(resolve => setTimeout(resolve, 0));
-                    }
                   }
                 }
                 
-                // Force redraw after each level completes
+                // Only redraw ONCE after the entire level is complete
                 viewer.forceRedraw();
+                
+                // Yield to browser after each level
                 await new Promise(resolve => setTimeout(resolve, 0));
               }
               
