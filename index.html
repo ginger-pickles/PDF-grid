@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer v1.2.7</title>
+    <title>PDF Grid Viewer v1.2.8</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -18,7 +18,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useRef } = React;
+        const { useState, useRef, useEffect } = React;
 
         const PDFGridViewer = () => {
           const [pdfFile, setPdfFile] = useState(null);
@@ -26,11 +26,39 @@
           const [isLoading, setIsLoading] = useState(false);
           const [loadingStatus, setLoadingStatus] = useState('');
           const [pagesLoaded, setPagesLoaded] = useState(0);
+          const [tileRevision, setTileRevision] = useState(0);
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
           const pageCanvasesRef = useRef([]); // Store individual page canvases
           const pdfDocRef = useRef(null); // Store PDF document
           const tileCacheRef = useRef(null); // Store tile cache reference
+          const tileSourceConfigRef = useRef(null); // Store tile source config
+          
+          // When tileRevision changes, recreate the tile source
+          useEffect(() => {
+            if (tileRevision > 0 && osdViewerRef.current && tileSourceConfigRef.current) {
+              console.log(`Tile revision changed to ${tileRevision}, recreating tile source...`);
+              
+              // Remove old tiledImage
+              const world = osdViewerRef.current.world;
+              if (world.getItemCount() > 0) {
+                world.removeAll();
+              }
+              
+              // Clear tile cache
+              if (tileCacheRef.current) {
+                tileCacheRef.current.clear();
+              }
+              
+              // Add new tiledImage with same config (will call getTileUrl with fresh page data)
+              osdViewerRef.current.addTiledImage({
+                tileSource: tileSourceConfigRef.current,
+                success: function() {
+                  console.log(`  Tile source recreated successfully`);
+                }
+              });
+            }
+          }, [tileRevision]);
 
           // Set up PDF.js worker
           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -70,7 +98,7 @@
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
 
-              console.log(`[v1.2.7] Loaded PDF with ${pdf.numPages} pages`);
+              console.log(`[v1.2.8] Loaded PDF with ${pdf.numPages} pages`);
               
               // Render ONLY the first page initially
               setLoadingStatus('Rendering first page...');
@@ -98,6 +126,35 @@
             }
           };
 
+          // Render remaining pages in background
+          const renderRemainingPages = async (pdf, pageWidth, pageHeight) => {
+            console.log('Starting background page rendering...');
+            
+            for (let i = 2; i <= pdf.numPages; i++) {
+              const pageCanvas = await renderPage(pdf, i);
+              pageCanvasesRef.current.push(pageCanvas);
+              setPagesLoaded(i);
+              
+              // Every 3 pages, increment tile revision to force cache bust
+              if (i % 3 === 0 || i === pdf.numPages) {
+                console.log(`Incrementing tile revision after loading page ${i}...`);
+                setTileRevision(prev => prev + 1);
+              }
+              
+              // Log progress every 10 pages
+              if (i % 10 === 0) {
+                console.log(`Rendered ${i}/${pdf.numPages} pages`);
+              }
+              
+              // Yield to browser occasionally
+              if (i % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+            }
+            
+            console.log(`All ${pdf.numPages} pages rendered!`);
+          };
+
           // Render a single PDF page to canvas
           const renderPage = async (pdf, pageNum) => {
             const page = await pdf.getPage(pageNum);
@@ -115,55 +172,6 @@
             }).promise;
             
             return canvas;
-          };
-
-          // Render remaining pages in background
-          const renderRemainingPages = async (pdf, pageWidth, pageHeight) => {
-            console.log('Starting background page rendering...');
-            
-            for (let i = 2; i <= pdf.numPages; i++) {
-              const pageCanvas = await renderPage(pdf, i);
-              pageCanvasesRef.current.push(pageCanvas);
-              setPagesLoaded(i);
-              
-              // Every 3 pages, force complete tile regeneration
-              if (i % 3 === 0 || i === pdf.numPages) {
-                console.log(`Refreshing tiles after loading page ${i}...`);
-                
-                if (osdViewerRef.current) {
-                  try {
-                    // Get the tiledImage
-                    const tiledImage = osdViewerRef.current.world.getItemAt(0);
-                    
-                    // Force OpenSeadragon to clear ALL tiles and re-request them
-                    // This is the nuclear option - completely reset the tiledImage
-                    tiledImage._resetTiles();
-                    
-                    // Mark that we need to draw
-                    tiledImage._needsDraw = true;
-                    
-                    // Force immediate update
-                    osdViewerRef.current.forceRedraw();
-                    
-                    console.log(`  Reset all tiles in OpenSeadragon`);
-                  } catch (error) {
-                    console.error('Error refreshing tiles:', error);
-                  }
-                }
-              }
-              
-              // Log progress every 10 pages
-              if (i % 10 === 0) {
-                console.log(`Rendered ${i}/${pdf.numPages} pages`);
-              }
-              
-              // Yield to browser occasionally
-              if (i % 5 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-            
-            console.log(`All ${pdf.numPages} pages rendered!`);
           };
 
           const initializeViewer = (numPages, pageWidth, pageHeight) => {
@@ -230,11 +238,8 @@
               getTileUrl: function(level, x, y) {
                 const key = `${level}_${x}_${y}`;
                 
-                // Only use cache if all pages are loaded
-                const allPagesLoaded = pageCanvasesRef.current.length >= numPages;
-                
-                // Check cache only if all pages loaded
-                if (allPagesLoaded && tileCache.has(key)) {
+                // Check cache
+                if (tileCache.has(key)) {
                   const cached = tileCache.get(key);
                   // Move to end (LRU)
                   tileCache.delete(key);
@@ -327,18 +332,19 @@
                 // Convert to data URL
                 const tileUrl = tileCanvas.toDataURL('image/jpeg', 0.85);
                 
-                // Cache only if all pages are loaded
-                if (allPagesLoaded) {
-                  tileCache.set(key, tileUrl);
-                  if (tileCache.size > maxCacheSize) {
-                    const firstKey = tileCache.keys().next().value;
-                    tileCache.delete(firstKey);
-                  }
+                // Cache with LRU eviction
+                tileCache.set(key, tileUrl);
+                if (tileCache.size > maxCacheSize) {
+                  const firstKey = tileCache.keys().next().value;
+                  tileCache.delete(firstKey);
                 }
                 
                 return tileUrl;
               }
             };
+            
+            // Store tile source config for recreation when pages load
+            tileSourceConfigRef.current = customTileSource;
             
             // Initialize OpenSeadragon
             const viewer = OpenSeadragon({
@@ -373,7 +379,7 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.7</h1>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.8</h1>
                   
                   <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
                     {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
