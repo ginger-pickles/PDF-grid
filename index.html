@@ -1148,9 +1148,8 @@
             const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
 
             // Detect small phone and hide navigator on mobile
-            // Also hide navigator in progressive mode (needs all pages rendered)
             const isSmallPhone = this.isTouchDevice();
-            const showNavigator = !isSmallPhone && !CONFIG.ENABLE_PROGRESSIVE_LOADING;
+            const showNavigator = !isSmallPhone;
 
             // Grid: ${gridSize}×${gridSize}, minZoom: ${minZoomImageRatio.toFixed(3)}
 
