@@ -175,7 +175,7 @@
             
             // Create tile storage with LRU cache
             const tileSize = 256;
-            const tileCache = createLRUCache(150); // Keep only 150 most recent tiles
+            const tileCache = createLRUCache(300); // Increased cache size for smoother navigation
             
             // Calculate max level for DZI pyramid
             const maxDimension = Math.max(totalWidth, totalHeight);
@@ -187,7 +187,13 @@
             const tileCanvas = document.createElement('canvas');
             tileCanvas.width = tileSize;
             tileCanvas.height = tileSize;
-            const tileCtx = tileCanvas.getContext('2d', { alpha: false });
+            const tileCtx = tileCanvas.getContext('2d', { 
+              alpha: false,
+              desynchronized: true  // Hint for better performance
+            });
+            
+            // Track pending tile generations to avoid duplicates
+            const pendingTiles = new Set();
             
             // Custom tile source for on-demand generation
             const customTileSource = {
@@ -205,27 +211,37 @@
                   return tileUrl;
                 }
                 
-                // Generate tile on-demand
-                const scale = Math.pow(2, level - maxLevel);
-                const sx = x * tileSize / scale;
-                const sy = y * tileSize / scale;
-                const sw = Math.min(tileSize / scale, totalWidth - sx);
-                const sh = Math.min(tileSize / scale, totalHeight - sy);
+                // Avoid generating the same tile multiple times
+                if (pendingTiles.has(key)) {
+                  return '';
+                }
+                pendingTiles.add(key);
                 
-                // Clear and fill background
-                tileCtx.fillStyle = '#1f2937';
-                tileCtx.fillRect(0, 0, tileSize, tileSize);
-                
-                // Draw tile from composite canvas
-                const dw = sw * scale;
-                const dh = sh * scale;
-                tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
-                
-                // Convert to data URL and cache
-                tileUrl = tileCanvas.toDataURL('image/jpeg', 0.85);
-                tileCache.set(key, tileUrl);
-                
-                return tileUrl;
+                // Generate tile on-demand (but quickly)
+                try {
+                  const scale = Math.pow(2, level - maxLevel);
+                  const sx = x * tileSize / scale;
+                  const sy = y * tileSize / scale;
+                  const sw = Math.min(tileSize / scale, totalWidth - sx);
+                  const sh = Math.min(tileSize / scale, totalHeight - sy);
+                  
+                  // Clear and fill background
+                  tileCtx.fillStyle = '#1f2937';
+                  tileCtx.fillRect(0, 0, tileSize, tileSize);
+                  
+                  // Draw tile from composite canvas
+                  const dw = sw * scale;
+                  const dh = sh * scale;
+                  tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
+                  
+                  // Convert to data URL with lower quality for speed
+                  tileUrl = tileCanvas.toDataURL('image/jpeg', 0.75);
+                  tileCache.set(key, tileUrl);
+                  
+                  return tileUrl;
+                } finally {
+                  pendingTiles.delete(key);
+                }
               }
             };
             
@@ -239,11 +255,14 @@
               showRotationControl: true,
               minZoomLevel: 0.1,
               maxZoomLevel: 10,
-              visibilityRatio: 0.2,
+              visibilityRatio: 0.5,  // More lenient for smoother panning
               constrainDuringPan: false,
               homeFillsViewer: false,
-              immediateRender: true,
-              preload: true
+              immediateRender: false,  // Wait for tiles to be ready
+              preload: false,  // Disable preloading to reduce load
+              timeout: 120000,
+              smoothTileEdgesMinZoom: 1.5,
+              animationTime: 0.5  // Faster animations
             });
             
             // Set initial view to show the first page (top-left corner)
