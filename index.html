@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer</title>
+    <title>PDF Grid Viewer v1.2.0</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -24,19 +24,14 @@
           const [pdfFile, setPdfFile] = useState(null);
           const [numPages, setNumPages] = useState(0);
           const [isLoading, setIsLoading] = useState(false);
-          const [pageImages, setPageImages] = useState([]);
+          const [loadingStatus, setLoadingStatus] = useState('');
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
+          const pageCanvasesRef = useRef([]); // Store individual page canvases
+          const pdfDocRef = useRef(null); // Store PDF document
 
           // Set up PDF.js worker
           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-          // Initialize viewer when pageImages are ready
-          React.useEffect(() => {
-            if (pageImages.length > 0) {
-              initializeViewer(pageImages);
-            }
-          }, [pageImages]);
 
           // Generate the rotating grid pattern
           const generateGridPattern = (totalPages, cols) => {
@@ -64,179 +59,222 @@
             }
 
             setIsLoading(true);
+            setLoadingStatus('Loading PDF...');
             setPdfFile(file);
 
             try {
               const arrayBuffer = await file.arrayBuffer();
               const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
               setNumPages(pdf.numPages);
+              pdfDocRef.current = pdf;
 
-              // Render all pages to canvases
-              const pageImages = [];
-              const scale = 2.0; // High resolution for zooming
+              console.log(`[v1.2.0] Loaded PDF with ${pdf.numPages} pages`);
               
-              for (let i = 1; i <= pdf.numPages; i++) {
-                const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale });
-                
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
-                
-                await page.render({
-                  canvasContext: context,
-                  viewport: viewport
-                }).promise;
-                
-                pageImages.push({
-                  pageNum: i,
-                  dataUrl: canvas.toDataURL('image/png'),
-                  width: viewport.width,
-                  height: viewport.height
-                });
-              }
-
-              // Store the page images in state
-              setPageImages(pageImages);
+              // Render ONLY the first page initially
+              setLoadingStatus('Rendering first page...');
+              const firstPageCanvas = await renderPage(pdf, 1);
+              pageCanvasesRef.current = [firstPageCanvas];
+              
+              const pageWidth = firstPageCanvas.width;
+              const pageHeight = firstPageCanvas.height;
+              
+              console.log(`First page rendered: ${pageWidth}x${pageHeight}`);
+              
+              // Initialize viewer immediately with just first page
+              setLoadingStatus('');
               setIsLoading(false);
+              initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              
+              // Render remaining pages in background
+              renderRemainingPages(pdf, pageWidth, pageHeight);
               
             } catch (error) {
               console.error('Error loading PDF:', error);
               alert('Error loading PDF: ' + error.message);
-            } finally {
               setIsLoading(false);
             }
           };
 
-          const initializeViewer = async (pageImages) => {
+          // Render a single PDF page to canvas
+          const renderPage = async (pdf, pageNum) => {
+            const page = await pdf.getPage(pageNum);
+            const scale = 2.0;
+            const viewport = page.getViewport({ scale });
+            
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            
+            await page.render({
+              canvasContext: context,
+              viewport: viewport
+            }).promise;
+            
+            return canvas;
+          };
+
+          // Render remaining pages in background
+          const renderRemainingPages = async (pdf, pageWidth, pageHeight) => {
+            console.log('Starting background page rendering...');
+            
+            for (let i = 2; i <= pdf.numPages; i++) {
+              const pageCanvas = await renderPage(pdf, i);
+              pageCanvasesRef.current.push(pageCanvas);
+              
+              // Log progress every 10 pages
+              if (i % 10 === 0) {
+                console.log(`Rendered ${i}/${pdf.numPages} pages`);
+              }
+              
+              // Yield to browser occasionally
+              if (i % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+            }
+            
+            console.log(`All ${pdf.numPages} pages rendered!`);
+          };
+
+          const initializeViewer = (numPages, pageWidth, pageHeight) => {
             // Clean up existing viewer
             if (osdViewerRef.current) {
               osdViewerRef.current.destroy();
             }
 
-            // Ensure the viewer element exists
             const viewerElement = document.getElementById('openseadragon-viewer');
             if (!viewerElement) {
               console.error('Viewer element not found');
               return;
             }
 
-            // Calculate grid dimensions
-            const gridSize = pageImages.length; // Grid size equals number of pages
-            const pattern = generateGridPattern(pageImages.length, gridSize);
-            const rows = pattern.length;
-            const cols = gridSize;
-            
-            // Assume all pages have similar dimensions (use first page)
-            const pageWidth = pageImages[0].width;
-            const pageHeight = pageImages[0].height;
-            const spacing = Math.floor(pageWidth * 0.05); // 5% spacing between pages
+            const gridSize = numPages;
+            const pattern = generateGridPattern(numPages, gridSize);
+            const spacing = Math.floor(pageWidth * 0.05);
 
-            // Create a single large canvas with all pages arranged in the grid
-            const totalWidth = cols * pageWidth + (cols - 1) * spacing;
-            const totalHeight = rows * pageHeight + (rows - 1) * spacing;
+            // Calculate total grid dimensions
+            const totalWidth = gridSize * pageWidth + (gridSize - 1) * spacing;
+            const totalHeight = gridSize * pageHeight + (gridSize - 1) * spacing;
             
-            const compositeCanvas = document.createElement('canvas');
-            compositeCanvas.width = totalWidth;
-            compositeCanvas.height = totalHeight;
-            const ctx = compositeCanvas.getContext('2d');
-            
-            // Fill with background color
-            ctx.fillStyle = '#1f2937'; // gray-800
-            ctx.fillRect(0, 0, totalWidth, totalHeight);
-            
-            // Load all images and draw them
-            const loadImage = (src) => {
-              return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => resolve(img);
-                img.onerror = reject;
-                img.src = src;
-              });
-            };
-            
-            // Draw each page in its grid position
-            for (let row = 0; row < rows; row++) {
-              for (let col = 0; col < cols; col++) {
-                const pageNum = pattern[row][col];
-                const pageImage = pageImages[pageNum - 1];
-                
-                if (pageImage) {
-                  const img = await loadImage(pageImage.dataUrl);
-                  
-                  const x = col * (pageWidth + spacing);
-                  const y = row * (pageHeight + spacing);
-                  
-                  ctx.drawImage(img, x, y, pageWidth, pageHeight);
-                }
-              }
-            }
-            
-            // Create tile storage
-            // Use tile size at least as large as a page for one-tile-per-page at initial zoom
+            // Use tile size at least as large as a page
             const tileSize = Math.max(512, Math.ceil(Math.max(pageWidth, pageHeight) / 256) * 256);
-            const tiles = {};
-            
-            // Calculate max level for DZI pyramid
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`[v1.1.8] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            console.log(`Grid: ${gridSize}×${gridSize}, Total: ${totalWidth}x${totalHeight}`);
+            console.log(`Tile size: ${tileSize}, Max level: ${maxLevel}`);
             
-            // Use larger tile size - make it at least as large as a single page
-            // This ensures one tile = one page at the initial zoom level
-            const effectiveTileSize = Math.max(tileSize, pageWidth, pageHeight);
-            console.log(`Page size: ${pageWidth}x${pageHeight}, Using tile size: ${tileSize}`);
+            // Tile cache
+            const tileCache = new Map();
+            const maxCacheSize = 300;
             
-            // Create a reusable tile canvas for performance
+            // Create reusable tile canvas
             const tileCanvas = document.createElement('canvas');
             tileCanvas.width = tileSize;
             tileCanvas.height = tileSize;
             const tileCtx = tileCanvas.getContext('2d', { alpha: false });
             
-            // Helper function to generate a single tile
-            const generateTile = (level, tx, ty) => {
-              const key = `${level}_${tx}_${ty}`;
-              if (tiles[key]) return; // Already generated
-              
-              const scale = Math.pow(2, level - maxLevel);
-              const sx = tx * tileSize / scale;
-              const sy = ty * tileSize / scale;
-              const sw = Math.min(tileSize / scale, totalWidth - sx);
-              const sh = Math.min(tileSize / scale, totalHeight - sy);
-              
-              tileCtx.fillStyle = '#1f2937';
-              tileCtx.fillRect(0, 0, tileSize, tileSize);
-              
-              const dw = sw * scale;
-              const dh = sh * scale;
-              tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
-              
-              tiles[key] = tileCanvas.toDataURL('image/jpeg', 0.85);
+            // Custom tile source that generates tiles from page canvases
+            const customTileSource = {
+              height: totalHeight,
+              width: totalWidth,
+              tileSize: tileSize,
+              minLevel: 0,
+              maxLevel: maxLevel,
+              getTileUrl: function(level, x, y) {
+                const key = `${level}_${x}_${y}`;
+                
+                // Check cache
+                if (tileCache.has(key)) {
+                  const cached = tileCache.get(key);
+                  // Move to end (LRU)
+                  tileCache.delete(key);
+                  tileCache.set(key, cached);
+                  return cached;
+                }
+                
+                // Generate tile from page canvases
+                const scale = Math.pow(2, level - maxLevel);
+                
+                // Calculate tile boundaries in full-resolution grid coordinates
+                const tileLeft = x * tileSize / scale;
+                const tileTop = y * tileSize / scale;
+                const tileRight = Math.min(tileLeft + tileSize / scale, totalWidth);
+                const tileBottom = Math.min(tileTop + tileSize / scale, totalHeight);
+                
+                // Clear tile
+                tileCtx.fillStyle = '#1f2937';
+                tileCtx.fillRect(0, 0, tileSize, tileSize);
+                
+                // Draw portions of pages that intersect this tile
+                for (let row = 0; row < gridSize; row++) {
+                  for (let col = 0; col < gridSize; col++) {
+                    // Calculate this page's position in the grid
+                    const pageLeft = col * (pageWidth + spacing);
+                    const pageTop = row * (pageHeight + spacing);
+                    const pageRight = pageLeft + pageWidth;
+                    const pageBottom = pageTop + pageHeight;
+                    
+                    // Check if this page intersects the tile
+                    if (pageRight < tileLeft || pageLeft > tileRight ||
+                        pageBottom < tileTop || pageTop > tileBottom) {
+                      continue; // No intersection
+                    }
+                    
+                    // Get the page number at this grid position
+                    const pageNum = pattern[row][col];
+                    const pageCanvas = pageCanvasesRef.current[pageNum - 1];
+                    
+                    if (!pageCanvas) {
+                      continue; // Page not rendered yet
+                    }
+                    
+                    // Calculate intersection
+                    const intersectLeft = Math.max(tileLeft, pageLeft);
+                    const intersectTop = Math.max(tileTop, pageTop);
+                    const intersectRight = Math.min(tileRight, pageRight);
+                    const intersectBottom = Math.min(tileBottom, pageBottom);
+                    
+                    // Source coordinates (within the page)
+                    const srcX = intersectLeft - pageLeft;
+                    const srcY = intersectTop - pageTop;
+                    const srcW = intersectRight - intersectLeft;
+                    const srcH = intersectBottom - intersectTop;
+                    
+                    // Destination coordinates (within the tile)
+                    const destX = (intersectLeft - tileLeft) * scale;
+                    const destY = (intersectTop - tileTop) * scale;
+                    const destW = srcW * scale;
+                    const destH = srcH * scale;
+                    
+                    // Draw this portion
+                    tileCtx.drawImage(
+                      pageCanvas,
+                      srcX, srcY, srcW, srcH,
+                      destX, destY, destW, destH
+                    );
+                  }
+                }
+                
+                // Convert to data URL
+                const tileUrl = tileCanvas.toDataURL('image/jpeg', 0.85);
+                
+                // Cache with LRU eviction
+                tileCache.set(key, tileUrl);
+                if (tileCache.size > maxCacheSize) {
+                  const firstKey = tileCache.keys().next().value;
+                  tileCache.delete(firstKey);
+                }
+                
+                return tileUrl;
+              }
             };
             
-            // Initialize OpenSeadragon IMMEDIATELY (before generating any tiles)
+            // Initialize OpenSeadragon
             const viewer = OpenSeadragon({
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
-              tileSources: {
-                height: totalHeight,
-                width: totalWidth,
-                tileSize: tileSize,
-                minLevel: 0,
-                maxLevel: maxLevel,
-                getTileUrl: function(level, x, y) {
-                  const key = `${level}_${x}_${y}`;
-                  
-                  // If tile doesn't exist, generate it on-demand
-                  if (!tiles[key]) {
-                    generateTile(level, x, y);
-                  }
-                  
-                  return tiles[key] || '';
-                }
-              },
+              tileSources: customTileSource,
               showNavigator: true,
               navigatorPosition: 'BOTTOM_RIGHT',
               showRotationControl: true,
@@ -249,144 +287,15 @@
               preload: true
             });
             
-            // Set initial view to show the first page
+            // Set initial view to first page
             viewer.addHandler('open', function() {
               const viewportRect = viewer.viewport.imageToViewportRectangle(
                 0, 0, pageWidth, pageHeight
               );
               viewer.viewport.fitBounds(viewportRect, true);
-              
-              // After viewport is set, determine what zoom level we're at
-              const currentZoom = viewer.viewport.getZoom(true);
-              const viewportWidth = viewer.viewport.getContainerSize().x;
-              
-              // Calculate which pyramid level corresponds to current zoom
-              // At zoom=1, we show the full image width
-              const pixelsPerViewportPixel = totalWidth / (viewportWidth * currentZoom);
-              const initialLevel = Math.max(0, Math.min(maxLevel, 
-                Math.round(Math.log2(pixelsPerViewportPixel / tileSize) + maxLevel)
-              ));
-              
-              console.log(`Initial viewport zoom level: ${initialLevel} (of ${maxLevel})`);
-              
-              // Start tile generation with the current view level
-              setTimeout(() => generateFirstPageTiles(initialLevel), 50);
             });
             
             osdViewerRef.current = viewer;
-            
-            // NOW generate tiles asynchronously - starting with the visible level
-            const generateFirstPageTiles = async (startLevel) => {
-              // First, generate tiles for the INITIAL VISIBLE LEVEL
-              const scale = Math.pow(2, startLevel - maxLevel);
-              const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
-              const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
-              
-              console.log(`Generating ${firstPageMaxTileX}x${firstPageMaxTileY} tiles for visible level ${startLevel}`);
-              
-              for (let ty = 0; ty < firstPageMaxTileY; ty++) {
-                for (let tx = 0; tx < firstPageMaxTileX; tx++) {
-                  generateTile(startLevel, tx, ty);
-                }
-              }
-              
-              // Redraw to show the visible tiles immediately
-              viewer.forceRedraw();
-              await new Promise(resolve => setTimeout(resolve, 0));
-              
-              console.log(`Visible tiles generated, now generating other levels...`);
-              
-              // Now generate other levels (lower res first for zooming out, then higher res for zooming in)
-              const levelsToGenerate = [];
-              for (let level = 0; level <= maxLevel; level++) {
-                if (level !== startLevel) {
-                  // Prioritize by distance from start level
-                  levelsToGenerate.push({ level, distance: Math.abs(level - startLevel) });
-                }
-              }
-              levelsToGenerate.sort((a, b) => a.distance - b.distance);
-              
-              for (const { level } of levelsToGenerate) {
-                const scale = Math.pow(2, level - maxLevel);
-                const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
-                const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
-                
-                for (let ty = 0; ty < firstPageMaxTileY; ty++) {
-                  for (let tx = 0; tx < firstPageMaxTileX; tx++) {
-                    generateTile(level, tx, ty);
-                  }
-                }
-                
-                viewer.forceRedraw();
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-              
-              console.log(`First page tiles complete: ${Object.keys(tiles).length} tiles`);
-              
-              // Start generating remaining tiles
-              setTimeout(generateRemainingTiles, 100);
-            };
-            
-            // Generate remaining tiles in the background using requestIdleCallback
-            const generateRemainingTiles = () => {
-              const tilesToGenerate = [];
-              
-              // Build list of all tiles, prioritizing by distance from first page
-              for (let level = maxLevel; level >= 0; level--) {
-                const scale = Math.pow(2, level - maxLevel);
-                const levelWidth = Math.ceil(totalWidth * scale);
-                const levelHeight = Math.ceil(totalHeight * scale);
-                const tilesX = Math.ceil(levelWidth / tileSize);
-                const tilesY = Math.ceil(levelHeight / tileSize);
-                
-                for (let ty = 0; ty < tilesY; ty++) {
-                  for (let tx = 0; tx < tilesX; tx++) {
-                    const key = `${level}_${tx}_${ty}`;
-                    if (!tiles[key]) {
-                      // Calculate distance from origin (first page is at 0,0)
-                      const distance = Math.sqrt(tx * tx + ty * ty);
-                      tilesToGenerate.push({ level, tx, ty, distance });
-                    }
-                  }
-                }
-              }
-              
-              // Sort by distance (generate closer tiles first)
-              tilesToGenerate.sort((a, b) => a.distance - b.distance);
-              
-              console.log(`Generating ${tilesToGenerate.length} remaining tiles in background...`);
-              
-              let index = 0;
-              const generateBatch = () => {
-                const batchSize = 10; // Generate 10 tiles per batch
-                const endIndex = Math.min(index + batchSize, tilesToGenerate.length);
-                
-                for (let i = index; i < endIndex; i++) {
-                  const { level, tx, ty } = tilesToGenerate[i];
-                  generateTile(level, tx, ty);
-                }
-                
-                index = endIndex;
-                
-                if (index < tilesToGenerate.length) {
-                  // Continue in next idle period
-                  if (window.requestIdleCallback) {
-                    requestIdleCallback(generateBatch, { timeout: 1000 });
-                  } else {
-                    setTimeout(generateBatch, 16); // ~60fps fallback
-                  }
-                } else {
-                  console.log(`All ${Object.keys(tiles).length} tiles generated!`);
-                }
-              };
-              
-              // Start background generation
-              if (window.requestIdleCallback) {
-                requestIdleCallback(generateBatch, { timeout: 1000 });
-              } else {
-                setTimeout(generateBatch, 100);
-              }
-            };
           };
 
           return (
@@ -394,7 +303,7 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer</h1>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.0</h1>
                   
                   <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
                     {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
@@ -410,6 +319,9 @@
                 {numPages > 0 && (
                   <div className="mt-2 text-sm text-gray-400 max-w-7xl mx-auto">
                     {numPages} pages • Grid size: {numPages}×{numPages}
+                    {pageCanvasesRef.current.length < numPages && 
+                      ` • Loaded ${pageCanvasesRef.current.length}/${numPages} pages`
+                    }
                   </div>
                 )}
               </div>
@@ -432,7 +344,7 @@
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
                     <div className="text-center">
                       <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-600 border-t-blue-500 mb-4"></div>
-                      <p className="text-white">Processing PDF...</p>
+                      <p className="text-white">{loadingStatus}</p>
                     </div>
                   </div>
                 )}
