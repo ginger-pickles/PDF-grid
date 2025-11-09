@@ -181,7 +181,7 @@
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`[v1.1.6] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            console.log(`[v1.1.7] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
             
             // Create a reusable tile canvas for performance
             const tileCanvas = document.createElement('canvas');
@@ -249,29 +249,69 @@
                 0, 0, pageWidth, pageHeight
               );
               viewer.viewport.fitBounds(viewportRect, true);
+              
+              // After viewport is set, determine what zoom level we're at
+              const currentZoom = viewer.viewport.getZoom(true);
+              const viewportWidth = viewer.viewport.getContainerSize().x;
+              
+              // Calculate which pyramid level corresponds to current zoom
+              // At zoom=1, we show the full image width
+              const pixelsPerViewportPixel = totalWidth / (viewportWidth * currentZoom);
+              const initialLevel = Math.max(0, Math.min(maxLevel, 
+                Math.round(Math.log2(pixelsPerViewportPixel / tileSize) + maxLevel)
+              ));
+              
+              console.log(`Initial viewport zoom level: ${initialLevel} (of ${maxLevel})`);
+              
+              // Start tile generation with the current view level
+              setTimeout(() => generateFirstPageTiles(initialLevel), 50);
             });
             
             osdViewerRef.current = viewer;
             
-            // NOW generate tiles asynchronously in the background (low-res first)
-            const generateFirstPageTiles = async () => {
-              // Generate tiles level by level (low-res to high-res)
+            // NOW generate tiles asynchronously - starting with the visible level
+            const generateFirstPageTiles = async (startLevel) => {
+              // First, generate tiles for the INITIAL VISIBLE LEVEL
+              const scale = Math.pow(2, startLevel - maxLevel);
+              const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
+              const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
+              
+              console.log(`Generating ${firstPageMaxTileX}x${firstPageMaxTileY} tiles for visible level ${startLevel}`);
+              
+              for (let ty = 0; ty < firstPageMaxTileY; ty++) {
+                for (let tx = 0; tx < firstPageMaxTileX; tx++) {
+                  generateTile(startLevel, tx, ty);
+                }
+              }
+              
+              // Redraw to show the visible tiles immediately
+              viewer.forceRedraw();
+              await new Promise(resolve => setTimeout(resolve, 0));
+              
+              console.log(`Visible tiles generated, now generating other levels...`);
+              
+              // Now generate other levels (lower res first for zooming out, then higher res for zooming in)
+              const levelsToGenerate = [];
               for (let level = 0; level <= maxLevel; level++) {
+                if (level !== startLevel) {
+                  // Prioritize by distance from start level
+                  levelsToGenerate.push({ level, distance: Math.abs(level - startLevel) });
+                }
+              }
+              levelsToGenerate.sort((a, b) => a.distance - b.distance);
+              
+              for (const { level } of levelsToGenerate) {
                 const scale = Math.pow(2, level - maxLevel);
                 const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
                 const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
                 
-                // Generate ALL tiles for this level without redrawing
                 for (let ty = 0; ty < firstPageMaxTileY; ty++) {
                   for (let tx = 0; tx < firstPageMaxTileX; tx++) {
                     generateTile(level, tx, ty);
                   }
                 }
                 
-                // Only redraw ONCE after the entire level is complete
                 viewer.forceRedraw();
-                
-                // Yield to browser after each level
                 await new Promise(resolve => setTimeout(resolve, 0));
               }
               
@@ -280,9 +320,6 @@
               // Start generating remaining tiles
               setTimeout(generateRemainingTiles, 100);
             };
-            
-            // Start first page tile generation after a tiny delay
-            setTimeout(generateFirstPageTiles, 50);
             
             // Generate remaining tiles in the background using requestIdleCallback
             const generateRemainingTiles = () => {
