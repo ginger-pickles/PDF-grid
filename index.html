@@ -243,11 +243,25 @@
               showNavigator: true,
               navigatorPosition: 'BOTTOM_RIGHT',
               showRotationControl: true,
-              minZoomLevel: 0.5,
+              minZoomLevel: 0.1,  // Allow zooming out to see full grid
               maxZoomLevel: 10,
               visibilityRatio: 0.2,
               constrainDuringPan: false,
-              homeFillsViewer: true
+              homeFillsViewer: false, // Don't auto-fit the whole image
+              immediateRender: true,  // Render tiles immediately
+              preload: true           // Preload nearby tiles
+            });
+            
+            // Set initial view to show the first page (top-left corner)
+            viewer.addHandler('open', function() {
+              // Calculate the viewport rectangle for the first page
+              // Convert from pixel coordinates to viewport coordinates
+              const viewportRect = viewer.viewport.imageToViewportRectangle(
+                0, 0, pageWidth, pageHeight
+              );
+              
+              // Fit the first page in the viewport
+              viewer.viewport.fitBounds(viewportRect, true);
             });
 
             osdViewerRef.current = viewer;
