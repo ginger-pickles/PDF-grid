@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer v1.2.6</title>
+    <title>PDF Grid Viewer v1.2.7</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -70,7 +70,7 @@
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
 
-              console.log(`[v1.2.6] Loaded PDF with ${pdf.numPages} pages`);
+              console.log(`[v1.2.7] Loaded PDF with ${pdf.numPages} pages`);
               
               // Render ONLY the first page initially
               setLoadingStatus('Rendering first page...');
@@ -126,28 +126,26 @@
               pageCanvasesRef.current.push(pageCanvas);
               setPagesLoaded(i);
               
-              // Every 3 pages, force tile regeneration
+              // Every 3 pages, force complete tile regeneration
               if (i % 3 === 0 || i === pdf.numPages) {
                 console.log(`Refreshing tiles after loading page ${i}...`);
                 
-                if (tileCacheRef.current) {
-                  const cacheSize = tileCacheRef.current.size;
-                  tileCacheRef.current.clear();
-                  console.log(`  Cleared ${cacheSize} cached tiles`);
-                }
-                
                 if (osdViewerRef.current) {
                   try {
-                    // Force complete redraw by clearing all tile caches in OpenSeadragon
-                    const world = osdViewerRef.current.world;
-                    for (let j = 0; j < world.getItemCount(); j++) {
-                      const tiledImage = world.getItemAt(j);
-                      // Clear OpenSeadragon's internal tile cache
-                      tiledImage._tileCache.clearTilesFor(tiledImage);
-                      tiledImage._needsDraw = true;
-                    }
+                    // Get the tiledImage
+                    const tiledImage = osdViewerRef.current.world.getItemAt(0);
+                    
+                    // Force OpenSeadragon to clear ALL tiles and re-request them
+                    // This is the nuclear option - completely reset the tiledImage
+                    tiledImage._resetTiles();
+                    
+                    // Mark that we need to draw
+                    tiledImage._needsDraw = true;
+                    
+                    // Force immediate update
                     osdViewerRef.current.forceRedraw();
-                    console.log(`  Forced viewer redraw`);
+                    
+                    console.log(`  Reset all tiles in OpenSeadragon`);
                   } catch (error) {
                     console.error('Error refreshing tiles:', error);
                   }
@@ -375,7 +373,7 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.6</h1>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.7</h1>
                   
                   <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
                     {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
