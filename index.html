@@ -358,17 +358,22 @@
               maxZoomLevel: 10,
               visibilityRatio: 0.2,
               constrainDuringPan: false,
-              homeFillsViewer: false,
+              homeFillsViewer: true,
               immediateRender: true,
-              preload: true
+              preload: true,
+              defaultZoomLevel: 1
             });
             
-            // Set initial view to first page
+            // Set initial view to center on first page (top-left corner at 0,0)
             viewer.addHandler('open', function() {
-              const viewportRect = viewer.viewport.imageToViewportRectangle(
-                0, 0, pageWidth, pageHeight
-              );
-              viewer.viewport.fitBounds(viewportRect, true);
+              // Calculate the bounds for just the first page
+              const bounds = new OpenSeadragon.Rect(0, 0, pageWidth, pageHeight);
+              
+              // Convert image coordinates to viewport coordinates
+              const viewportBounds = viewer.viewport.imageToViewportRectangle(bounds);
+              
+              // Fit the viewport to show just page 1
+              viewer.viewport.fitBounds(viewportBounds, true);
             });
             
             osdViewerRef.current = viewer;
