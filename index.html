@@ -173,9 +173,9 @@
               }
             }
             
-            // Create tile storage with LRU cache
+            // Create tile storage
             const tileSize = 256;
-            const tileCache = createLRUCache(300); // Increased cache size for smoother navigation
+            const tiles = {};
             
             // Calculate max level for DZI pyramid
             const maxDimension = Math.max(totalWidth, totalHeight);
@@ -187,83 +187,152 @@
             const tileCanvas = document.createElement('canvas');
             tileCanvas.width = tileSize;
             tileCanvas.height = tileSize;
-            const tileCtx = tileCanvas.getContext('2d', { 
-              alpha: false,
-              desynchronized: true  // Hint for better performance
-            });
+            const tileCtx = tileCanvas.getContext('2d', { alpha: false });
             
-            // Track pending tile generations to avoid duplicates
-            const pendingTiles = new Set();
-            
-            // Custom tile source for on-demand generation
-            const customTileSource = {
-              height: totalHeight,
-              width: totalWidth,
-              tileSize: tileSize,
-              minLevel: 0,
-              maxLevel: maxLevel,
-              getTileUrl: function(level, x, y) {
-                const key = `${level}_${x}_${y}`;
-                
-                // Check cache first
-                let tileUrl = tileCache.get(key);
-                if (tileUrl) {
-                  return tileUrl;
-                }
-                
-                // Avoid generating the same tile multiple times
-                if (pendingTiles.has(key)) {
-                  return '';
-                }
-                pendingTiles.add(key);
-                
-                // Generate tile on-demand (but quickly)
-                try {
-                  const scale = Math.pow(2, level - maxLevel);
-                  const sx = x * tileSize / scale;
-                  const sy = y * tileSize / scale;
-                  const sw = Math.min(tileSize / scale, totalWidth - sx);
-                  const sh = Math.min(tileSize / scale, totalHeight - sy);
-                  
-                  // Clear and fill background
-                  tileCtx.fillStyle = '#1f2937';
-                  tileCtx.fillRect(0, 0, tileSize, tileSize);
-                  
-                  // Draw tile from composite canvas
-                  const dw = sw * scale;
-                  const dh = sh * scale;
-                  tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
-                  
-                  // Convert to data URL with lower quality for speed
-                  tileUrl = tileCanvas.toDataURL('image/jpeg', 0.75);
-                  tileCache.set(key, tileUrl);
-                  
-                  return tileUrl;
-                } finally {
-                  pendingTiles.delete(key);
-                }
-              }
+            // Helper function to generate a single tile
+            const generateTile = (level, tx, ty) => {
+              const key = `${level}_${tx}_${ty}`;
+              if (tiles[key]) return; // Already generated
+              
+              const scale = Math.pow(2, level - maxLevel);
+              const sx = tx * tileSize / scale;
+              const sy = ty * tileSize / scale;
+              const sw = Math.min(tileSize / scale, totalWidth - sx);
+              const sh = Math.min(tileSize / scale, totalHeight - sy);
+              
+              tileCtx.fillStyle = '#1f2937';
+              tileCtx.fillRect(0, 0, tileSize, tileSize);
+              
+              const dw = sw * scale;
+              const dh = sh * scale;
+              tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
+              
+              tiles[key] = tileCanvas.toDataURL('image/jpeg', 0.85);
             };
             
-            // Initialize OpenSeadragon with custom tile source
+            // Calculate tiles needed for first page at all zoom levels
+            const firstPageTilesX = Math.ceil((pageWidth / totalWidth) * Math.ceil(totalWidth / tileSize));
+            const firstPageTilesY = Math.ceil((pageHeight / totalHeight) * Math.ceil(totalHeight / tileSize));
+            
+            console.log(`Pre-generating tiles for first page: ${firstPageTilesX}x${firstPageTilesY} at each level`);
+            
+            // Pre-generate tiles for the first page (top-left) at all zoom levels
+            for (let level = maxLevel; level >= 0; level--) {
+              const scale = Math.pow(2, level - maxLevel);
+              const levelWidth = Math.ceil(totalWidth * scale);
+              const levelHeight = Math.ceil(totalHeight * scale);
+              const tilesX = Math.ceil(levelWidth / tileSize);
+              const tilesY = Math.ceil(levelHeight / tileSize);
+              
+              // Generate tiles that overlap with first page
+              const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
+              const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
+              
+              for (let ty = 0; ty < firstPageMaxTileY; ty++) {
+                for (let tx = 0; tx < firstPageMaxTileX; tx++) {
+                  generateTile(level, tx, ty);
+                }
+              }
+            }
+            
+            console.log(`Pre-generated ${Object.keys(tiles).length} tiles for first page`);
+            
+            // Initialize OpenSeadragon immediately with first page tiles
             const viewer = OpenSeadragon({
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
-              tileSources: customTileSource,
+              tileSources: {
+                height: totalHeight,
+                width: totalWidth,
+                tileSize: tileSize,
+                minLevel: 0,
+                maxLevel: maxLevel,
+                getTileUrl: function(level, x, y) {
+                  const key = `${level}_${x}_${y}`;
+                  
+                  // If tile doesn't exist, generate it on-demand
+                  if (!tiles[key]) {
+                    generateTile(level, x, y);
+                  }
+                  
+                  return tiles[key] || '';
+                }
+              },
               showNavigator: true,
               navigatorPosition: 'BOTTOM_RIGHT',
               showRotationControl: true,
               minZoomLevel: 0.1,
               maxZoomLevel: 10,
-              visibilityRatio: 0.5,  // More lenient for smoother panning
+              visibilityRatio: 0.2,
               constrainDuringPan: false,
               homeFillsViewer: false,
-              immediateRender: false,  // Wait for tiles to be ready
-              preload: false,  // Disable preloading to reduce load
-              timeout: 120000,
-              smoothTileEdgesMinZoom: 1.5,
-              animationTime: 0.5  // Faster animations
+              immediateRender: true,
+              preload: true
             });
+            
+            // Generate remaining tiles in the background using requestIdleCallback
+            const generateRemainingTiles = () => {
+              const tilesToGenerate = [];
+              
+              // Build list of all tiles, prioritizing by distance from first page
+              for (let level = maxLevel; level >= 0; level--) {
+                const scale = Math.pow(2, level - maxLevel);
+                const levelWidth = Math.ceil(totalWidth * scale);
+                const levelHeight = Math.ceil(totalHeight * scale);
+                const tilesX = Math.ceil(levelWidth / tileSize);
+                const tilesY = Math.ceil(levelHeight / tileSize);
+                
+                for (let ty = 0; ty < tilesY; ty++) {
+                  for (let tx = 0; tx < tilesX; tx++) {
+                    const key = `${level}_${tx}_${ty}`;
+                    if (!tiles[key]) {
+                      // Calculate distance from origin (first page is at 0,0)
+                      const distance = Math.sqrt(tx * tx + ty * ty);
+                      tilesToGenerate.push({ level, tx, ty, distance });
+                    }
+                  }
+                }
+              }
+              
+              // Sort by distance (generate closer tiles first)
+              tilesToGenerate.sort((a, b) => a.distance - b.distance);
+              
+              console.log(`Generating ${tilesToGenerate.length} remaining tiles in background...`);
+              
+              let index = 0;
+              const generateBatch = () => {
+                const batchSize = 10; // Generate 10 tiles per batch
+                const endIndex = Math.min(index + batchSize, tilesToGenerate.length);
+                
+                for (let i = index; i < endIndex; i++) {
+                  const { level, tx, ty } = tilesToGenerate[i];
+                  generateTile(level, tx, ty);
+                }
+                
+                index = endIndex;
+                
+                if (index < tilesToGenerate.length) {
+                  // Continue in next idle period
+                  if (window.requestIdleCallback) {
+                    requestIdleCallback(generateBatch, { timeout: 1000 });
+                  } else {
+                    setTimeout(generateBatch, 16); // ~60fps fallback
+                  }
+                } else {
+                  console.log(`All ${Object.keys(tiles).length} tiles generated!`);
+                }
+              };
+              
+              // Start background generation
+              if (window.requestIdleCallback) {
+                requestIdleCallback(generateBatch, { timeout: 1000 });
+              } else {
+                setTimeout(generateBatch, 100);
+              }
+            };
+            
+            // Start background generation after a short delay
+            setTimeout(generateRemainingTiles, 500);
             
             // Set initial view to show the first page (top-left corner)
             viewer.addHandler('open', function() {
@@ -278,36 +347,6 @@
             });
 
             osdViewerRef.current = viewer;
-          };
-
-          // Create a simple LRU cache
-          const createLRUCache = (maxSize) => {
-            const cache = new Map();
-            
-            return {
-              get: (key) => {
-                if (!cache.has(key)) return null;
-                // Move to end (most recently used)
-                const value = cache.get(key);
-                cache.delete(key);
-                cache.set(key, value);
-                return value;
-              },
-              set: (key, value) => {
-                // Remove if exists (to re-insert at end)
-                if (cache.has(key)) {
-                  cache.delete(key);
-                }
-                cache.set(key, value);
-                
-                // Evict oldest if over size
-                if (cache.size > maxSize) {
-                  const firstKey = cache.keys().next().value;
-                  cache.delete(firstKey);
-                }
-              },
-              size: () => cache.size
-            };
           };
 
           return (
