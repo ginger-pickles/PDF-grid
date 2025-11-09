@@ -61,7 +61,7 @@
 
         const CONFIG = {
           // Version
-          VERSION: '1.6.6',
+          VERSION: '1.6.7',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -1522,6 +1522,7 @@
 
             console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
 
+            const loadStartTime = performance.now();
             let pageWidth, pageHeight;
 
             if (CONFIG.ENABLE_PROGRESSIVE_LOADING) {
@@ -1532,25 +1533,35 @@
 
               // Calculate optimal scale and page dimensions from viewport
               setLoadingStatus('Calculating dimensions...');
+              console.log('[Loading] Getting first page...');
               const firstPage = await pdf.getPage(1);
+              console.log(`[Loading] First page retrieved (${(performance.now() - loadStartTime).toFixed(0)}ms)`);
+
+              console.log('[Loading] Calculating optimal scale...');
               const viewport1x = firstPage.getViewport({ scale: 1.0 });
               const globalScale = PDFUtils.calculateGlobalScale(pdf.numPages, viewport1x.width, viewport1x.height);
+              console.log(`[Loading] Scale calculated: ${globalScale.toFixed(3)}x (${(performance.now() - loadStartTime).toFixed(0)}ms)`);
 
               // Get page dimensions from viewport (no rendering needed)
+              console.log('[Loading] Getting viewport dimensions...');
               const viewportScaled = firstPage.getViewport({ scale: globalScale });
               pageWidth = viewportScaled.width;
               pageHeight = viewportScaled.height;
 
-              console.log(`Calculated dimensions at ${globalScale.toFixed(3)}x: ${pageWidth}x${pageHeight}`);
+              console.log(`[Loading] Dimensions: ${pageWidth}x${pageHeight} (${(performance.now() - loadStartTime).toFixed(0)}ms)`);
 
               // Store global scale for use by CustomTileSource
               window.globalRenderScale = globalScale;
 
               // Initialize viewer immediately
               setLoadingStatus('Initializing viewer...');
+              console.log('[Loading] Initializing OpenSeadragon viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              console.log(`[Loading] Viewer initialized (${(performance.now() - loadStartTime).toFixed(0)}ms)`);
+
               setIsLoading(false);
               setLoadingStatus('');
+              console.log('[Loading] Spinner hidden, viewer visible');
 
               // Render all pages in background
               const renderAllPages = async () => {
@@ -1683,11 +1694,19 @@
             // Add ?pdf= parameter to URL for browser history and refresh
             URLManager.pushState('pdf', file.name);
 
+            console.log('[Loading] Starting PDF load...');
+            const startTime = performance.now();
+
             try {
               // Read file as ArrayBuffer for storage
+              console.log('[Loading] Reading file as ArrayBuffer...');
               const fileData = await file.arrayBuffer();
+              console.log(`[Loading] ArrayBuffer read complete (${(performance.now() - startTime).toFixed(0)}ms)`);
 
+              console.log('[Loading] Parsing PDF with PDF.js...');
               const pdf = await PDFUtils.loadPDFFromFile(file);
+              console.log(`[Loading] PDF parsed, ${pdf.numPages} pages (${(performance.now() - startTime).toFixed(0)}ms)`);
+
               await loadPDF(pdf, file.name);
 
               // Save to storage for persistence across refreshes
@@ -1751,6 +1770,8 @@
           };
 
           const initializeViewer = (numPages, pageWidth, pageHeight) => {
+            const initStartTime = performance.now();
+
             // Clean up existing viewer
             if (osdViewerRef.current) {
               osdViewerRef.current.destroy();
@@ -1763,13 +1784,14 @@
             }
 
             // Generate grid pattern and dimensions
+            console.log('[Init] Generating grid pattern...');
             const pattern = GridPattern.generate(numPages, numPages);
             const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight);
-
-            // Grid initialized: ${gridDims.gridSize}×${gridDims.gridSize}, ${gridDims.totalWidth}x${gridDims.totalHeight}
+            console.log(`[Init] Grid: ${gridDims.gridSize}×${gridDims.gridSize}, ${gridDims.totalWidth}x${gridDims.totalHeight} (${(performance.now() - initStartTime).toFixed(0)}ms)`);
 
             // Create tile source
             // Pass PDF object in progressive mode, pre-rendered canvases in legacy mode
+            console.log('[Init] Creating CustomTileSource...');
             const pageDataOrPDF = CONFIG.ENABLE_PROGRESSIVE_LOADING
               ? pdfDocRef.current
               : pageCanvasesRef.current;
@@ -1786,10 +1808,13 @@
               numPages
             );
             tileSourceRef.current = tileSource;
+            console.log(`[Init] TileSource created (${(performance.now() - initStartTime).toFixed(0)}ms)`);
 
             // Initialize OpenSeadragon viewer
+            console.log('[Init] Initializing OpenSeadragon...');
             const viewer = OSDManager.initialize(tileSource, pageWidth, pageHeight, gridDims.gridSize);
             osdViewerRef.current = viewer;
+            console.log(`[Init] OpenSeadragon ready (${(performance.now() - initStartTime).toFixed(0)}ms)`);
           };
 
           /**
