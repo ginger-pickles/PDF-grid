@@ -61,7 +61,7 @@
 
         const CONFIG = {
           // Version
-          VERSION: '1.5.1',
+          VERSION: '1.6.0',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -87,7 +87,13 @@
           TILE_JPEG_QUALITY: 0.85,
 
           // Caching
-          MAX_CACHE_SIZE: 300,
+          MAX_CACHE_SIZE: 300, // Max tile cache size (DEPRECATED - see TILE_CACHE_SIZE)
+
+          // Progressive Loading
+          ENABLE_PROGRESSIVE_LOADING: true, // Render pages on-demand instead of upfront
+          PAGE_CACHE_SIZE: 200, // Max rendered pages to keep in memory (set high for pre-rendering all pages)
+          TILE_CACHE_SIZE: 500, // Max tiles to cache
+          PREFETCH_BUFFER_PAGES: 5, // Pages to prefetch around viewport (in each direction)
 
           // Performance
           RENDER_BATCH_SIZE: 5, // Yield to browser every N pages
@@ -380,44 +386,251 @@
         };
 
         // ============================================================================
-        // TILE CACHE MODULE
+        // PAGE CACHE MODULE
         // ============================================================================
 
         /**
-         * Simple FIFO cache optimized for static content (PDF tiles)
-         * Uses single Map lookup per get() for maximum performance
+         * LRU cache for rendered page canvases
+         * Keeps recently used pages in memory for fast tile generation
          */
-        class TileCache {
-          constructor(maxSize = CONFIG.MAX_CACHE_SIZE) {
-            this.cache = new Map();
+        class PageCache {
+          constructor(maxSize = CONFIG.PAGE_CACHE_SIZE) {
+            this.cache = new Map(); // pageNum → {canvas, lastAccessed}
             this.maxSize = maxSize;
+            this.renderingPages = new Set(); // Track pages currently being rendered
           }
 
-          get(key) {
-            // Single Map lookup - no reorganization needed
-            return this.cache.get(key) || null;
-          }
-
-          set(key, value) {
-            // Only evict if cache is full and key doesn't exist
-            if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-              // Remove oldest entry (first in Map)
-              const firstKey = this.cache.keys().next().value;
-              this.cache.delete(firstKey);
+          /**
+           * Get page canvas from cache
+           * @param {number} pageNum - Page number (1-indexed)
+           * @returns {HTMLCanvasElement|null}
+           */
+          get(pageNum) {
+            const entry = this.cache.get(pageNum);
+            if (entry) {
+              entry.lastAccessed = Date.now();
+              return entry.canvas;
             }
-            this.cache.set(key, value);
+            return null;
           }
 
-          has(key) {
-            return this.cache.has(key);
+          /**
+           * Add page canvas to cache
+           * @param {number} pageNum - Page number (1-indexed)
+           * @param {HTMLCanvasElement} canvas - Rendered page canvas
+           */
+          set(pageNum, canvas) {
+            // Evict if full
+            if (this.cache.size >= this.maxSize && !this.cache.has(pageNum)) {
+              this._evictLRU();
+            }
+
+            this.cache.set(pageNum, {
+              canvas,
+              lastAccessed: Date.now()
+            });
           }
 
+          /**
+           * Check if page is in cache
+           * @param {number} pageNum
+           * @returns {boolean}
+           */
+          has(pageNum) {
+            return this.cache.has(pageNum);
+          }
+
+          /**
+           * Check if page is currently being rendered
+           * @param {number} pageNum
+           * @returns {boolean}
+           */
+          isRendering(pageNum) {
+            return this.renderingPages.has(pageNum);
+          }
+
+          /**
+           * Mark page as being rendered
+           * @param {number} pageNum
+           */
+          markRendering(pageNum) {
+            this.renderingPages.add(pageNum);
+          }
+
+          /**
+           * Unmark page as being rendered
+           * @param {number} pageNum
+           */
+          unmarkRendering(pageNum) {
+            this.renderingPages.delete(pageNum);
+          }
+
+          /**
+           * Get cache size
+           * @returns {number}
+           */
           size() {
             return this.cache.size;
           }
 
+          /**
+           * Clear all cached pages
+           */
           clear() {
             this.cache.clear();
+            this.renderingPages.clear();
+            debug('PageCache cleared');
+          }
+
+          /**
+           * Evict least recently used page
+           * @private
+           */
+          _evictLRU() {
+            let oldestPage = null;
+            let oldestTime = Infinity;
+
+            for (const [pageNum, entry] of this.cache) {
+              if (entry.lastAccessed < oldestTime) {
+                oldestTime = entry.lastAccessed;
+                oldestPage = pageNum;
+              }
+            }
+
+            if (oldestPage !== null) {
+              this.cache.delete(oldestPage);
+            }
+          }
+
+          /**
+           * Get cache statistics
+           * @returns {Object}
+           */
+          getStats() {
+            return {
+              size: this.cache.size,
+              maxSize: this.maxSize,
+              rendering: this.renderingPages.size,
+              hitRate: this._calculateHitRate()
+            };
+          }
+
+          _calculateHitRate() {
+            // Simple approximation - could track hits/misses for accuracy
+            return this.cache.size > 0 ? (this.cache.size / this.maxSize) : 0;
+          }
+        }
+
+        // ============================================================================
+        // TILE CACHE MODULE
+        // ============================================================================
+
+        /**
+         * Priority-based tile cache
+         * Evicts high-zoom-level tiles first (detailed views, cheap to regenerate)
+         * Keeps low-zoom-level tiles (overview, expensive to regenerate)
+         */
+        class PriorityTileCache {
+          constructor(maxSize = CONFIG.TILE_CACHE_SIZE) {
+            this.cache = new Map(); // key → {dataUrl, level, timestamp}
+            this.maxSize = maxSize;
+          }
+
+          /**
+           * Get tile from cache
+           * @param {string} key - Tile key "level_x_y"
+           * @returns {string|null} Data URL or null
+           */
+          get(key) {
+            const entry = this.cache.get(key);
+            return entry ? entry.dataUrl : null;
+          }
+
+          /**
+           * Add tile to cache with priority
+           * @param {string} key - Tile key "level_x_y"
+           * @param {string} dataUrl - Tile data URL
+           * @param {number} level - Zoom level
+           */
+          set(key, dataUrl, level) {
+            // Evict if cache is full and key doesn't exist
+            if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+              this._evictByPriority();
+            }
+
+            this.cache.set(key, {
+              dataUrl,
+              level,
+              timestamp: Date.now()
+            });
+          }
+
+          /**
+           * Check if tile is in cache
+           * @param {string} key
+           * @returns {boolean}
+           */
+          has(key) {
+            return this.cache.has(key);
+          }
+
+          /**
+           * Get cache size
+           * @returns {number}
+           */
+          size() {
+            return this.cache.size;
+          }
+
+          /**
+           * Clear all cached tiles
+           */
+          clear() {
+            this.cache.clear();
+          }
+
+          /**
+           * Evict tile with lowest priority (highest zoom level)
+           * High-zoom tiles show detail and are cheap to regenerate
+           * Low-zoom tiles show overview and are expensive to regenerate
+           * @private
+           */
+          _evictByPriority() {
+            let evictKey = null;
+            let highestLevel = -1;
+            let oldestTime = Infinity;
+
+            // Find tile with highest zoom level (lowest priority)
+            // If multiple at same level, evict oldest
+            for (const [key, entry] of this.cache) {
+              if (entry.level > highestLevel ||
+                  (entry.level === highestLevel && entry.timestamp < oldestTime)) {
+                highestLevel = entry.level;
+                oldestTime = entry.timestamp;
+                evictKey = key;
+              }
+            }
+
+            if (evictKey) {
+              this.cache.delete(evictKey);
+            }
+          }
+
+          /**
+           * Get cache statistics
+           * @returns {Object}
+           */
+          getStats() {
+            const levelCounts = {};
+            for (const entry of this.cache.values()) {
+              levelCounts[entry.level] = (levelCounts[entry.level] || 0) + 1;
+            }
+
+            return {
+              size: this.cache.size,
+              maxSize: this.maxSize,
+              levelDistribution: levelCounts
+            };
           }
         }
 
@@ -615,12 +828,37 @@
         // ============================================================================
 
         class CustomTileSource {
-          constructor(gridDims, pattern, pageCanvases, numPages) {
+          constructor(gridDims, pattern, pageCanvasesOrPDF, numPages) {
             this.gridDims = gridDims;
             this.pattern = pattern;
-            this.pageCanvases = pageCanvases;
             this.numPages = numPages;
-            this.cache = new TileCache();
+
+            // Progressive loading mode: accept PDF object instead of pre-rendered canvases
+            if (CONFIG.ENABLE_PROGRESSIVE_LOADING && pageCanvasesOrPDF && pageCanvasesOrPDF.numPages) {
+              this.pdf = pageCanvasesOrPDF;
+              this.pageCanvases = []; // Empty array for backward compatibility
+              this.pageCache = new PageCache();
+              this.progressiveMode = true;
+
+              // Pre-populate cache with any pre-rendered pages
+              if (window.prererenderedPagesRef && window.prererenderedPagesRef.current) {
+                const prerendered = window.prererenderedPagesRef.current;
+                for (let i = 0; i < prerendered.length; i++) {
+                  if (prerendered[i]) {
+                    this.pageCache.set(i + 1, prerendered[i]);
+                  }
+                }
+                console.log(`Pre-cached ${prerendered.length} pages`);
+              }
+            } else {
+              // Legacy mode: pre-rendered canvases
+              this.pdf = null;
+              this.pageCanvases = pageCanvasesOrPDF || [];
+              this.pageCache = null;
+              this.progressiveMode = false;
+            }
+
+            this.cache = new PriorityTileCache();
 
             // Calculate tile parameters
             this.tileSize = Math.max(
@@ -637,7 +875,61 @@
             this.tileCanvas.height = this.tileSize;
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
-            console.log(`Tile size: ${this.tileSize}, Max level: ${this.maxLevel}`);
+            // Tile size: ${this.tileSize}, Max level: ${this.maxLevel}
+          }
+
+          /**
+           * Render a page on-demand and add to page cache
+           * @param {number} pageNum - Page number (1-indexed)
+           * @returns {Promise<HTMLCanvasElement>}
+           */
+          async renderPage(pageNum) {
+            if (!this.progressiveMode || !this.pdf) {
+              throw new Error('renderPage() only available in progressive mode');
+            }
+
+            // Check if already in cache
+            const cached = this.pageCache.get(pageNum);
+            if (cached) return cached;
+
+            // Check if already being rendered
+            if (this.pageCache.isRendering(pageNum)) {
+              // Wait for it to finish (simple polling, could use promises)
+              while (this.pageCache.isRendering(pageNum)) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+              }
+              return this.pageCache.get(pageNum);
+            }
+
+            // Mark as rendering
+            this.pageCache.markRendering(pageNum);
+
+            try {
+              debug(`Rendering page ${pageNum}...`);
+              const page = await this.pdf.getPage(pageNum);
+              const canvas = await PDFUtils.renderPageToCanvas(page);
+
+              // Add to cache
+              this.pageCache.set(pageNum, canvas);
+              debug(`Page ${pageNum} rendered and cached`);
+
+              return canvas;
+            } finally {
+              this.pageCache.unmarkRendering(pageNum);
+            }
+          }
+
+          /**
+           * Get page canvas (from cache or pre-rendered array)
+           * @param {number} pageNum - Page number (1-indexed)
+           * @returns {HTMLCanvasElement|null}
+           */
+          getPageCanvas(pageNum) {
+            if (this.progressiveMode) {
+              return this.pageCache ? this.pageCache.get(pageNum) : null;
+            } else {
+              return this.pageCanvases[pageNum - 1] || null;
+            }
           }
 
           /**
@@ -660,27 +952,23 @@
           generateTile(level, x, y) {
             const key = `${level}_${x}_${y}`;
 
-            // Only cache if all pages are loaded
-            const allPagesLoaded = this.pageCanvases.length >= this.numPages;
-
-            // Check cache (single lookup, no redundant has() call)
-            if (allPagesLoaded) {
-              const cached = this.cache.get(key);
-              if (cached) {
-                return cached;
-              }
+            // Check tile cache first
+            const cached = this.cache.get(key);
+            if (cached) {
+              return cached;
             }
 
             // Generate tile
             const scale = Math.pow(2, level - this.maxLevel);
-            const tileUrl = this._renderTile(level, x, y, scale, key);
+            const result = this._renderTile(level, x, y, scale, key);
 
-            // Cache if all pages loaded
-            if (allPagesLoaded) {
-              this.cache.set(key, tileUrl);
+            // Only cache if tile has all required pages (or not in progressive mode)
+            // result.shouldCache is set by _renderTile
+            if (result.shouldCache) {
+              this.cache.set(key, result.dataUrl, level);
             }
 
-            return tileUrl;
+            return result.dataUrl;
           }
 
           /**
@@ -697,9 +985,33 @@
 
             // Debug first few tiles
             if (this.cache.size() < 3) {
-              console.log(`\nGenerating tile ${key}:`);
-              console.log(`  Bounds: (${tileLeft.toFixed(0)}, ${tileTop.toFixed(0)}) to (${tileRight.toFixed(0)}, ${tileBottom.toFixed(0)})`);
-              console.log(`  Scale: ${scale.toFixed(4)}, Level: ${level}`);
+              // Tile generation (verbose logging disabled)
+            }
+
+            // Progressive loading: Check which pages this tile needs
+            const missingPagesSet = new Set();
+            const neededPagesSet = new Set();
+            if (this.progressiveMode) {
+              for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                  const pageLeft = col * (pageWidth + spacing);
+                  const pageTop = row * (pageHeight + spacing);
+                  const pageRight = pageLeft + pageWidth;
+                  const pageBottom = pageTop + pageHeight;
+
+                  // Check if page intersects this tile
+                  if (!(pageRight < tileLeft || pageLeft > tileRight ||
+                        pageBottom < tileTop || pageTop > tileBottom)) {
+                    const pageNum = this.pattern[row][col];
+                    neededPagesSet.add(pageNum);
+                    if (!this.pageCache.has(pageNum) && !this.pageCache.isRendering(pageNum)) {
+                      missingPagesSet.add(pageNum);
+                    }
+                  }
+                }
+              }
+
+              // Missing pages will show as blank - prefetching should prevent this
             }
 
             // Clear tile with background color
@@ -717,13 +1029,19 @@
               }
             }
 
-            if (this.cache.size() < 5) {
-              console.log(`  Drew ${pagesDrawn} page(s) in tile ${key}`);
-            }
-
             // Convert to data URL
-            return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+            const dataUrl = this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+
+            // Only cache if we have all pages (or not in progressive mode)
+            const neededPagesCount = neededPagesSet ? neededPagesSet.size : 0;
+            const shouldCache = !this.progressiveMode || (neededPagesCount > 0 && pagesDrawn === neededPagesCount);
+
+            return {
+              dataUrl,
+              shouldCache
+            };
           }
+
 
           /**
            * Draw page intersection with tile
@@ -743,13 +1061,9 @@
               return false;
             }
 
-            // Get page canvas
+            // Get page canvas (from cache or pre-rendered array)
             const pageNum = this.pattern[row][col];
-            const pageCanvas = this.pageCanvases[pageNum - 1];
-
-            if (this.cache.size() < 3) {
-              console.log(`  Grid(${row},${col}): Page ${pageNum} at (${pageLeft.toFixed(0)},${pageTop.toFixed(0)}) - ${pageCanvas ? 'LOADED' : 'not loaded'}`);
-            }
+            const pageCanvas = this.getPageCanvas(pageNum);
 
             if (!pageCanvas) {
               return false;
@@ -781,6 +1095,84 @@
             );
 
             return true;
+          }
+
+          /**
+           * Calculate which pages are visible in viewport
+           * @param {Object} viewportBounds - OSD viewport bounds
+           * @returns {Set<number>} Set of visible page numbers
+           */
+          calculateVisiblePages(viewportBounds) {
+            const visiblePages = new Set();
+            const { pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+
+            // Convert viewport bounds to grid coordinates
+            const viewLeft = viewportBounds.x * this.gridDims.totalWidth;
+            const viewTop = viewportBounds.y * this.gridDims.totalHeight;
+            const viewRight = viewLeft + (viewportBounds.width * this.gridDims.totalWidth);
+            const viewBottom = viewTop + (viewportBounds.height * this.gridDims.totalHeight);
+
+            // Check each grid position
+            for (let row = 0; row < gridSize; row++) {
+              for (let col = 0; col < gridSize; col++) {
+                const pageLeft = col * (pageWidth + spacing);
+                const pageTop = row * (pageHeight + spacing);
+                const pageRight = pageLeft + pageWidth;
+                const pageBottom = pageTop + pageHeight;
+
+                // Check if page intersects viewport
+                if (!(pageRight < viewLeft || pageLeft > viewRight ||
+                      pageBottom < viewTop || pageTop > viewBottom)) {
+                  const pageNum = this.pattern[row][col];
+                  visiblePages.add(pageNum);
+                }
+              }
+            }
+
+            return visiblePages;
+          }
+
+          /**
+           * Prefetch pages in buffer zone around visible area
+           * @param {Object} viewportBounds - OSD viewport bounds
+           */
+          async prefetchVisiblePages(viewportBounds) {
+            if (!this.progressiveMode) return;
+
+            const visiblePages = this.calculateVisiblePages(viewportBounds);
+
+            // Add buffer zone pages
+            const bufferPages = new Set(visiblePages);
+            const buffer = CONFIG.PREFETCH_BUFFER_PAGES;
+
+            for (const pageNum of visiblePages) {
+              // Add adjacent pages (simplified - adds ±buffer in page number)
+              for (let offset = -buffer; offset <= buffer; offset++) {
+                const bufferPageNum = pageNum + offset;
+                if (bufferPageNum >= 1 && bufferPageNum <= this.numPages) {
+                  bufferPages.add(bufferPageNum);
+                }
+              }
+            }
+
+            debug(`Prefetching ${bufferPages.size} pages (${visiblePages.size} visible + buffer)`);
+
+            // Render pages that aren't in cache yet (non-blocking)
+            const renderPromises = [];
+            for (const pageNum of bufferPages) {
+              if (!this.pageCache.has(pageNum) && !this.pageCache.isRendering(pageNum)) {
+                renderPromises.push(this.renderPage(pageNum).catch(err => {
+                  console.error(`Failed to prefetch page ${pageNum}:`, err);
+                }));
+              }
+            }
+
+            // Don't await - let prefetching happen in background
+            if (renderPromises.length > 0) {
+              Promise.all(renderPromises).then(() => {
+                debug(`Prefetch complete: ${renderPromises.length} pages rendered`);
+              });
+            }
           }
         }
 
@@ -831,11 +1223,11 @@
             const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
 
             // Detect small phone and hide navigator on mobile
+            // Also hide navigator in progressive mode (needs all pages rendered)
             const isSmallPhone = this.isTouchDevice();
-            const showNavigator = !isSmallPhone;
+            const showNavigator = !isSmallPhone && !CONFIG.ENABLE_PROGRESSIVE_LOADING;
 
-            console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
+            // Grid: ${gridSize}×${gridSize}, minZoom: ${minZoomImageRatio.toFixed(3)}
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
@@ -854,7 +1246,9 @@
               constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
               immediateRender: true,
-              preload: true
+              preload: true,
+              zoomPerScroll: 1.4, // Zoom speed per scroll wheel event (default: 1.2, higher = faster)
+              zoomPerClick: 2.0 // Zoom speed for zoom buttons (default: 2.0)
             };
 
             // Only set minZoomLevel if specified
@@ -870,7 +1264,21 @@
                 0, 0, pageWidth, pageHeight
               );
               viewer.viewport.fitBounds(viewportRect, true);
+
+              // Trigger initial prefetch immediately after opening
+              if (CONFIG.ENABLE_PROGRESSIVE_LOADING && tileSource.progressiveMode) {
+                const bounds = viewer.viewport.getBounds();
+                tileSource.prefetchVisiblePages(bounds);
+              }
             });
+
+            // Add viewport change listener for progressive prefetching
+            if (CONFIG.ENABLE_PROGRESSIVE_LOADING && tileSource.progressiveMode) {
+              viewer.addHandler('viewport-change', function() {
+                const bounds = viewer.viewport.getBounds();
+                tileSource.prefetchVisiblePages(bounds);
+              });
+            }
 
             return viewer;
           }
@@ -923,6 +1331,17 @@
               // Check URL parameters first (highest priority)
               const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
 
+              // Clear stale ?pdf parameters if not in storage
+              // This prevents old sessions from persisting
+              if (pdfParam) {
+                const stored = await PDFStorage.load();
+                if (!stored || stored.filename !== decodeURIComponent(pdfParam)) {
+                  console.log(`Stale ?pdf parameter "${pdfParam}" doesn't match storage, clearing`);
+                  URLManager.clear();
+                  // Don't process this parameter, fall through to auto-load
+                }
+              }
+
               // Priority 1: ?url= parameter (remote URL)
               if (urlParam) {
                 try {
@@ -937,6 +1356,7 @@
               }
 
               // Priority 2: ?pdf= parameter (local file from storage or server)
+              let shouldFallbackToAutoLoad = false;
               if (pdfParam) {
                 const pdfFilename = decodeURIComponent(pdfParam);
 
@@ -966,17 +1386,22 @@
                     return;
                   } catch (error) {
                     console.error(`Failed to fetch PDF from server: ${error.message}`);
-                    alert(`PDF "${pdfFilename}" not found in storage or on server.`);
-                    // Fall through to next priority
+                    console.log(`Clearing ?pdf parameter and falling back to auto-load`);
+                    // Clear the URL parameter since file doesn't exist
+                    URLManager.clear();
+                    shouldFallbackToAutoLoad = true;
                   }
                 } else {
                   console.log(`PDF "${pdfFilename}" not in storage, and file:// protocol prevents server fetch`);
-                  // Fall through to next priority
+                  console.log(`Clearing ?pdf parameter and falling back to auto-load`);
+                  URLManager.clear();
+                  shouldFallbackToAutoLoad = true;
                 }
               }
 
               // Priority 3: Stored local PDF (no parameter, just from storage)
-              if (!urlParam && !pdfParam) {
+              // Skip if falling back from failed ?pdf parameter
+              if (!urlParam && !shouldFallbackToAutoLoad) {
                 try {
                   const stored = await PDFStorage.load();
                   if (stored) {
@@ -1003,8 +1428,8 @@
                 }
               }
 
-              // Fall back to config auto-load (lowest priority)
-              if (!CONFIG.AUTO_LOAD_PDF) return;
+              // Fall back to config auto-load (lowest priority, or if ?pdf parameter failed)
+              if (!CONFIG.AUTO_LOAD_PDF && !shouldFallbackToAutoLoad) return;
 
               // Skip auto-load for file:// protocol (browser security restrictions)
               if (window.location.protocol === 'file:') {
@@ -1079,26 +1504,67 @@
 
             console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
 
-            // Render all pages
-            setLoadingStatus('Rendering all pages...');
-            const pageCanvases = await PDFUtils.renderAllPages(pdf, (current, total) => {
-              setPagesLoaded(current);
-              setLoadingStatus(`Rendering page ${current}/${total}...`);
-            });
+            let pageWidth, pageHeight;
 
-            pageCanvasesRef.current = pageCanvases;
+            if (CONFIG.ENABLE_PROGRESSIVE_LOADING) {
+              // Progressive mode: Render ALL pages with progress, THEN initialize viewer
+              // This app needs all pages for zoomed-out view anyway
+              setLoadingStatus('Getting page dimensions...');
+              const firstPage = await pdf.getPage(1);
+              const viewport = firstPage.getViewport({ scale: CONFIG.PDF_RENDER_SCALE });
+              pageWidth = viewport.width;
+              pageHeight = viewport.height;
 
-            const pageWidth = pageCanvases[0].width;
-            const pageHeight = pageCanvases[0].height;
+              // Render ALL pages with progress updates
+              setLoadingStatus('Rendering pages...');
+              if (!pageCanvasesRef.current) {
+                pageCanvasesRef.current = [];
+              }
 
-            console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const canvas = await PDFUtils.renderPageToCanvas(page);
+                pageCanvasesRef.current[i - 1] = canvas;
+                setPagesLoaded(i);
+                setLoadingStatus(`Rendering page ${i}/${pdf.numPages}...`);
 
-            // Initialize viewer
-            setLoadingStatus('Initializing viewer...');
-            initializeViewer(pdf.numPages, pageWidth, pageHeight);
+                // Yield to browser every 5 pages
+                if (i % 5 === 0) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                }
+              }
 
-            setLoadingStatus('');
-            setIsLoading(false);
+              // Initialize viewer with all pages ready
+              setLoadingStatus('Initializing viewer...');
+              initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              setIsLoading(false);
+              setPagesLoaded(0);
+
+              return;
+            } else {
+              // Legacy mode: Render all pages upfront
+              setLoadingStatus('Rendering all pages...');
+              const pageCanvases = await PDFUtils.renderAllPages(pdf, (current, total) => {
+                setPagesLoaded(current);
+                setLoadingStatus(`Rendering page ${current}/${total}...`);
+              });
+
+              pageCanvasesRef.current = pageCanvases;
+
+              pageWidth = pageCanvases[0].width;
+              pageHeight = pageCanvases[0].height;
+
+              console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
+            }
+
+            // Initialize viewer (only in legacy mode, progressive mode handles this above)
+            if (!CONFIG.ENABLE_PROGRESSIVE_LOADING) {
+              setLoadingStatus('Initializing viewer...');
+              initializeViewer(pdf.numPages, pageWidth, pageHeight);
+
+              setLoadingStatus('');
+              setIsLoading(false);
+            }
           };
 
           const loadPDFFromURL = async (url, skipHistory = false) => {
@@ -1223,25 +1689,23 @@
             const pattern = GridPattern.generate(numPages, numPages);
             const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight);
 
-            console.log(`Page: ${pageWidth}x${pageHeight}, Spacing: ${gridDims.spacing}`);
-            console.log(`Grid: ${gridDims.gridSize}×${gridDims.gridSize}, Total: ${gridDims.totalWidth}x${gridDims.totalHeight}`);
-
-            // Debug: Print first few page positions
-            console.log('Expected page positions in grid:');
-            for (let row = 0; row < Math.min(3, gridDims.gridSize); row++) {
-              for (let col = 0; col < Math.min(3, gridDims.gridSize); col++) {
-                const pageNum = pattern[row][col];
-                const px = col * (pageWidth + gridDims.spacing);
-                const py = row * (pageHeight + gridDims.spacing);
-                console.log(`  Page ${pageNum} at grid(${row},${col}): pixel position (${px}, ${py})`);
-              }
-            }
+            // Grid initialized: ${gridDims.gridSize}×${gridDims.gridSize}, ${gridDims.totalWidth}x${gridDims.totalHeight}
 
             // Create tile source
+            // Pass PDF object in progressive mode, pre-rendered canvases in legacy mode
+            const pageDataOrPDF = CONFIG.ENABLE_PROGRESSIVE_LOADING
+              ? pdfDocRef.current
+              : pageCanvasesRef.current;
+
+            // Make pre-rendered pages available to CustomTileSource
+            if (CONFIG.ENABLE_PROGRESSIVE_LOADING) {
+              window.prererenderedPagesRef = pageCanvasesRef;
+            }
+
             const tileSource = new CustomTileSource(
               gridDims,
               pattern,
-              pageCanvasesRef.current,
+              pageDataOrPDF,
               numPages
             );
             tileSourceRef.current = tileSource;
