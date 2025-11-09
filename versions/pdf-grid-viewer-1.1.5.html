@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Grid Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef } = React;
+
+        const PDFGridViewer = () => {
+          const [pdfFile, setPdfFile] = useState(null);
+          const [numPages, setNumPages] = useState(0);
+          const [isLoading, setIsLoading] = useState(false);
+          const [pageImages, setPageImages] = useState([]);
+          const viewerRef = useRef(null);
+          const osdViewerRef = useRef(null);
+
+          // Set up PDF.js worker
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+          // Initialize viewer when pageImages are ready
+          React.useEffect(() => {
+            if (pageImages.length > 0) {
+              initializeViewer(pageImages);
+            }
+          }, [pageImages]);
+
+          // Generate the rotating grid pattern
+          const generateGridPattern = (totalPages, cols) => {
+            const pattern = [];
+            const rows = totalPages; // For N pages, we want N rows to make N×N grid
+            
+            for (let row = 0; row < rows; row++) {
+              const rowPages = [];
+              for (let col = 0; col < cols; col++) {
+                // Rotating pattern: each row starts at (row) offset from page 1
+                const pageIndex = ((row + col) % totalPages);
+                rowPages.push(pageIndex + 1); // Pages are 1-indexed for display
+              }
+              pattern.push(rowPages);
+            }
+            
+            return pattern;
+          };
+
+          const handleFileUpload = async (event) => {
+            const file = event.target.files[0];
+            if (!file || file.type !== 'application/pdf') {
+              alert('Please upload a PDF file');
+              return;
+            }
+
+            setIsLoading(true);
+            setPdfFile(file);
+
+            try {
+              const arrayBuffer = await file.arrayBuffer();
+              const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+              setNumPages(pdf.numPages);
+
+              // Render all pages to canvases
+              const pageImages = [];
+              const scale = 2.0; // High resolution for zooming
+              
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale });
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                
+                await page.render({
+                  canvasContext: context,
+                  viewport: viewport
+                }).promise;
+                
+                pageImages.push({
+                  pageNum: i,
+                  dataUrl: canvas.toDataURL('image/png'),
+                  width: viewport.width,
+                  height: viewport.height
+                });
+              }
+
+              // Store the page images in state
+              setPageImages(pageImages);
+              setIsLoading(false);
+              
+            } catch (error) {
+              console.error('Error loading PDF:', error);
+              alert('Error loading PDF: ' + error.message);
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          const initializeViewer = async (pageImages) => {
+            // Clean up existing viewer
+            if (osdViewerRef.current) {
+              osdViewerRef.current.destroy();
+            }
+
+            // Ensure the viewer element exists
+            const viewerElement = document.getElementById('openseadragon-viewer');
+            if (!viewerElement) {
+              console.error('Viewer element not found');
+              return;
+            }
+
+            // Calculate grid dimensions
+            const gridSize = pageImages.length; // Grid size equals number of pages
+            const pattern = generateGridPattern(pageImages.length, gridSize);
+            const rows = pattern.length;
+            const cols = gridSize;
+            
+            // Assume all pages have similar dimensions (use first page)
+            const pageWidth = pageImages[0].width;
+            const pageHeight = pageImages[0].height;
+            const spacing = Math.floor(pageWidth * 0.05); // 5% spacing between pages
+
+            // Create a single large canvas with all pages arranged in the grid
+            const totalWidth = cols * pageWidth + (cols - 1) * spacing;
+            const totalHeight = rows * pageHeight + (rows - 1) * spacing;
+            
+            const compositeCanvas = document.createElement('canvas');
+            compositeCanvas.width = totalWidth;
+            compositeCanvas.height = totalHeight;
+            const ctx = compositeCanvas.getContext('2d');
+            
+            // Fill with background color
+            ctx.fillStyle = '#1f2937'; // gray-800
+            ctx.fillRect(0, 0, totalWidth, totalHeight);
+            
+            // Load all images and draw them
+            const loadImage = (src) => {
+              return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+              });
+            };
+            
+            // Draw each page in its grid position
+            for (let row = 0; row < rows; row++) {
+              for (let col = 0; col < cols; col++) {
+                const pageNum = pattern[row][col];
+                const pageImage = pageImages[pageNum - 1];
+                
+                if (pageImage) {
+                  const img = await loadImage(pageImage.dataUrl);
+                  
+                  const x = col * (pageWidth + spacing);
+                  const y = row * (pageHeight + spacing);
+                  
+                  ctx.drawImage(img, x, y, pageWidth, pageHeight);
+                }
+              }
+            }
+            
+            // Create tile storage
+            const tileSize = 256;
+            const tiles = {};
+            
+            // Calculate max level for DZI pyramid
+            const maxDimension = Math.max(totalWidth, totalHeight);
+            const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
+            
+            console.log(`[v1.1.4] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            
+            // Create a reusable tile canvas for performance
+            const tileCanvas = document.createElement('canvas');
+            tileCanvas.width = tileSize;
+            tileCanvas.height = tileSize;
+            const tileCtx = tileCanvas.getContext('2d', { alpha: false });
+            
+            // Helper function to generate a single tile
+            const generateTile = (level, tx, ty) => {
+              const key = `${level}_${tx}_${ty}`;
+              if (tiles[key]) return; // Already generated
+              
+              const scale = Math.pow(2, level - maxLevel);
+              const sx = tx * tileSize / scale;
+              const sy = ty * tileSize / scale;
+              const sw = Math.min(tileSize / scale, totalWidth - sx);
+              const sh = Math.min(tileSize / scale, totalHeight - sy);
+              
+              tileCtx.fillStyle = '#1f2937';
+              tileCtx.fillRect(0, 0, tileSize, tileSize);
+              
+              const dw = sw * scale;
+              const dh = sh * scale;
+              tileCtx.drawImage(compositeCanvas, sx, sy, sw, sh, 0, 0, dw, dh);
+              
+              tiles[key] = tileCanvas.toDataURL('image/jpeg', 0.85);
+            };
+            
+            // Initialize OpenSeadragon IMMEDIATELY (before generating any tiles)
+            const viewer = OpenSeadragon({
+              id: 'openseadragon-viewer',
+              prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
+              tileSources: {
+                height: totalHeight,
+                width: totalWidth,
+                tileSize: tileSize,
+                minLevel: 0,
+                maxLevel: maxLevel,
+                getTileUrl: function(level, x, y) {
+                  const key = `${level}_${x}_${y}`;
+                  
+                  // If tile doesn't exist, generate it on-demand
+                  if (!tiles[key]) {
+                    generateTile(level, x, y);
+                  }
+                  
+                  return tiles[key] || '';
+                }
+              },
+              showNavigator: true,
+              navigatorPosition: 'BOTTOM_RIGHT',
+              showRotationControl: true,
+              minZoomLevel: 0.1,
+              maxZoomLevel: 10,
+              visibilityRatio: 0.2,
+              constrainDuringPan: false,
+              homeFillsViewer: false,
+              immediateRender: true,
+              preload: true
+            });
+            
+            // Set initial view to show the first page
+            viewer.addHandler('open', function() {
+              const viewportRect = viewer.viewport.imageToViewportRectangle(
+                0, 0, pageWidth, pageHeight
+              );
+              viewer.viewport.fitBounds(viewportRect, true);
+            });
+            
+            osdViewerRef.current = viewer;
+            
+            // NOW generate tiles asynchronously in the background (low-res first)
+            const generateFirstPageTiles = async () => {
+              // Generate tiles level by level (low-res to high-res)
+              for (let level = 0; level <= maxLevel; level++) {
+                const scale = Math.pow(2, level - maxLevel);
+                const firstPageMaxTileX = Math.ceil((pageWidth * scale) / tileSize);
+                const firstPageMaxTileY = Math.ceil((pageHeight * scale) / tileSize);
+                
+                for (let ty = 0; ty < firstPageMaxTileY; ty++) {
+                  for (let tx = 0; tx < firstPageMaxTileX; tx++) {
+                    generateTile(level, tx, ty);
+                    
+                    // Force viewer to update every few tiles
+                    if ((ty * firstPageMaxTileX + tx) % 3 === 0) {
+                      viewer.forceRedraw();
+                      await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                  }
+                }
+                
+                // Force redraw after each level completes
+                viewer.forceRedraw();
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+              
+              console.log(`First page tiles complete: ${Object.keys(tiles).length} tiles`);
+              
+              // Start generating remaining tiles
+              setTimeout(generateRemainingTiles, 100);
+            };
+            
+            // Start first page tile generation after a tiny delay
+            setTimeout(generateFirstPageTiles, 50);
+            
+            // Generate remaining tiles in the background using requestIdleCallback
+            const generateRemainingTiles = () => {
+              const tilesToGenerate = [];
+              
+              // Build list of all tiles, prioritizing by distance from first page
+              for (let level = maxLevel; level >= 0; level--) {
+                const scale = Math.pow(2, level - maxLevel);
+                const levelWidth = Math.ceil(totalWidth * scale);
+                const levelHeight = Math.ceil(totalHeight * scale);
+                const tilesX = Math.ceil(levelWidth / tileSize);
+                const tilesY = Math.ceil(levelHeight / tileSize);
+                
+                for (let ty = 0; ty < tilesY; ty++) {
+                  for (let tx = 0; tx < tilesX; tx++) {
+                    const key = `${level}_${tx}_${ty}`;
+                    if (!tiles[key]) {
+                      // Calculate distance from origin (first page is at 0,0)
+                      const distance = Math.sqrt(tx * tx + ty * ty);
+                      tilesToGenerate.push({ level, tx, ty, distance });
+                    }
+                  }
+                }
+              }
+              
+              // Sort by distance (generate closer tiles first)
+              tilesToGenerate.sort((a, b) => a.distance - b.distance);
+              
+              console.log(`Generating ${tilesToGenerate.length} remaining tiles in background...`);
+              
+              let index = 0;
+              const generateBatch = () => {
+                const batchSize = 10; // Generate 10 tiles per batch
+                const endIndex = Math.min(index + batchSize, tilesToGenerate.length);
+                
+                for (let i = index; i < endIndex; i++) {
+                  const { level, tx, ty } = tilesToGenerate[i];
+                  generateTile(level, tx, ty);
+                }
+                
+                index = endIndex;
+                
+                if (index < tilesToGenerate.length) {
+                  // Continue in next idle period
+                  if (window.requestIdleCallback) {
+                    requestIdleCallback(generateBatch, { timeout: 1000 });
+                  } else {
+                    setTimeout(generateBatch, 16); // ~60fps fallback
+                  }
+                } else {
+                  console.log(`All ${Object.keys(tiles).length} tiles generated!`);
+                }
+              };
+              
+              // Start background generation
+              if (window.requestIdleCallback) {
+                requestIdleCallback(generateBatch, { timeout: 1000 });
+              } else {
+                setTimeout(generateBatch, 100);
+              }
+            };
+          };
+
+          return (
+            <div className="w-full h-screen bg-gray-900 flex flex-col">
+              {/* Header */}
+              <div className="bg-gray-800 border-b border-gray-700 p-4">
+                <div className="flex items-center justify-between max-w-7xl mx-auto">
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer</h1>
+                  
+                  <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
+                    {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                
+                {numPages > 0 && (
+                  <div className="mt-2 text-sm text-gray-400 max-w-7xl mx-auto">
+                    {numPages} pages • Grid size: {numPages}×{numPages}
+                  </div>
+                )}
+              </div>
+
+              {/* Viewer Area */}
+              <div className="flex-1 relative">
+                {!pdfFile ? (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center text-gray-400">
+                      <svg className="w-24 h-24 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                      </svg>
+                      <p className="text-lg">Upload a PDF to get started</p>
+                      <p className="text-sm mt-2">Pages will appear in a rotating grid pattern</p>
+                    </div>
+                  </div>
+                ) : null}
+                
+                {isLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
+                    <div className="text-center">
+                      <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-600 border-t-blue-500 mb-4"></div>
+                      <p className="text-white">Processing PDF...</p>
+                    </div>
+                  </div>
+                )}
+                
+                <div
+                  id="openseadragon-viewer"
+                  ref={viewerRef}
+                  className="w-full h-full"
+                  style={{ display: pdfFile ? 'block' : 'none' }}
+                />
+              </div>
+
+              {/* Instructions */}
+              {pdfFile && !isLoading && (
+                <div className="bg-gray-800 border-t border-gray-700 p-3">
+                  <div className="max-w-7xl mx-auto text-sm text-gray-400 flex gap-6">
+                    <span>🖱️ Drag to pan</span>
+                    <span>🔍 Scroll to zoom</span>
+                    <span>🏠 Double-click to reset view</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        ReactDOM.render(<PDFGridViewer />, document.getElementById('root'));
+    </script>
+</body>
+</html>
