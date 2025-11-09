@@ -61,7 +61,7 @@
 
         const CONFIG = {
           // Version
-          VERSION: '1.6.4',
+          VERSION: '1.6.5',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -1525,39 +1525,35 @@
             let pageWidth, pageHeight;
 
             if (CONFIG.ENABLE_PROGRESSIVE_LOADING) {
-              // Progressive mode: Render first page, init viewer, render remaining in background
-              // Based on v1.2.8 approach
+              // Progressive mode: Init viewer immediately, render all pages in background
               if (!pageCanvasesRef.current) {
                 pageCanvasesRef.current = [];
               }
 
-              // Calculate optimal scale for global view based on page count
-              setLoadingStatus('Calculating optimal scale...');
+              // Calculate optimal scale and page dimensions from viewport
+              setLoadingStatus('Calculating dimensions...');
               const firstPage = await pdf.getPage(1);
               const viewport1x = firstPage.getViewport({ scale: 1.0 });
               const globalScale = PDFUtils.calculateGlobalScale(pdf.numPages, viewport1x.width, viewport1x.height);
 
-              // Render first page at calculated global scale
-              setLoadingStatus('Rendering first page...');
-              const firstCanvas = await PDFUtils.renderPageToCanvas(firstPage, globalScale);
-              pageCanvasesRef.current[0] = firstCanvas;
-              pageWidth = firstCanvas.width;
-              pageHeight = firstCanvas.height;
-              setPagesLoaded(1);
+              // Get page dimensions from viewport (no rendering needed)
+              const viewportScaled = firstPage.getViewport({ scale: globalScale });
+              pageWidth = viewportScaled.width;
+              pageHeight = viewportScaled.height;
 
-              console.log(`First page rendered at ${globalScale.toFixed(3)}x: ${pageWidth}x${pageHeight}`);
+              console.log(`Calculated dimensions at ${globalScale.toFixed(3)}x: ${pageWidth}x${pageHeight}`);
 
               // Store global scale for use by CustomTileSource
               window.globalRenderScale = globalScale;
 
-              // Initialize viewer immediately with just first page
+              // Initialize viewer immediately
               setLoadingStatus('Initializing viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
               setIsLoading(false);
               setLoadingStatus('');
 
-              // Render remaining pages in background
-              const renderRemainingPages = async () => {
+              // Render all pages in background
+              const renderAllPages = async () => {
                 const totalPages = pdf.numPages;
                 const viewer = osdViewerRef.current;
                 const tileSource = tileSourceRef.current;
@@ -1567,9 +1563,9 @@
                   return;
                 }
 
-                console.log(`Starting background rendering of ${totalPages - 1} remaining pages...`);
+                console.log(`Starting background rendering of ${totalPages} pages...`);
 
-                for (let i = 2; i <= totalPages; i++) {
+                for (let i = 1; i <= totalPages; i++) {
                   // Render page
                   await tileSource.renderPage(i);
                   setPagesLoaded(i);
@@ -1613,7 +1609,7 @@
               };
 
               // Start background rendering (non-blocking)
-              renderRemainingPages().catch(err => {
+              renderAllPages().catch(err => {
                 console.error('Background rendering error:', err);
               });
 
