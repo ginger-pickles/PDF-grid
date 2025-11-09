@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer v1.2.4</title>
+    <title>PDF Grid Viewer v1.2.5</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -70,7 +70,7 @@
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
 
-              console.log(`[v1.2.4] Loaded PDF with ${pdf.numPages} pages`);
+              console.log(`[v1.2.5] Loaded PDF with ${pdf.numPages} pages`);
               
               // Render ONLY the first page initially
               setLoadingStatus('Rendering first page...');
@@ -190,7 +190,18 @@
             
             console.log(`Page: ${pageWidth}x${pageHeight}, Spacing: ${spacing}`);
             console.log(`Grid: ${gridSize}×${gridSize}, Total: ${totalWidth}x${totalHeight}`);
-            console.log(`Pattern sample (first row):`, pattern[0]);
+            console.log(`Full pattern:`, pattern);
+            
+            // Debug: Print out where each page SHOULD appear
+            console.log('Expected page positions in grid:');
+            for (let row = 0; row < Math.min(3, gridSize); row++) {
+              for (let col = 0; col < Math.min(3, gridSize); col++) {
+                const pageNum = pattern[row][col];
+                const px = col * (pageWidth + spacing);
+                const py = row * (pageHeight + spacing);
+                console.log(`  Page ${pageNum} at grid(${row},${col}): pixel position (${px}, ${py})`);
+              }
+            }
             
             // Use tile size at least as large as a page
             const tileSize = Math.max(512, Math.ceil(Math.max(pageWidth, pageHeight) / 256) * 256);
@@ -239,9 +250,11 @@
                 const tileRight = Math.min(tileLeft + tileSize / scale, totalWidth);
                 const tileBottom = Math.min(tileTop + tileSize / scale, totalHeight);
                 
-                // Debug: log first few tiles
-                if (tileCache.size < 5) {
-                  console.log(`Generating tile ${key}: bounds (${tileLeft.toFixed(0)}, ${tileTop.toFixed(0)}) to (${tileRight.toFixed(0)}, ${tileBottom.toFixed(0)})`);
+                // Debug: log first few tiles with DETAILS
+                if (tileCache.size < 3) {
+                  console.log(`\nGenerating tile ${key}:`);
+                  console.log(`  Tile bounds: (${tileLeft.toFixed(0)}, ${tileTop.toFixed(0)}) to (${tileRight.toFixed(0)}, ${tileBottom.toFixed(0)})`);
+                  console.log(`  Scale: ${scale.toFixed(4)}, Level: ${level}`);
                 }
                 
                 // Clear tile
@@ -269,10 +282,11 @@
                     const pageNum = pattern[row][col];
                     const pageCanvas = pageCanvasesRef.current[pageNum - 1];
                     
+                    if (tileCache.size < 3) {
+                      console.log(`  Grid(${row},${col}): Page ${pageNum} at (${pageLeft.toFixed(0)},${pageTop.toFixed(0)}) intersects tile - ${pageCanvas ? 'LOADED' : 'not loaded'}`);
+                    }
+                    
                     if (!pageCanvas) {
-                      if (tileCache.size < 5) {
-                        console.log(`  Page ${pageNum} at grid (${row},${col}) not loaded yet`);
-                      }
                       continue; // Page not rendered yet
                     }
                     
@@ -356,7 +370,7 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.4</h1>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.5</h1>
                   
                   <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
                     {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
