@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Grid Viewer v1.2.2</title>
+    <title>PDF Grid Viewer v1.2.3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -70,7 +70,7 @@
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
 
-              console.log(`[v1.2.2] Loaded PDF with ${pdf.numPages} pages`);
+              console.log(`[v1.2.3] Loaded PDF with ${pdf.numPages} pages`);
               
               // Render ONLY the first page initially
               setLoadingStatus('Rendering first page...');
@@ -126,12 +126,16 @@
               pageCanvasesRef.current.push(pageCanvas);
               setPagesLoaded(i);
               
-              // Clear tile cache and force redraw when new pages are available
-              if (tileCacheRef.current) {
-                tileCacheRef.current.clear();
-              }
-              if (osdViewerRef.current) {
-                osdViewerRef.current.forceRedraw();
+              // Every 3 pages, force tile regeneration by resetting the tile source
+              if (i % 3 === 0 || i === pdf.numPages) {
+                if (tileCacheRef.current) {
+                  tileCacheRef.current.clear();
+                }
+                if (osdViewerRef.current && osdViewerRef.current.world.getItemCount() > 0) {
+                  // Force OpenSeadragon to regenerate all visible tiles
+                  const tiledImage = osdViewerRef.current.world.getItemAt(0);
+                  tiledImage.reset();
+                }
               }
               
               // Log progress every 10 pages
@@ -336,7 +340,7 @@
               {/* Header */}
               <div className="bg-gray-800 border-b border-gray-700 p-4">
                 <div className="flex items-center justify-between max-w-7xl mx-auto">
-                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.2</h1>
+                  <h1 className="text-2xl font-bold text-white">PDF Grid Viewer v1.2.3</h1>
                   
                   <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer transition-colors">
                     {pdfFile ? 'Load Different PDF' : 'Upload PDF'}
