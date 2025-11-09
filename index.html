@@ -181,7 +181,7 @@
             const maxDimension = Math.max(totalWidth, totalHeight);
             const maxLevel = Math.ceil(Math.log2(maxDimension / tileSize));
             
-            console.log(`Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
+            console.log(`[v1.1.4] Image size: ${totalWidth}x${totalHeight}, max level: ${maxLevel}`);
             
             // Create a reusable tile canvas for performance
             const tileCanvas = document.createElement('canvas');
@@ -216,8 +216,8 @@
             
             console.log(`Pre-generating tiles for first page: ${firstPageTilesX}x${firstPageTilesY} at each level`);
             
-            // Pre-generate tiles for the first page (top-left) at all zoom levels
-            for (let level = maxLevel; level >= 0; level--) {
+            // Pre-generate tiles for the first page (top-left) - LOW RES FIRST for fast display
+            for (let level = 0; level <= maxLevel; level++) {  // Changed: start from 0 (lowest res)
               const scale = Math.pow(2, level - maxLevel);
               const levelWidth = Math.ceil(totalWidth * scale);
               const levelHeight = Math.ceil(totalHeight * scale);
