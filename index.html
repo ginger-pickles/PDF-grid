@@ -61,7 +61,7 @@
 
         const CONFIG = {
           // Version
-          VERSION: '1.6.11',
+          VERSION: '1.6.12',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -682,6 +682,15 @@
           }
 
           /**
+           * Delete a specific tile from cache
+           * @param {string} key - Tile key to delete
+           * @returns {boolean} True if deleted
+           */
+          delete(key) {
+            return this.cache.delete(key);
+          }
+
+          /**
            * Evict tile with lowest priority (highest zoom level)
            * High-zoom tiles show detail and are cheap to regenerate
            * Low-zoom tiles show overview and are expensive to regenerate
@@ -1264,6 +1273,7 @@
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileSource.getOSDConfig(),
+              debugMode: false, // Suppress warnings, keep errors
               showNavigator: showNavigator,
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
@@ -1594,33 +1604,29 @@
                   await tileSource.renderPage(i);
                   setPagesLoaded(i);
 
-                  // Recreate TiledImage every 3 pages (like v1.2.8)
+                  // Recreate TiledImage every 3 pages to show newly rendered pages
                   if (i % 3 === 0 || i === totalPages) {
-                    // console.log(`Recreating TiledImage after page ${i}...`);
-
                     // Preserve current viewport
-                    const currentBounds = viewer.viewport.getBounds();
+                    const oldTiledImage = viewer.world.getItemAt(0);
+                    const currentBounds = oldTiledImage ? oldTiledImage.getBounds() : null;
 
                     // Clear our tile cache
                     tileSource.cache.clear();
 
-                    // Destroy old TiledImage and create new one
-                    const oldTiledImage = viewer.world.getItemAt(0);
-                    if (oldTiledImage) {
-                      viewer.world.removeItem(oldTiledImage);
-                      viewer.addTiledImage({
-                        tileSource: tileSource.getOSDConfig(),
-                        success: function() {
-                          viewer.viewport.fitBounds(currentBounds, true);
+                    // Add new TiledImage FIRST, then remove old (avoids gap and warnings)
+                    viewer.addTiledImage({
+                      tileSource: tileSource.getOSDConfig(),
+                      x: currentBounds ? currentBounds.x : 0,
+                      y: currentBounds ? currentBounds.y : 0,
+                      width: currentBounds ? currentBounds.width : 1,
+                      success: function() {
+                        // Remove old TiledImage after new one is ready
+                        if (oldTiledImage) {
+                          viewer.world.removeItem(oldTiledImage);
                         }
-                      });
-                    }
+                      }
+                    });
                   }
-
-                  // Log progress every 10 pages
-                  // if (i % 10 === 0) {
-                  //   console.log(`Rendered ${i}/${totalPages} pages`);
-                  // }
 
                   // Yield to browser every 5 pages
                   if (i % 5 === 0) {
