@@ -447,6 +447,7 @@
             this.cache = new Map(); // pageNum → {canvas, lastAccessed}
             this.maxSize = maxSize;
             this.renderingPages = new Set(); // Track pages currently being rendered
+            this.allowEviction = true; // Can be disabled during progressive global loading
           }
 
           /**
@@ -469,8 +470,11 @@
            * @param {HTMLCanvasElement} canvas - Rendered page canvas
            */
           set(pageNum, canvas) {
-            // Evict if full
-            if (this.cache.size >= this.maxSize && !this.cache.has(pageNum)) {
+            // Only evict if eviction is enabled AND cache is full
+            // During global view progressive loading, eviction is disabled because:
+            // - Memory usage is tiny at low scales (0.15x-0.3x)
+            // - Need all pages available for complete grid display
+            if (this.allowEviction && this.cache.size >= this.maxSize && !this.cache.has(pageNum)) {
               this._evictLRU();
             }
 
@@ -552,6 +556,26 @@
           }
 
           /**
+           * Disable cache eviction (for global view progressive loading)
+           * Safe because memory usage is tiny at low scales:
+           * - 300 pages @ 0.15x ≈ 1.6MB
+           * - 1000 pages @ 0.15x ≈ 5.5MB
+           * - 10000 pages @ 0.15x ≈ 55MB (still manageable)
+           */
+          disableEviction() {
+            this.allowEviction = false;
+            debug('PageCache eviction disabled - keeping all pages in memory');
+          }
+
+          /**
+           * Enable cache eviction (for high-res detail rendering in future)
+           */
+          enableEviction() {
+            this.allowEviction = true;
+            debug('PageCache eviction enabled - LRU policy active');
+          }
+
+          /**
            * Get cache statistics
            * @returns {Object}
            */
@@ -560,6 +584,7 @@
               size: this.cache.size,
               maxSize: this.maxSize,
               rendering: this.renderingPages.size,
+              allowEviction: this.allowEviction,
               hitRate: this._calculateHitRate()
             };
           }
@@ -886,10 +911,15 @@
             if (CONFIG.ENABLE_PROGRESSIVE_LOADING && pageCanvasesOrPDF && pageCanvasesOrPDF.numPages) {
               this.pdf = pageCanvasesOrPDF;
               this.pageCanvases = []; // Empty array for backward compatibility
-              this.pageCache = new PageCache(); // Single cache for 2.0x pages
+              this.pageCache = new PageCache();
               this.progressiveMode = true;
 
-              // Pre-populate cache with any pre-rendered pages (at 2.0x scale)
+              // Disable eviction during global view progressive loading
+              // Memory usage is tiny at low scales (0.15x-0.3x), so we can keep all pages
+              // This ensures complete grid display without early pages being flushed
+              this.pageCache.disableEviction();
+
+              // Pre-populate cache with any pre-rendered pages
               if (window.prerenderedPagesRef && window.prerenderedPagesRef.current) {
                 const prerendered = window.prerenderedPagesRef.current;
                 for (let i = 0; i < prerendered.length; i++) {
