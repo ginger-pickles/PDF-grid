@@ -39,8 +39,13 @@
             if (tileRevision > 0 && osdViewerRef.current && tileSourceConfigRef.current) {
               console.log(`Tile revision changed to ${tileRevision}, recreating tile source...`);
               
+              // Save current viewport state
+              const viewer = osdViewerRef.current;
+              const currentBounds = viewer.viewport.getBounds();
+              const currentZoom = viewer.viewport.getZoom();
+              
               // Remove old tiledImage
-              const world = osdViewerRef.current.world;
+              const world = viewer.world;
               if (world.getItemCount() > 0) {
                 world.removeAll();
               }
@@ -51,10 +56,13 @@
               }
               
               // Add new tiledImage with same config (will call getTileUrl with fresh page data)
-              osdViewerRef.current.addTiledImage({
+              viewer.addTiledImage({
                 tileSource: tileSourceConfigRef.current,
                 success: function() {
                   console.log(`  Tile source recreated successfully`);
+                  
+                  // Restore viewport position
+                  viewer.viewport.fitBounds(currentBounds, true);
                 }
               });
             }
