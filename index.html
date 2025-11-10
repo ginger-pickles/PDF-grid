@@ -889,10 +889,26 @@
 
             const viewer = OpenSeadragon(viewerConfig);
 
-            // Set initial view to first page
+            // Set initial view to first page (centered at top)
             viewer.addHandler('open', function() {
+              // In staggered grid, page 1 is at row 0, column halfN (centered)
+              const spacing = Math.floor(pageWidth * CONFIG.GRID_SPACING_RATIO);
+              const halfN = Math.floor(gridSize / 2);
+              const page1Col = halfN;
+              const page1Row = 0;
+
+              // Calculate page 1 position in pixel coordinates
+              const page1X = page1Col * (pageWidth + spacing);
+              const page1Y = page1Row * (pageHeight + spacing);
+
+              // Center on page 1, showing slightly more than one page (1.5x)
+              const viewWidth = pageWidth * 1.5;
+              const viewHeight = pageHeight * 1.5;
+              const viewX = page1X - (viewWidth - pageWidth) / 2;
+              const viewY = page1Y - (viewHeight - pageHeight) / 2;
+
               const viewportRect = viewer.viewport.imageToViewportRectangle(
-                0, 0, pageWidth, pageHeight
+                viewX, viewY, viewWidth, viewHeight
               );
               viewer.viewport.fitBounds(viewportRect, true);
             });
@@ -1408,7 +1424,7 @@
 
                         <div>
                           <h3 className="font-semibold text-white mb-2">Loading Data</h3>
-                          <p>A demo PDF may already be loaded. Try inspecting something big, like a <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a> or <a href="?url=https://dn720001.ca.archive.org/0/items/the-radio-amateurs-handbook-arrl-francis-edward-handy-ed-1-1926/TheRadioAmateursHandbook_ARRL_FrancisEdwardHandy_Ed1_1926.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>!</p>
+                          <p>A demo PDF may already be loaded. Try inspecting something big, like a <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn720001.ca.archive.org/0/items/the-radio-amateurs-handbook-arrl-francis-edward-handy-ed-1-1926/TheRadioAmateursHandbook_ARRL_FrancisEdwardHandy_Ed1_1926.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>an academic publication</a>!</p>
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
                             <li><strong>Remote Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>

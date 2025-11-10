@@ -11,6 +11,8 @@ Handle situations where a .pdf url redirects to some other URL (right now "Error
 
 Change the download command to expressly download the file to local storage, instead of loading a PDF in the browser
 
+Handle URL redirects properly - some PDF URLs redirect to different locations (e.g., academic publications from institutional repositories)
+
 
 ## PERFORMANCE
 
