@@ -3,6 +3,8 @@
 
 ## INTERFACE
 
+Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
+
 Increase scrollwheel zoom sensitivity
 
 Handle situations where ?url and ?pdf parameters interact or error out depending on file:// vs http:// protocol in use

@@ -62,7 +62,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.5.3',
+          VERSION: '1.5.4',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -76,7 +76,7 @@
           CORS_PROXY: 'https://corsproxy.io/?',
 
           // PDF Rendering
-          PDF_RENDER_SCALE: 2.0,
+          PDF_RENDER_SCALE: 1.0,
 
           // Grid Layout
           GRID_SPACING_RATIO: 0.01, // Spacing as ratio of page width
@@ -97,8 +97,8 @@
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
-          OSD_MAX_ZOOM_PIXEL_RATIO: 8.0, // Allow zoom to 8x the original pixel resolution (quarter-page or smaller)
-          OSD_VISIBILITY_RATIO: 0.9, // 90% of grid must remain visible (allows limited panning beyond edges when zoomed in)
+          OSD_MAX_ZOOM_PIXEL_RATIO: 256.0, // Allow extremely deep zoom (will show pixelation but enables detailed exploration)
+          OSD_VISIBILITY_RATIO: 0.01, // 1% of grid must remain visible (allows very deep zoom even in large documents)
 
           // Storage
           STORAGE_EXPIRY_DAYS: 7, // Auto-delete stored local PDFs after N days
@@ -233,10 +233,15 @@
           /**
            * Render all pages of a PDF document
            */
-          async renderAllPages(pdf, onProgress) {
+          async renderAllPages(pdf, onProgress, cancelCheck) {
             const pageCanvases = [];
 
             for (let i = 1; i <= pdf.numPages; i++) {
+              // Check if loading was cancelled
+              if (cancelCheck && cancelCheck()) {
+                throw new Error('Loading cancelled by user');
+              }
+
               const page = await pdf.getPage(i);
               const canvas = await this.renderPageToCanvas(page);
               pageCanvases.push(canvas);
@@ -849,18 +854,20 @@
            * Initialize OpenSeadragon viewer
            */
           initialize(tileSource, pageWidth, pageHeight, gridSize) {
-            // Calculate minZoomImageRatio based on grid size
-            // Small grids: 0.95 (tight constraint with 5% margins)
-            // Large grids: scales down to allow zooming in to individual pages
-            // Formula: max(0.05, min(0.95, 10 / gridSize))
-            const minZoomImageRatio = Math.max(0.05, Math.min(0.95, 10 / gridSize));
+            // Set fixed minZoomImageRatio - grid should fill ~90% of viewport when fully zoomed out
+            const minZoomImageRatio = 0.9;
 
             // Detect small phone and hide navigator on mobile
             const isSmallPhone = this.isTouchDevice();
             const showNavigator = !isSmallPhone;
 
+            // Adjust maxZoomPixelRatio for high DPI displays (Retina, etc.)
+            // This ensures same zoom depth regardless of screen pixel density
+            const devicePixelRatio = window.devicePixelRatio || 1;
+
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
             console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
+            console.log(`Device pixel ratio: ${devicePixelRatio}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
@@ -872,14 +879,25 @@
               showZoomControl: false, // Hide zoom in/out buttons
               showHomeControl: true, // Keep home button
               showFullPageControl: true, // Keep fullscreen button
-              maxZoomLevel: CONFIG.OSD_MAX_ZOOM,
-              maxZoomPixelRatio: CONFIG.OSD_MAX_ZOOM_PIXEL_RATIO,
+              maxZoomLevel: null, // Remove max zoom level constraint
+              maxZoomPixelRatio: Infinity, // Remove pixel ratio constraint - allow unlimited zoom
               minZoomImageRatio: minZoomImageRatio, // Dynamically calculated based on grid size
               visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
               constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
               immediateRender: true,
-              preload: true
+              preload: true,
+              // Ensure touch gestures have same zoom limits as desktop
+              gestureSettingsMouse: {
+                clickToZoom: false,
+                dblClickToZoom: true
+              },
+              gestureSettingsTouch: {
+                pinchToZoom: true,
+                flickEnabled: true,
+                flickMinSpeed: 0.5,
+                flickMomentum: 0.25
+              }
             };
 
             // Only set minZoomLevel if specified
@@ -935,6 +953,7 @@
           const pageCanvasesRef = useRef([]);
           const pdfDocRef = useRef(null);
           const tileSourceRef = useRef(null);
+          const loadingCancelledRef = useRef(false);
 
           // Initialize PDF.js worker on mount
           React.useEffect(() => {
@@ -986,6 +1005,7 @@
                   const stored = await PDFStorage.load();
                   if (stored && stored.filename === pdfFilename) {
                     console.log(`Loading local PDF from storage: ${pdfFilename}`);
+                    loadingCancelledRef.current = false; // Reset cancel flag
                     setIsLoading(true);
                     setLoadingStatus('Loading stored PDF...');
                     setPdfFile({ name: stored.filename });
@@ -1022,6 +1042,7 @@
                   const stored = await PDFStorage.load();
                   if (stored) {
                     console.log(`Loading stored PDF from previous session: ${stored.filename}`);
+                    loadingCancelledRef.current = false; // Reset cancel flag
                     setIsLoading(true);
                     setLoadingStatus('Loading stored PDF...');
                     setPdfFile({ name: stored.filename });
@@ -1083,6 +1104,7 @@
                 try {
                   const stored = await PDFStorage.load();
                   if (stored && stored.filename === decodeURIComponent(pdfParam)) {
+                    loadingCancelledRef.current = false; // Reset cancel flag
                     setIsLoading(true);
                     setLoadingStatus('Loading PDF...');
                     setPdfFile({ name: stored.filename });
@@ -1108,66 +1130,97 @@
            * Common PDF loading logic for both file upload and URL loading
            */
           const loadPDF = async (pdf, filename = 'PDF') => {
-            setNumPages(pdf.numPages);
-            pdfDocRef.current = pdf;
-            setCurrentFilename(filename);
+            try {
+              setNumPages(pdf.numPages);
+              pdfDocRef.current = pdf;
+              setCurrentFilename(filename);
 
-            // Update page title - extract filename from URL if needed
-            const displayName = filename.startsWith('http://') || filename.startsWith('https://')
-              ? decodeURIComponent(filename.split('/').pop() || 'PDF')
-              : filename;
-            document.title = `${displayName} - PDF Grid Viewer`;
+              // Update page title - extract filename from URL if needed
+              const displayName = filename.startsWith('http://') || filename.startsWith('https://')
+                ? decodeURIComponent(filename.split('/').pop() || 'PDF')
+                : filename;
+              document.title = `${displayName} - PDF Grid Viewer`;
 
-            console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
+              console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
 
-            // Render all pages
-            setLoadingStatus('Rendering all pages...');
-            const pageCanvases = await PDFUtils.renderAllPages(pdf, (current, total) => {
-              setPagesLoaded(current);
-              setLoadingStatus(`Rendering page ${current}/${total}...`);
-            });
+              // Render all pages
+              setLoadingStatus('Rendering all pages...');
+              const pageCanvases = await PDFUtils.renderAllPages(
+                pdf,
+                (current, total) => {
+                  setPagesLoaded(current);
+                  setLoadingStatus(`Rendering page ${current}/${total}...`);
+                },
+                () => loadingCancelledRef.current
+              );
 
-            pageCanvasesRef.current = pageCanvases;
+              pageCanvasesRef.current = pageCanvases;
 
-            const pageWidth = pageCanvases[0].width;
-            const pageHeight = pageCanvases[0].height;
+              const pageWidth = pageCanvases[0].width;
+              const pageHeight = pageCanvases[0].height;
 
-            console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
+              console.log(`All ${pdf.numPages} pages rendered: ${pageWidth}x${pageHeight}`);
 
-            // Initialize viewer
-            setLoadingStatus('Initializing viewer...');
-            initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              // Initialize viewer
+              setLoadingStatus('Initializing viewer...');
+              initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
-            setLoadingStatus('');
-            setIsLoading(false);
+              setLoadingStatus('');
+              setIsLoading(false);
+            } catch (error) {
+              if (error.message === 'Loading cancelled by user') {
+                console.log('PDF loading cancelled by user');
+                setIsLoading(false);
+                setLoadingStatus('');
+                setPdfFile(null);
+              } else {
+                throw error;
+              }
+            }
           };
 
           const loadPDFFromURL = async (url, skipHistory = false) => {
+            loadingCancelledRef.current = false; // Reset cancel flag
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile({ name: url }); // Store URL as "file" for display
 
-            // Clear any stored local PDFs when loading from URL
-            await PDFStorage.clear();
+            // Update input field immediately to show what's being loaded
+            setUrlInput(url);
 
-            // Add ?url= parameter to URL for browser history and refresh (unless loading from history)
-            if (!skipHistory && (url.startsWith('http://') || url.startsWith('https://'))) {
-              URLManager.pushState('url', url);
+            // Add URL parameter for browser history and refresh (unless loading from history)
+            if (!skipHistory) {
+              if (url.startsWith('http://') || url.startsWith('https://')) {
+                // Remote URL - use ?url= parameter and clear local storage
+                await PDFStorage.clear();
+                URLManager.pushState('url', url);
+              } else {
+                // Local file - use ?pdf= parameter (don't clear storage, it will be saved after loading)
+                URLManager.pushState('pdf', url);
+              }
+            } else {
+              // When loading from history, still clear storage if it's a remote URL
+              if (url.startsWith('http://') || url.startsWith('https://')) {
+                await PDFStorage.clear();
+              }
             }
 
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
               await loadPDF(pdf, url);
-              // Only display URL in field if it's an actual URL (not a local filename like demo.pdf)
-              if (url.startsWith('http://') || url.startsWith('https://')) {
-                setUrlInput(url);
-              }
             } catch (error) {
-              console.error('Error loading PDF from URL:', error);
+              if (error.message === 'Loading cancelled by user') {
+                console.log('Loading cancelled');
+                setPdfFile(null);
+              } else {
+                console.error('Error loading PDF from URL:', error);
+                setPdfFile(null); // Clear pdfFile to show instruction screen
+              }
               setIsLoading(false);
-              setPdfFile(null); // Clear pdfFile to show instruction screen
               setLoadingStatus('');
-              throw error; // Re-throw for auto-load handler
+              if (error.message !== 'Loading cancelled by user') {
+                throw error; // Re-throw for auto-load handler
+              }
             }
           };
 
@@ -1175,6 +1228,7 @@
             const file = event.target.files[0];
             if (!file) return;
 
+            loadingCancelledRef.current = false; // Reset cancel flag
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile(file);
@@ -1193,9 +1247,15 @@
               // Save to storage for persistence across refreshes
               await PDFStorage.save(fileData, file.name);
             } catch (error) {
-              console.error('Error loading PDF:', error);
-              alert('Error loading PDF: ' + error.message);
+              if (error.message === 'Loading cancelled by user') {
+                console.log('Loading cancelled');
+                setPdfFile(null);
+              } else {
+                console.error('Error loading PDF:', error);
+                alert('Error loading PDF: ' + error.message);
+              }
               setIsLoading(false);
+              setLoadingStatus('');
             }
           };
 
@@ -1246,6 +1306,14 @@
             if (event.key === 'Enter') {
               handleUrlLoad();
             }
+          };
+
+          const handleStopLoading = () => {
+            loadingCancelledRef.current = true;
+            // Immediately hide the spinner for instant feedback
+            setIsLoading(false);
+            setLoadingStatus('');
+            setPdfFile(null);
           };
 
           const initializeViewer = (numPages, pageWidth, pageHeight) => {
@@ -1427,7 +1495,7 @@
 
                         <div>
                           <h3 className="font-semibold text-white mb-2">Loading Data</h3>
-                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn720001.ca.archive.org/0/items/the-radio-amateurs-handbook-arrl-francis-edward-handy-ed-1-1926/TheRadioAmateursHandbook_ARRL_FrancisEdwardHandy_Ed1_1926.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
+                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn790003.ca.archive.org/0/items/the-unwritten-laws-of-engineering/The%20Unwritten%20Laws%20of%20Engineering.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
                             <li><strong>Remote Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
@@ -1500,7 +1568,13 @@
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
                     <div className="text-center">
                       <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-600 border-t-blue-500 mb-4"></div>
-                      <p className="text-white">{loadingStatus}</p>
+                      <p className="text-white mb-4">{loadingStatus}</p>
+                      <button
+                        onClick={handleStopLoading}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded transition-colors"
+                      >
+                        Stop
+                      </button>
                     </div>
                   </div>
                 )}
