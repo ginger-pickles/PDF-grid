@@ -1,0 +1,19 @@
+# Deployment script (contains credentials/server info)
+deploy.sh
+
+# PDF test files
+*.pdf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node modules (if added in future)
+node_modules/
