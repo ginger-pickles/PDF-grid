@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deep Zoom Image Browser - Dynamic Streaming Demo</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        #header {
+            background: #2d2d2d;
+            border-bottom: 2px solid #404040;
+            padding: 15px 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #ffffff;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #b0b0b0;
+            margin-bottom: 15px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #357abd;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.secondary {
+            background: #5a5a5a;
+        }
+
+        .btn.secondary:hover {
+            background: #6a6a6a;
+        }
+
+        .info-panel {
+            background: #3a3a3a;
+            padding: 12px 20px;
+            border-radius: 5px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .info-label {
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .info-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #4a90e2;
+        }
+
+        #viewer-container {
+            position: absolute;
+            top: 155px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+
+        #openseadragon-viewer {
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+
+        .status {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 30px 50px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 1000;
+            display: none;
+        }
+
+        .status.active {
+            display: block;
+        }
+
+        .status h2 {
+            margin-bottom: 15px;
+            color: #4a90e2;
+        }
+
+        .spinner {
+            border: 4px solid #333;
+            border-top: 4px solid #4a90e2;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .help-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            z-index: 100;
+        }
+
+        .help-toggle:hover {
+            background: #357abd;
+        }
+
+        .help-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            z-index: 2000;
+            overflow-y: auto;
+        }
+
+        .help-modal.active {
+            display: block;
+        }
+
+        .help-content {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 40px;
+            background: #2d2d2d;
+            border-radius: 10px;
+        }
+
+        .help-content h2 {
+            color: #4a90e2;
+            margin-bottom: 20px;
+        }
+
+        .help-content h3 {
+            color: #ffffff;
+            margin-top: 25px;
+            margin-bottom: 10px;
+        }
+
+        .help-content p, .help-content li {
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .help-content ul {
+            margin-left: 20px;
+        }
+
+        .help-content code {
+            background: #1a1a1a;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #4a90e2;
+        }
+
+        .close-help {
+            float: right;
+            font-size: 32px;
+            cursor: pointer;
+            color: #999;
+            line-height: 1;
+        }
+
+        .close-help:hover {
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            #header {
+                padding: 10px 15px;
+            }
+
+            h1 {
+                font-size: 20px;
+            }
+
+            #viewer-container {
+                top: 180px;
+            }
+
+            .help-content {
+                margin: 20px;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🔍 Deep Zoom Image Browser</h1>
+        <p class="subtitle">Dynamic Streaming with IIPImage Server & OpenSeadragon</p>
+
+        <div class="controls">
+            <button class="btn" onclick="loadImage('sample1.tif')">Load Image 1 (10K×10K)</button>
+            <button class="btn" onclick="loadImage('sample2.tif')">Load Image 2 (8K×8K)</button>
+            <button class="btn secondary" onclick="resetView()">Reset View</button>
+        </div>
+
+        <div class="info-panel" style="margin-top: 15px;">
+            <div class="info-item">
+                <span class="info-label">Current Image</span>
+                <span class="info-value" id="current-image">None</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Resolution</span>
+                <span class="info-value" id="resolution">-</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Tile Size</span>
+                <span class="info-value">256×256</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Compression</span>
+                <span class="info-value">JPEG (Q=90)</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Streaming</span>
+                <span class="info-value" style="color: #50fa7b;">Dynamic</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="viewer-container">
+        <div id="openseadragon-viewer"></div>
+    </div>
+
+    <div class="status" id="status">
+        <h2 id="status-message">Loading...</h2>
+        <div class="spinner"></div>
+    </div>
+
+    <button class="help-toggle" onclick="toggleHelp()">?</button>
+
+    <div class="help-modal" id="help-modal">
+        <div class="help-content">
+            <span class="close-help" onclick="toggleHelp()">&times;</span>
+            <h2>About This Demo</h2>
+            <p>This is a demonstration of <strong>dynamic deep zoom image streaming</strong> using industry-standard technologies:</p>
+
+            <h3>🏗️ Architecture</h3>
+            <ul>
+                <li><strong>Client:</strong> OpenSeadragon (JavaScript deep zoom viewer)</li>
+                <li><strong>Server:</strong> IIPImage (high-performance image streaming server)</li>
+                <li><strong>Format:</strong> Pyramidal TIFF (multi-resolution tiled images)</li>
+                <li><strong>Protocol:</strong> IIP (Internet Imaging Protocol)</li>
+            </ul>
+
+            <h3>🔬 How It Works</h3>
+            <p>Unlike traditional image viewers that load the entire image into memory:</p>
+            <ol>
+                <li>Images are pre-processed into <strong>pyramidal TIFF</strong> format using libvips</li>
+                <li>Each pyramid level is tiled into 256×256 pixel chunks</li>
+                <li>The <strong>IIPImage server</strong> streams only the tiles visible in your current viewport</li>
+                <li><strong>OpenSeadragon</strong> dynamically requests tiles as you pan and zoom</li>
+                <li>This enables viewing of arbitrarily large images with minimal memory usage</li>
+            </ol>
+
+            <h3>♾️ Arbitrary Size Support</h3>
+            <p>This approach supports:</p>
+            <ul>
+                <li><strong>Arbitrary depth:</strong> Zoom limited only by source image resolution</li>
+                <li><strong>Arbitrary breadth:</strong> Pan across gigapixel images smoothly</li>
+                <li><strong>Minimal latency:</strong> Tiles are served on-demand from disk</li>
+                <li><strong>Scalability:</strong> Hundreds of gigapixel images can be served</li>
+            </ul>
+
+            <h3>🛠️ Tools Used</h3>
+            <ul>
+                <li><code>libvips</code> - Fast image processing library for pyramid generation</li>
+                <li><code>IIPImage</code> - Advanced image streaming server (Docker)</li>
+                <li><code>OpenSeadragon</code> - Web-based deep zoom viewer</li>
+                <li><code>Pyramidal TIFF</code> - Multi-resolution tiled format</li>
+            </ul>
+
+            <h3>🎯 Controls</h3>
+            <ul>
+                <li><strong>Pan:</strong> Click and drag to move around</li>
+                <li><strong>Zoom:</strong> Mouse wheel or pinch gesture</li>
+                <li><strong>Home:</strong> Button in top-left of viewer</li>
+                <li><strong>Fullscreen:</strong> Button in viewer controls</li>
+            </ul>
+
+            <h3>💡 Use Cases</h3>
+            <p>This technology is used in:</p>
+            <ul>
+                <li>Digital pathology (whole-slide imaging)</li>
+                <li>Cultural heritage (museum collections via IIIF)</li>
+                <li>Satellite imagery & GIS</li>
+                <li>Scientific visualization</li>
+                <li>Gigapixel photography</li>
+            </ul>
+
+            <h3>📚 Learn More</h3>
+            <p>This demo was built based on research into deep zoom technologies. Key resources:</p>
+            <ul>
+                <li><a href="https://openseadragon.github.io/" target="_blank" style="color: #4a90e2;">OpenSeadragon Documentation</a></li>
+                <li><a href="https://iipimage.sourceforge.io/" target="_blank" style="color: #4a90e2;">IIPImage Server</a></li>
+                <li><a href="https://libvips.github.io/libvips/" target="_blank" style="color: #4a90e2;">libvips Image Processing</a></li>
+                <li><a href="https://iiif.io/" target="_blank" style="color: #4a90e2;">IIIF Standards</a></li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let viewer = null;
+        const IIPSERVER_URL = 'http://localhost:8080/fcgi-bin/iipsrv.fcgi';
+
+        function initViewer() {
+            viewer = OpenSeadragon({
+                id: 'openseadragon-viewer',
+                prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
+                showNavigator: true,
+                navigatorPosition: 'TOP_RIGHT',
+                showRotationControl: true,
+                showHomeControl: true,
+                showFullPageControl: true,
+                showZoomControl: true,
+                maxZoomPixelRatio: Infinity,
+                minZoomImageRatio: 0.8,
+                visibilityRatio: 0.1,
+                constrainDuringPan: false,
+                animationTime: 0.5,
+                blendTime: 0.1,
+                immediateRender: true,
+                preserveViewport: false,
+                defaultZoomLevel: 0,
+                homeFillsViewer: false
+            });
+
+            // Add event listeners for info display
+            viewer.addHandler('open', function() {
+                hideStatus();
+                console.log('Image opened successfully');
+            });
+
+            viewer.addHandler('open-failed', function(event) {
+                hideStatus();
+                alert('Failed to load image. Make sure the IIPImage server is running:\n\ndocker-compose up -d\n\nError: ' + (event.message || 'Unknown error'));
+            });
+        }
+
+        function loadImage(filename) {
+            showStatus('Loading ' + filename + '...');
+
+            // Update display info
+            document.getElementById('current-image').textContent = filename;
+
+            // Get image dimensions from filename
+            let width, height;
+            if (filename === 'sample1.tif') {
+                width = 10000;
+                height = 10000;
+            } else if (filename === 'sample2.tif') {
+                width = 8000;
+                height = 8000;
+            }
+
+            document.getElementById('resolution').textContent = width.toLocaleString() + '×' + height.toLocaleString();
+
+            // Create IIP tile source configuration
+            const tileSource = {
+                height: height,
+                width: width,
+                tileSize: 256,
+                minLevel: 0,
+                getTileUrl: function(level, x, y) {
+                    // IIPImage protocol: FIF (file) and JTL (JPEG tile level x,y)
+                    return IIPSERVER_URL +
+                           '?FIF=/var/www/localhost/images/' + filename +
+                           '&JTL=' + level + ',' + x + ',' + y;
+                }
+            };
+
+            if (!viewer) {
+                initViewer();
+            }
+
+            // Open the new tile source
+            viewer.open(tileSource);
+        }
+
+        function resetView() {
+            if (viewer) {
+                viewer.viewport.goHome();
+            }
+        }
+
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            status.classList.add('active');
+        }
+
+        function hideStatus() {
+            const status = document.getElementById('status');
+            status.classList.remove('active');
+        }
+
+        function toggleHelp() {
+            const modal = document.getElementById('help-modal');
+            modal.classList.toggle('active');
+        }
+
+        // Initialize viewer on page load
+        window.addEventListener('load', function() {
+            initViewer();
+
+            // Auto-load first image
+            setTimeout(function() {
+                loadImage('sample1.tif');
+            }, 500);
+        });
+
+        // Close help modal on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('help-modal');
+                if (modal.classList.contains('active')) {
+                    toggleHelp();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

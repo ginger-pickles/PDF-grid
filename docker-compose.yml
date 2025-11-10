@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  # IIPImage Server for dynamic tile streaming
+  iipsrv:
+    image: bsansone/iipsrv:latest
+    container_name: iipsrv
+    ports:
+      - "8080:80"
+    volumes:
+      - ./images:/var/www/localhost/images:ro
+    environment:
+      - LOGFILE=/var/log/iipsrv.log
+      - VERBOSITY=5
+      - MAX_IMAGE_CACHE_SIZE=10
+      - JPEG_QUALITY=90
+      - MAX_CVT=5000
+    restart: unless-stopped
+    networks:
+      - deepzoom
+
+networks:
+  deepzoom:
+    driver: bridge
