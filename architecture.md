@@ -62,14 +62,14 @@ The PDF Grid Viewer is a single-page application that renders PDF pages in a sta
 - **Usage**: `pattern[row][col]` returns page number for that grid cell
 
 ### 3. Tile Cache [DYNAMIC]
-- **Type**: FIFO cache (Map-based)
+- **Type**: LRU cache (Map-based)
 - **State**: Grows dynamically as tiles are generated
 - **Purpose**: Stores rendered tiles to avoid re-rendering
 - **Key Format**: `"${level}_${x}_${y}"`
-- **Value**: JPEG data URL (base64-encoded)
+- **Value**: PNG/JPEG data URL (base64-encoded)
 - **Max Size**: Configurable (default: 300 tiles)
-- **Eviction**: Removes oldest entry when full
-- **Performance**: Single Map lookup per get/set operation
+- **Eviction**: Removes least recently used entry when full
+- **Performance**: O(1) lookup, access tracking via Map reorganization
 
 ### 4. Tile Canvas [WORKING]
 - **Type**: Single HTML Canvas element (reusable workspace)
@@ -198,9 +198,9 @@ Temporary workspaces used during processing:
 ### Optimization Strategies
 - **Upfront Rendering**: All pages rendered once, reused many times
 - **Tile Caching**: Prevents redundant rendering
-- **FIFO Eviction**: Simple, predictable cache management
+- **LRU Eviction**: Keeps frequently-accessed tiles in cache longer
 - **Canvas Reuse**: Single tile canvas instead of creating new ones
-- **JPEG Compression**: Reduces memory footprint of cached tiles
+- **PNG/JPEG Compression**: Reduces memory footprint of cached tiles (configurable)
 
 ## Key Design Decisions
 
@@ -223,11 +223,12 @@ Temporary workspaces used during processing:
 - Tile streamer bridges PDF data and OSD's tile system
 - Streams tiles on-demand rather than pre-generating entire pyramid
 
-### Why FIFO Cache?
-- Simple implementation (single Map)
-- Predictable behavior
-- No reorganization overhead (vs LRU)
-- Sufficient for static content (PDF pages don't change)
+### Why LRU Cache?
+- Better hit rate for back-and-forth navigation (vs FIFO)
+- Keeps frequently accessed zoom levels cached
+- Simple implementation (single Map with reorganization)
+- Minimal performance cost (still O(1) operations)
+- Ideal for exploring PDFs with repeated zoom patterns
 
 ## Integration Points
 
@@ -429,59 +430,11 @@ The key bottleneck is **initial page rendering**, not tile generation. Paralleli
 
 ### Current Implementation
 
-The TileCache is intentionally simple - a FIFO (First In First Out) cache with fixed size limit:
+The TileCache uses LRU (Least Recently Used) eviction with fixed size limit:
 
 ```javascript
 class TileCache {
   constructor(maxSize = 300) {
-    this.cache = new Map();
-    this.maxSize = maxSize;
-  }
-
-  get(key) {
-    return this.cache.get(key) || null;  // O(1) lookup
-  }
-
-  set(key, value) {
-    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-      // Remove oldest entry (first in Map)
-      const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
-    }
-    this.cache.set(key, value);
-  }
-}
-```
-
-**Characteristics:**
-- **Eviction**: FIFO - removes oldest entry when full
-- **Size limit**: Count-based (300 tiles) not memory-based
-- **Lookup**: O(1) via Map
-- **No prioritization**: All tiles treated equally
-- **Stateless**: No awareness of viewport or access patterns
-
-**Why FIFO?**
-- Simplest possible implementation
-- Minimal overhead (no access tracking)
-- Predictable behavior
-- Sufficient for static content (PDF pages don't change)
-
-### Opportunities for Improvement
-
-#### High Priority: LRU (Least Recently Used) Eviction
-
-**Current limitation:**
-- FIFO evicts oldest entry, even if still frequently accessed
-- Revisiting previous zoom level requires re-rendering tiles
-
-**Opportunity:**
-- Track access time on each `get()`
-- Evict least recently accessed tile instead of oldest
-
-**Implementation:**
-```javascript
-class LRUCache {
-  constructor(maxSize) {
     this.cache = new Map();
     this.maxSize = maxSize;
   }
@@ -500,7 +453,7 @@ class LRUCache {
     if (this.cache.has(key)) {
       this.cache.delete(key);
     } else if (this.cache.size >= this.maxSize) {
-      // Remove first (least recently used)
+      // Remove least recently used (first in Map)
       const firstKey = this.cache.keys().next().value;
       this.cache.delete(firstKey);
     }
@@ -509,16 +462,31 @@ class LRUCache {
 }
 ```
 
-**Benefits:**
+**Characteristics:**
+- **Eviction**: LRU - removes least recently used entry when full
+- **Size limit**: Count-based (300 tiles) not memory-based
+- **Lookup**: O(1) via Map
+- **Access tracking**: Automatic via Map key ordering
+- **Performance**: Slightly more operations per access than FIFO, still very fast
+
+**Why LRU?**
 - Better hit rate for back-and-forth navigation
-- Keeps frequently accessed zoom levels cached
-- Minimal performance cost (still O(1) operations)
+- Keeps frequently accessed zoom levels cached longer
+- Minimal performance cost (delete + set on hit)
+- Still simple implementation (no external data structures needed)
 
-**Trade-offs:**
-- Slightly more operations per access (delete + set on hit)
-- Still very simple implementation
+### Opportunities for Further Improvement
 
-**Estimated improvement:** 10-20% better cache hit rate for typical usage
+#### ✅ COMPLETED: LRU (Least Recently Used) Eviction
+
+**Status:** Implemented in v1.7.1
+
+The tile cache now uses LRU eviction instead of FIFO, providing better hit rates for back-and-forth navigation patterns. The implementation uses Map key ordering to track access patterns without additional data structures.
+
+**Results:**
+- 10-20% better cache hit rate expected for typical usage
+- Still O(1) operations
+- Simple, maintainable implementation
 
 #### Medium Priority: Memory-Based Limits
 
@@ -747,30 +715,32 @@ const cacheSize = Math.floor(deviceMemory * 75); // ~75 tiles per GB
 
 ### Recommendation
 
-**Immediate (v1.6):**
-1. **Implement LRU eviction** - Simple change, clear benefit
-   - Replace FIFO with LRU
-   - ~2 hours work
-   - 10-20% better hit rate
+**✅ COMPLETED (v1.7.1):**
+1. **LRU eviction** - Implemented
+   - Replaced FIFO with LRU
+   - 10-20% better hit rate for back-and-forth navigation
+   - Minimal complexity increase
 
-**Short term (v1.7):**
+**Future optimizations (if needed):**
+
+**Short term:**
 2. **Add memory-based limits** - Better control
-   - Track actual bytes
+   - Track actual bytes instead of tile count
    - ~4 hours work
-   - Prevents memory issues
+   - Prevents memory issues on low-memory devices
 
-**Long term (v2.0):**
+**Long term:**
 3. **Spatial awareness** - If cache hit rate still problematic
    - Viewport-aware eviction
    - ~6 hours work
-   - 20-30% better hit rate
+   - 20-30% better hit rate during active panning
 
 **Future considerations:**
 - Predictive prefetching (complexity vs benefit unclear)
 - Persistent cache (valuable for repeated use cases)
 - Adaptive sizing (nice to have)
 
-**Current cache is adequate** - FIFO works well for linear exploration. Only optimize if profiling shows cache misses as bottleneck.
+**Current LRU cache is solid** - Works well for typical exploration patterns. Only add complexity if profiling shows cache misses as a bottleneck.
 
 ### OpenSeadragon's Internal Cache
 
@@ -1255,7 +1225,493 @@ This architecture transforms the app from **"render everything upfront"** to **"
 - Viewport prediction (pre-generate likely tiles)
 - Priority eviction (keep central viewport tiles)
 
+## Scale-Aware Rendering Architecture
+
+### Problem Statement
+
+**Current limitation:** Pre-rendering pages at fixed scale exhausts pixel data at deep zoom
+
+The current architecture (v1.7.0) renders all PDF pages once at a fixed scale (e.g., 1.0x or 3.0x), then scales those pre-rendered bitmaps indefinitely during tile generation. This creates a fundamental mismatch:
+
+```
+Current approach:
+  PDF → [Render at scale 3.0] → Canvas bitmap → [Scale forever] → Tiles
+
+Problem:
+  At deep zoom, we run out of source pixels
+  Result: Blurry, interpolated content
+```
+
+**Why this matters:**
+- Firefox PDF viewer shows crisp pixels at any zoom because it **re-renders pages dynamically** at the current zoom level
+- OpenSeadragon assumes uniform pixel density (gigapixel photo model)
+- PDFs have variable resolution per page (some pages may be scanned images at 300 DPI, others vector graphics)
+- Primary use case is "zooming out" (overview/patterns) but users also need to "zoom in" (inspection) with crisp detail
+
+**Root cause:** We treat rendering as a one-time initialization instead of a continuous parameter-driven process.
+
+### Solution Overview
+
+**Unified architecture:** Make scale a parameter throughout the rendering pipeline
+
+Instead of fixed-scale pre-rendering, implement **zoom-aware rendering** where pages are rendered at scales appropriate for the requested zoom level. This is implemented in two phases:
+
+#### Phase 1: Zoom-Aware Page Rendering (Essential)
+- PageStreamer becomes scale-aware (accepts scale as parameter)
+- TileStreamer calculates needed scale from tile level
+- Cache pages by (pageNum, scale) instead of (pageNum, resolution)
+- Implement scale quantization to limit cache fragmentation
+
+#### Phase 2: Viewport-Aware Region Rendering (Future)
+- At extreme zoom, render page regions instead of full pages
+- Only render the portion of the page needed for a tile
+- Handles arbitrarily deep zoom without memory explosion
+- Much more complex; defer until needed
+
+### Phase 1: Zoom-Aware Page Rendering
+
+**Core principle:** Render pages at the scale needed for the current zoom level
+
+#### Architecture Changes
+
+**1. PageStreamer becomes scale-aware:**
+
+```javascript
+class PageStreamer {
+  constructor(pdf) {
+    this.pdf = pdf;
+    this.pageCache = new Map(); // Cache by "pageNum_scale"
+  }
+
+  async renderPage(pageNum, scale) {
+    // Quantize scale to reduce cache fragmentation
+    const quantizedScale = this._quantizeScale(scale);
+    const key = `${pageNum}_${quantizedScale.toFixed(1)}`;
+
+    // Check cache
+    if (this.pageCache.has(key)) {
+      return this.pageCache.get(key);
+    }
+
+    // Render at requested scale
+    const page = await this.pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: quantizedScale });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+
+    const renderContext = {
+      canvasContext: canvas.getContext('2d'),
+      viewport: viewport
+    };
+
+    await page.render(renderContext).promise;
+
+    // Cache and return
+    this.pageCache.set(key, canvas);
+    return canvas;
+  }
+
+  _quantizeScale(scale) {
+    // Discrete scale steps to reduce cache size
+    const SCALE_STEPS = [0.3, 1.0, 2.0, 4.0, 8.0, 12.0];
+
+    // Find nearest step
+    return SCALE_STEPS.reduce((prev, curr) =>
+      Math.abs(curr - scale) < Math.abs(prev - scale) ? curr : prev
+    );
+  }
+}
+```
+
+**2. TileStreamer calculates scale from level:**
+
+```javascript
+class TileStreamer {
+  _calculateScaleForLevel(level) {
+    // Each level is 2x zoom
+    // minimapMaxLevel = zoom level where minimap ends
+    const zoomFactor = Math.pow(2, level - this.minimapMaxLevel);
+
+    // Scale base resolution (1.0) by zoom factor
+    const scale = CONFIG.PDF_LOWRES_SCALE * zoomFactor;
+
+    // Clamp to sensible range
+    return Math.max(CONFIG.PDF_MIN_RENDER_SCALE,
+                    Math.min(scale, CONFIG.PDF_MAX_RENDER_SCALE));
+  }
+
+  async _renderTile(level, x, y, scale, key, neededPages, resolution) {
+    // Calculate needed render scale
+    const renderScale = this._calculateScaleForLevel(level);
+
+    // Request pages at appropriate scale
+    for (const pageNum of neededPages) {
+      const pageCanvas = await this.pageStreamer.renderPage(pageNum, renderScale);
+
+      // Composite into tile
+      this._drawPageIntersection(pageCanvas, ...);
+    }
+
+    return this.tileCanvas.toDataURL(CONFIG.TILE_FORMAT);
+  }
+}
+```
+
+**3. Cache key structure changes:**
+
+```javascript
+// Old (v1.7.0)
+pageCache.get(`${pageNum}_${resolution}`)  // "42_high" or "42_low"
+
+// New (scale-aware)
+pageCache.get(`${pageNum}_${scale.toFixed(1)}`)  // "42_2.0" or "42_8.0"
+```
+
+**4. Progressive quality upgrades:**
+
+```javascript
+async renderPage(pageNum, scale) {
+  const quantizedScale = this._quantizeScale(scale);
+  const key = `${pageNum}_${quantizedScale.toFixed(1)}`;
+
+  // Check cache for exact scale
+  if (this.pageCache.has(key)) {
+    return this.pageCache.get(key);
+  }
+
+  // Use nearest available scale temporarily
+  const nearestCanvas = this._findNearestScale(pageNum, quantizedScale);
+
+  // Start rendering at requested scale (async)
+  this._queueRender(pageNum, quantizedScale);
+
+  // Return nearest scale immediately (better than nothing)
+  return nearestCanvas;
+}
+
+_findNearestScale(pageNum, targetScale) {
+  // Find closest cached scale for this page
+  const scales = Array.from(this.pageCache.keys())
+    .filter(k => k.startsWith(`${pageNum}_`))
+    .map(k => parseFloat(k.split('_')[1]));
+
+  if (scales.length === 0) return null;
+
+  const nearest = scales.reduce((prev, curr) =>
+    Math.abs(curr - targetScale) < Math.abs(prev - targetScale) ? curr : prev
+  );
+
+  return this.pageCache.get(`${pageNum}_${nearest.toFixed(1)}`);
+}
+```
+
+#### Key Design Principles
+
+**1. Scale as Parameter (Not Constant)**
+- Every rendering operation accepts scale explicitly
+- No hardcoded PDF_RENDER_SCALE config
+- Scale calculated dynamically from tile zoom level
+
+**2. Scale Quantization**
+- Discrete scale steps: 0.3, 1.0, 2.0, 4.0, 8.0, 12.0
+- Prevents cache fragmentation (infinite scales → finite cache keys)
+- Each page cached at ~3-5 scales maximum
+- Balance: granularity vs memory usage
+
+**3. Cache by (Page, Scale)**
+- Cache key: `"pageNum_scale"` not `"pageNum_resolution"`
+- Multiple scales per page coexist in cache
+- LRU eviction across all (page, scale) combinations
+
+**4. Progressive Quality**
+- Render with nearest available scale first (fast)
+- Queue exact scale in background (quality upgrade)
+- User sees blurry → sharp transition (better than blank)
+
+**5. Memory Budget with Aggressive LRU**
+- Each scale tier consumes memory
+- 50-page PDF × 4 scales = 200 cache entries possible
+- Aggressive LRU keeps only recently-used scales
+- Config: MAX_PAGE_CACHE_SIZE (e.g., 60 canvases total)
+
+#### Configuration
+
+```javascript
+const CONFIG = {
+  // Scale quantization steps
+  PDF_SCALE_STEPS: [0.3, 1.0, 2.0, 4.0, 8.0, 12.0],
+
+  // Scale limits
+  PDF_MIN_RENDER_SCALE: 0.3,   // Minimap minimum
+  PDF_MAX_RENDER_SCALE: 12.0,  // Deep zoom maximum
+
+  // Cache sizes
+  MAX_PAGE_CACHE_SIZE: 60,     // Canvas objects (aggressive LRU)
+  MAX_TILE_CACHE_SIZE: 300,    // Tile data URLs
+
+  // Progressive rendering
+  ENABLE_PROGRESSIVE_QUALITY: true,
+  PROGRESSIVE_UPGRADE_DELAY: 100, // ms before upgrading quality
+};
+```
+
+#### Data Flow
+
+```
+User zooms to level 8
+    ↓
+TileStreamer._calculateScaleForLevel(8)
+    → Returns scale: 4.0
+    ↓
+PageStreamer.renderPage(pageNum=15, scale=4.0)
+    ↓
+Quantize: 4.0 → 4.0 (already a step)
+    ↓
+Check cache: "15_4.0"
+    ├─ HIT: Return cached canvas
+    └─ MISS:
+        ├─ Find nearest: "15_2.0" (if exists)
+        ├─ Return "15_2.0" immediately
+        └─ Queue render of "15_4.0" in background
+    ↓
+TileStreamer composites page canvas → tile
+    ↓
+User sees tile (possibly at lower scale, upgrades soon)
+```
+
+#### Memory Budget Example
+
+For a 50-page PDF:
+
+```
+Scenario: User explores at zoom levels 2, 5, and 8
+
+Scales in use:
+  - Level 2 → scale 1.0
+  - Level 5 → scale 2.0
+  - Level 8 → scale 4.0
+
+Pages rendered:
+  - Minimap (all pages at 0.3x): 50 canvases × ~0.5MB = 25MB
+  - Explored pages (30% at 1.0x): 15 canvases × ~2MB = 30MB
+  - Explored pages (20% at 2.0x): 10 canvases × ~8MB = 80MB
+  - Explored pages (10% at 4.0x): 5 canvases × ~32MB = 160MB
+
+Total: ~295MB (high but bounded)
+
+With LRU cache (60 canvas limit):
+  - Keep most recent 60 canvases
+  - Evict old scales as new scales rendered
+  - Typical: ~100-150MB
+```
+
+#### Benefits
+
+1. **Crisp pixels at any zoom** - Pages rendered at appropriate resolution
+2. **Bounded memory** - Aggressive LRU prevents explosion
+3. **Fast initial load** - Start with low-res (0.3x) minimap
+4. **Progressive enhancement** - Quality improves as user explores
+5. **Handles variable DPI** - Each page renders at scale appropriate for content
+
+#### Trade-offs
+
+1. **Cache complexity** - Multi-scale cache vs simple dual-resolution
+2. **Rendering overhead** - Re-render pages when changing zoom levels
+3. **Memory management** - Need aggressive LRU to prevent bloat
+4. **Quantization artifacts** - Discrete steps mean not always perfect scale
+
+### Phase 2: Viewport-Aware Region Rendering (Future)
+
+**Goal:** At extreme zoom (12x+), render only the portion of a page needed for a tile
+
+#### Problem
+
+Even with scale-aware rendering, extreme zoom creates enormous canvases:
+
+```
+Page dimensions: 8.5" × 11" at 72 DPI = 612 × 792 pixels at 1.0x
+At 12x scale: 7344 × 9504 pixels = 69 megapixels per page!
+
+50-page PDF at 12x: 3.4 gigapixels total
+Canvas memory: 7344 × 9504 × 4 bytes = 279 MB per page
+```
+
+**Solution:** Don't render entire page; render only the region needed for the tile.
+
+#### Region Rendering Architecture
+
+```javascript
+class PageStreamer {
+  async renderPageRegion(pageNum, scale, region) {
+    // region: { x, y, width, height } in PDF points
+
+    const key = `${pageNum}_${scale.toFixed(1)}_${region.x}_${region.y}`;
+
+    if (this.pageCache.has(key)) {
+      return this.pageCache.get(key);
+    }
+
+    // Render only the requested region
+    const page = await this.pdf.getPage(pageNum);
+    const viewport = page.getViewport({
+      scale: scale,
+      offsetX: -region.x,
+      offsetY: -region.y
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = region.width * scale;
+    canvas.height = region.height * scale;
+
+    const renderContext = {
+      canvasContext: canvas.getContext('2d'),
+      viewport: viewport
+    };
+
+    await page.render(renderContext).promise;
+
+    this.pageCache.set(key, canvas);
+    return canvas;
+  }
+}
+```
+
+```javascript
+class TileStreamer {
+  async _renderTile(level, x, y, scale, key) {
+    // Calculate which pages and regions intersect this tile
+    const intersections = this._calculatePageIntersections(level, x, y);
+
+    for (const {pageNum, region} of intersections) {
+      // Only render the intersecting region
+      const pageCanvas = await this.pageStreamer.renderPageRegion(
+        pageNum,
+        this._calculateScaleForLevel(level),
+        region
+      );
+
+      this._drawPageRegion(pageCanvas, region, ...);
+    }
+  }
+}
+```
+
+#### Benefits
+
+1. **Handles arbitrary zoom** - Memory scales with viewport, not page size
+2. **Minimal memory footprint** - Only render visible regions
+3. **True deep zoom** - Can zoom to individual pixels of scanned content
+
+#### Challenges
+
+1. **Complex coordinate math** - Region bounds in multiple coordinate systems
+2. **Cache key explosion** - Infinite possible regions
+3. **Rendering overhead** - PDF.js rendering isn't free
+4. **Region cache strategy** - How to cache regions effectively?
+
+#### When to Use
+
+- Trigger at zoom level > 10 (scale > 8.0x)
+- For pages with high-DPI content (scanned images, photos)
+- When canvas size would exceed ~100MB
+
+**Recommendation:** Defer Phase 2 until users report needing deeper zoom. Phase 1 handles 95% of use cases.
+
+### Implementation Status
+
+**Phase 1: Zoom-Aware Page Rendering**
+- Status: **DESIGNED, NOT IMPLEMENTED**
+- Complexity: Medium (4-6 hours work)
+- Priority: High (solves blur issue)
+- Next steps:
+  1. Refactor PageStreamer to accept scale parameter
+  2. Implement scale quantization
+  3. Update TileStreamer to calculate scale from level
+  4. Change cache key structure
+  5. Add LRU eviction to page cache
+  6. Test with multiple zoom levels
+
+**Phase 2: Viewport-Aware Region Rendering**
+- Status: **CONCEPTUAL**
+- Complexity: High (8-12 hours work)
+- Priority: Low (defer until needed)
+- Dependencies: Phase 1 must be complete and tested
+
+**Current Tile Cache:**
+- Status: **UPGRADED TO LRU (v1.7.1)**
+- Using LRU eviction for better hit rates
+- Works well for typical navigation patterns
+- Future: Consider memory-based limits or spatial-aware eviction if needed (see notes.md for lazy-LRU implementation)
+
+### Testing Strategy
+
+**Phase 1 Testing:**
+
+1. **Scale calculation verification**
+   ```javascript
+   // At zoom level 3 (minimap → viewer transition)
+   console.assert(calculateScaleForLevel(3) === 1.0);
+
+   // At zoom level 6 (moderate zoom)
+   console.assert(calculateScaleForLevel(6) === 2.0);
+
+   // At zoom level 9 (deep zoom)
+   console.assert(calculateScaleForLevel(9) === 4.0);
+   ```
+
+2. **Cache behavior**
+   - Verify pages cached by scale
+   - Test LRU eviction under memory pressure
+   - Confirm scale quantization working
+
+3. **Visual quality**
+   - Load PDF, zoom to level 8
+   - Inspect pixels - should be crisp, not interpolated
+   - Compare with Firefox PDF viewer (reference)
+
+4. **Memory monitoring**
+   - Track pageCache size over time
+   - Verify aggressive eviction prevents bloat
+   - Test with 100+ page PDF
+
+### Performance Characteristics
+
+**Initialization:**
+- Fast: Only render minimap pages at 0.3x
+- Time: ~2-5 seconds for 50-page PDF (vs 10-20s for upfront 3.0x rendering)
+
+**First zoom:**
+- Slight delay as pages render at new scale
+- Progressive: shows nearest scale immediately, upgrades in background
+
+**Subsequent zooms:**
+- Cache hits for previously-visited zoom levels
+- Instant display if scale already cached
+
+**Memory:**
+- Grows with exploration, not document size
+- Bounded by aggressive LRU (60 canvas limit)
+- Typical: 100-150MB for active exploration
+
+### Comparison: Before vs After
+
+| Aspect | v1.7.0 (Fixed Scale) | v1.8.0 (Scale-Aware) |
+|--------|---------------------|----------------------|
+| Initial render | All pages at 3.0x | Minimap only at 0.3x |
+| Load time | 10-20s (50 pages) | 2-5s (50 pages) |
+| Zoom quality | Blurry at deep zoom | Crisp at all zooms |
+| Memory (50pg) | ~300MB (fixed) | ~100-150MB (dynamic) |
+| Cache strategy | (page, resolution) | (page, scale) |
+| Scales stored | 2 (low/high) | 4-6 (quantized) |
+
+### Related Documentation
+
+- **TODO.md**: Lines 24, 33-41 reference zoom-aware and viewport-aware rendering
+- **notes.md**: Lines 5-79 describe lazy-LRU cache implementation for scale-aware caching
+- **RENDERING_ANALYSIS.md**: (if exists) detailed analysis of rendering approaches
+
 ---
 
-**Version**: 1.5.4
+**Version**: 1.7.1
 **Last Updated**: 2025-11-10

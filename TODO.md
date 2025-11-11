@@ -36,7 +36,17 @@ Render screen-res tiles for deep zoom (X.0 scale)) more cleverly. OSD view-aware
 
 Optimize or add distinct caches for distinct tasks, as improves performance.
 
+**Investigate exploiting spatial periodicity in TileStreamer and TileCache** - The staggered diagonal grid pattern repeats spatially (period = N pages), especially visible at minimap scales. At certain zoom levels, tiles contain identical page arrangements due to pattern repetition. Investigate: (1) Measure current tile utilization and cache hit rates to establish baseline, (2) Profile which tiles are rendered most often and identify periodic patterns, (3) Prototype canonical position mapping (x % period, y % period) for cache keys at minimap scales, (4) Measure improvement vs complexity trade-off, (5) If beneficial, consider content-based tile signatures or period-aware eviction. Start with simple modulo-based approach (2-3 hours), only add complexity if profiling shows clear gains. See notes.md "Exploiting Grid Pattern Periodicity" for detailed analysis and implementation approaches.
+
+**Investigate rectangular tiles instead of square tiles** - Current implementation uses square tiles sized to max(pageWidth, pageHeight). OpenSeadragon supports rectangular tiles via getTileWidth()/getTileHeight(). Investigate: (1) Measure current tile utilization (% of tile canvas with content vs blank space), (2) Calculate typical page aspect ratios in target PDFs (US Letter ~1:1.3, A4 ~1:1.4), (3) Prototype rectangular tiles matching page proportions, (4) Measure tile count and memory usage vs square tiles, (5) Determine if rectangular tiles align better with grid periodicity. Only implement if gains are significant (>20% improvement). Could potentially compound benefits with periodic caching at overview scales. Analysis phase: 1-2 hours, Prototype: 3-4 hours. See notes.md "Rectangular Tiles" for detailed trade-offs and implementation approach.
+
 Optimize page refresh performance; consider storing cache or canvas. (Currently re-renders all pages on every refresh; see notes.md for canvas storage vs progressive rendering options.)
+
+Investigate Canvas API interpolation methods (imageSmoothingEnabled, imageSmoothingQuality) and potential artifacts from two-stage scaling (PDF.js render → Canvas drawImage composite). Consider quality vs performance trade-offs, especially when scaling low-res canvases for high-zoom tiles.
+
+**Implement zoom-aware page rendering (Phase 1)** - Replace fixed-scale pre-rendering with dynamic scale-aware architecture where pages render at scales appropriate for zoom level. Make PageStreamer accept scale as parameter, implement scale quantization (0.3, 1.0, 2.0, 4.0, 8.0, 12.0), cache pages by (pageNum, scale), and add aggressive LRU eviction. This solves blur at deep zoom by ensuring crisp pixels at all zoom levels. See architecture.md "Scale-Aware Rendering Architecture" section for complete design.
+
+**Consider viewport-aware region rendering (Phase 2 - Future)** - For extreme zoom (>10x), render only page regions needed for tiles instead of full pages. Reduces memory footprint at deep zoom and enables arbitrarily deep inspection of high-DPI content. Defer until Phase 1 complete and users report needing deeper zoom. See architecture.md "Phase 2: Viewport-Aware Region Rendering" for conceptual design.
 
 Incorporate external libraries somehow rather than pulling from whereever they come from now
 

@@ -47,6 +47,17 @@
                 height: 200px !important;
             }
         }
+        /* Control browser image rendering - disable smoothing for crisp pixels */
+        #openseadragon-viewer canvas,
+        #openseadragon-viewer img,
+        .openseadragon-canvas canvas,
+        .openseadragon-canvas img {
+            image-rendering: -moz-crisp-edges;      /* Firefox */
+            image-rendering: -webkit-crisp-edges;   /* Safari */
+            image-rendering: pixelated;             /* Chrome */
+            image-rendering: crisp-edges;           /* Standard */
+            -ms-interpolation-mode: nearest-neighbor; /* IE */
+        }
     </style>
 </head>
 <body>
@@ -62,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.7.0',
+          VERSION: '1.7.1',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
@@ -76,7 +87,7 @@
           CORS_PROXY: 'https://corsproxy.io/?',
 
           // PDF Rendering
-          PDF_RENDER_SCALE: 1.0, // High-resolution scale for main viewer
+          PDF_RENDER_SCALE: 3.0, // High-resolution scale for main viewer (higher = more pixels for deep zoom)
           PDF_LOWRES_SCALE: 0.3, // Low-resolution scale for navigator/minimap
 
           // Grid Layout
@@ -86,7 +97,16 @@
           DEFAULT_TILE_SIZE: 512,
           MIN_TILE_SIZE: 512,
           TILE_SIZE_MULTIPLIER: 256,
-          TILE_JPEG_QUALITY: 0.85,
+          TILE_FORMAT: 'png',        // 'jpeg' or 'png' - PNG is lossless but larger
+          TILE_JPEG_QUALITY: 0.85,   // Only used if TILE_FORMAT is 'jpeg'
+
+          // Canvas Interpolation (affects tile compositing quality)
+          // At low zoom: smoothing helps blend minimap
+          // At high zoom: no smoothing shows crisp pixels
+          IMAGE_SMOOTHING_LOW_ZOOM: true,      // Smoothing for minimap/overview
+          IMAGE_SMOOTHING_HIGH_ZOOM: false,    // No smoothing for deep zoom (crisp pixels)
+          IMAGE_SMOOTHING_QUALITY: 'high',     // Quality when smoothing enabled: 'low' | 'medium' | 'high'
+          IMAGE_SMOOTHING_THRESHOLD_LEVEL: 4,  // Level at which to switch from smooth to crisp
 
           // Caching
           MAX_CACHE_SIZE: 300,
@@ -665,8 +685,9 @@
         // ============================================================================
 
         /**
-         * Simple FIFO cache optimized for static content (PDF tiles)
-         * Uses single Map lookup per get() for maximum performance
+         * LRU cache for tile data URLs
+         * Tracks access patterns to keep frequently-used tiles in cache
+         * Evicts least recently used tiles when full
          */
         class TileCache {
           constructor(maxSize = CONFIG.MAX_CACHE_SIZE) {
@@ -675,14 +696,21 @@
           }
 
           get(key) {
-            // Single Map lookup - no reorganization needed
-            return this.cache.get(key) || null;
+            const value = this.cache.get(key);
+            if (value) {
+              // LRU: Move to end (most recently used)
+              this.cache.delete(key);
+              this.cache.set(key, value);
+            }
+            return value || null;
           }
 
           set(key, value) {
-            // Only evict if cache is full and key doesn't exist
-            if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-              // Remove oldest entry (first in Map)
+            // LRU: If key exists, delete it first to move to end
+            if (this.cache.has(key)) {
+              this.cache.delete(key);
+            } else if (this.cache.size >= this.maxSize) {
+              // Remove least recently used (first in Map)
               const firstKey = this.cache.keys().next().value;
               this.cache.delete(firstKey);
             }
@@ -922,6 +950,7 @@
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
             console.log(`Tile size: ${this.tileSize}, Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
+            console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
           }
 
           /**
@@ -1084,6 +1113,18 @@
             const tileRight = Math.min(tileLeft + this.tileSize / scale, totalWidth);
             const tileBottom = Math.min(tileTop + this.tileSize / scale, totalHeight);
 
+            // Configure interpolation based on zoom level
+            if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
+              // Low zoom (minimap): use smoothing
+              this.tileCtx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_LOW_ZOOM;
+            } else {
+              // High zoom (deep zoom): disable smoothing for crisp pixels
+              this.tileCtx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM;
+            }
+            if (this.tileCtx.imageSmoothingEnabled) {
+              this.tileCtx.imageSmoothingQuality = CONFIG.IMAGE_SMOOTHING_QUALITY;
+            }
+
             // Clear tile with background color
             this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
             this.tileCtx.fillRect(0, 0, this.tileSize, this.tileSize);
@@ -1096,7 +1137,11 @@
             }
 
             // Convert to data URL
-            return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+            if (CONFIG.TILE_FORMAT === 'png') {
+              return this.tileCanvas.toDataURL('image/png');
+            } else {
+              return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+            }
           }
 
           /**
@@ -1723,6 +1768,7 @@
               numPages
             );
             tileStreamerRef.current = tileStreamer;
+            window.tileStreamerRef = tileStreamer; // Store globally for debugging
 
             // Initialize OpenSeadragon viewer
             const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize);
