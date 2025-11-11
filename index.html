@@ -582,20 +582,21 @@
 
           /**
            * Calculate which pages are in the initial viewport
-           * For the staggered diagonal grid, the center diagonal band is most prominent
+           * Initial view centers on page 1 at 1.5x zoom (shows ~2.25 page areas)
            * Returns page numbers that should be rendered first in high-res
            */
           calculateInitialViewportPages(totalPages) {
-            // For initial viewport, prioritize center pages
-            // These are the pages that appear in the middle diagonal of the grid
-            const centerStart = Math.floor(totalPages / 3);
-            const centerEnd = Math.ceil(totalPages * 2 / 3);
+            // Initial viewport centers on page 1 and shows 1.5x page dimensions
+            // In the staggered grid, page 1 is at center-top, with pages 2-N flowing diagonally
+            // A 1.5x viewport around page 1 typically shows 5-10 pages depending on layout
+
+            // Conservative estimate: first 10 pages cover the initial view
+            // These are the top-center pages where user starts
+            const initialViewCount = Math.min(10, totalPages);
 
             const priorityPages = [];
-            for (let i = centerStart; i <= centerEnd && i <= totalPages; i++) {
-              if (i > 0) {
-                priorityPages.push(i);
-              }
+            for (let i = 1; i <= initialViewCount; i++) {
+              priorityPages.push(i);
             }
 
             return priorityPages;
@@ -1043,16 +1044,22 @@
               this.pageStreamer.hasPage(pageNum, resolution)
             );
 
-            // Check if we can render with fallback (low-res available for high-res tiles)
+            // Check if we can render with bidirectional fallback
+            // High-res can use low-res, low-res can use high-res
             const canRenderWithFallback = neededPages.every(pageNum =>
               this.pageStreamer.hasPage(pageNum, resolution) ||
-              (resolution === 'high' && this.pageStreamer.hasPage(pageNum, 'low'))
+              this.pageStreamer.hasPage(pageNum, resolution === 'high' ? 'low' : 'high')
             );
 
             if (!canRenderWithFallback) {
-              // No pages available at all - trigger async rendering and return null
+              // No pages available at all - return blank tile instead of null
+              // (returning null causes "failed to load" errors)
+              const blankTile = this._renderBlankTile();
+              this.cache.set(key, blankTile);
+
+              // Trigger async rendering for future requests
               this._requestPagesAsync(neededPages, resolution);
-              return null;
+              return blankTile;
             }
 
             // If not all high-res pages available, trigger background loading
@@ -1145,6 +1152,22 @@
           }
 
           /**
+           * Render a blank tile (for when no page data is available yet)
+           */
+          _renderBlankTile() {
+            // Clear tile with background color
+            this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
+            this.tileCtx.fillRect(0, 0, this.tileSize, this.tileSize);
+
+            // Return blank tile as data URL
+            if (CONFIG.TILE_FORMAT === 'png') {
+              return this.tileCanvas.toDataURL('image/png');
+            } else {
+              return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
+            }
+          }
+
+          /**
            * Draw page intersection with tile
            */
           _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution) {
@@ -1170,14 +1193,20 @@
               return false;
             }
 
-            // Get canvas from PageStreamer cache
-            // If high-res not available, fallback to low-res
+            // Get canvas from PageStreamer cache with bidirectional fallback
             let pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_${resolution}`);
+
+            // Fallback logic: use whatever resolution is available
             if (!pageCanvas && resolution === 'high') {
+              // High-res requested but not available, use low-res
               pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_low`);
+            } else if (!pageCanvas && resolution === 'low') {
+              // Low-res requested but not available, use high-res
+              pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_high`);
             }
 
             if (!pageCanvas) {
+              // Neither resolution available yet - tile will be blank
               return false;
             }
 
@@ -1547,21 +1576,7 @@
               const pageStreamer = new PageStreamer(pdf);
               window.pageStreamerRef = pageStreamer; // Store globally for TileStreamer access
 
-              // Phase 1: Render all low-res pages (minimap needs these immediately!)
-              setLoadingStatus('Rendering minimap...');
-              const scatteredOrder = PDFUtils.bitReversalOrder(pdf.numPages);
-              await pageStreamer.renderBatch(
-                scatteredOrder,
-                'low',
-                10, // Batch size for parallel rendering
-                (current, total) => {
-                  setPagesLoaded(current);
-                  setLoadingStatus(`Rendering minimap (${current}/${total})...`);
-                }
-              );
-              console.log('Minimap rendering complete (all low-res pages cached)');
-
-              // Phase 2: Render priority high-res pages (initial viewport)
+              // Phase 1: Render priority high-res pages FIRST
               const priorityPages = GridPattern.calculateInitialViewportPages(pdf.numPages);
               console.log(`Rendering ${priorityPages.length} priority pages for initial view...`);
               setLoadingStatus('Rendering initial view...');
@@ -1580,17 +1595,35 @@
               const pageWidth = firstHighRes.width;
               const pageHeight = firstHighRes.height;
 
-              const cacheStats = pageStreamer.getCacheStats();
-              console.log(`Initial rendering complete:`);
-              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages`);
-              console.log(`  High-res: ${cacheStats.high}/${pdf.numPages} pages`);
+              // Phase 2: Render initial batch of low-res pages for minimap (fast!)
+              setLoadingStatus('Rendering minimap...');
+              const scatteredOrder = PDFUtils.bitReversalOrder(pdf.numPages);
+              const initialLowResCount = Math.min(20, pdf.numPages); // First 20 pages scattered
+              await pageStreamer.renderBatch(
+                scatteredOrder.slice(0, initialLowResCount),
+                'low',
+                10,
+                (current, total) => {
+                  setPagesLoaded(current);
+                  setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
+                }
+              );
 
-              // Initialize viewer
+              // Phase 3: Initialize viewer (user can interact now!)
               setLoadingStatus('Initializing viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
               setLoadingStatus('');
               setIsLoading(false);
+
+              const cacheStats = pageStreamer.getCacheStats();
+              console.log(`Initial rendering complete:`);
+              console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority)`);
+              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial, rest rendering in background...)`);
+
+              // Phase 4: Render remaining low-res pages in background
+              renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
+
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
                 console.log('PDF loading cancelled by user');
@@ -1601,6 +1634,51 @@
                 throw error;
               }
             }
+          };
+
+          /**
+           * Background rendering of remaining low-res pages for minimap
+           * Non-blocking, yields to browser to keep UI responsive
+           */
+          const renderLowResInBackground = async (pageStreamer, numPages, startIndex = 0) => {
+            console.log(`Starting background minimap rendering from index ${startIndex}...`);
+            const scatteredOrder = PDFUtils.bitReversalOrder(numPages);
+
+            for (let i = startIndex; i < scatteredOrder.length; i++) {
+              const pageNum = scatteredOrder[i];
+
+              // Check if already cached
+              if (pageStreamer.pageCache.has(`${pageNum}_low`)) {
+                continue;
+              }
+
+              // Render low-res page
+              await pageStreamer.renderPage(pageNum, 'low');
+
+              // Force OpenSeadragon to redraw every few pages
+              // This makes new tiles appear as they render
+              if ((i - startIndex) % 10 === 0 && window.osdViewerRef) {
+                window.osdViewerRef.forceRedraw();
+              }
+
+              // Yield to browser every 5 pages to keep UI responsive
+              if (i % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+              }
+
+              // Log progress periodically
+              if ((i + 1) % 10 === 0 || i === scatteredOrder.length - 1) {
+                const cacheStats = pageStreamer.getCacheStats();
+                console.log(`Background minimap: ${cacheStats.low}/${numPages} pages rendered`);
+              }
+            }
+
+            // Final redraw to show all completed tiles
+            if (window.osdViewerRef) {
+              window.osdViewerRef.forceRedraw();
+            }
+
+            console.log('Background minimap rendering complete');
           };
 
           const loadPDFFromURL = async (url, skipHistory = false) => {

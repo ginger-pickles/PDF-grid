@@ -770,3 +770,109 @@ Rectangular tiles + periodic caching could compound benefits at overview scales,
 ### Related Work
 
 See TODO.md line 39 for periodicity exploitation and tile optimization tasks.
+
+## Background Rendering and Progressive Loading (v1.7.2)
+
+### Implementation
+
+Changed from upfront rendering (all pages before showing viewer) to progressive rendering with background loading:
+
+**Phase 1: Priority high-res (10 pages)**
+- Initial viewport pages (first 10 pages)
+- Covers visible area at startup
+
+**Phase 2: Initial low-res batch (20 pages)**
+- Scattered order (bit-reversal) for even minimap coverage
+- Provides initial minimap tiles
+
+**Phase 3: Show viewer (non-blocking)**
+- User can interact immediately
+- Initial load time dramatically improved
+
+**Phase 4: Background low-res rendering (remaining pages)**
+- Renders asynchronously without blocking UI
+- Forces OpenSeadragon redraw every 10 pages
+- Progressive minimap population
+
+### Performance Improvement
+
+**Before (v1.7.1):**
+- 126-page PDF: Render 126 low-res + 43 high-res = ~15-20 seconds
+- User waits for all minimap pages
+
+**After (v1.7.2):**
+- 126-page PDF: Render 10 high-res + 20 low-res = ~3-5 seconds
+- User sees viewer immediately
+- Remaining 106 pages render in background
+
+**Result: ~75% reduction in initial load time**
+
+### Bidirectional Fallback
+
+Implemented bidirectional resolution fallback in TileStreamer:
+- High-res tiles can use low-res pages (existing)
+- **New:** Low-res tiles can use high-res pages
+- Critical for progressive loading where high-res renders first
+
+### Blank Tile Handling
+
+When no page data available (neither resolution):
+- Return valid blank tile (background color) instead of null
+- Prevents "Tile failed to load" errors
+- Tiles get replaced when pages render
+
+### Known Issue: OpenSeadragon Blank Tile Caching
+
+**Problem:** OpenSeadragon may cache blank tiles and not automatically refresh when page data becomes available.
+
+**Symptoms:**
+- Tiles remain blank even after background rendering completes
+- Minimap doesn't fully populate
+- Requires manual pan/zoom to trigger refresh
+
+**Current mitigation:**
+- Call `viewer.forceRedraw()` every 10 pages during background rendering
+- Final `forceRedraw()` when background rendering completes
+
+**Potential solutions to investigate:**
+
+1. **Invalidate tile cache explicitly**
+   ```javascript
+   // Clear OSD's internal tile cache for specific tiles
+   viewer.world.getItemAt(0).invalidate();
+   ```
+
+2. **Use tile update events**
+   ```javascript
+   // Notify OSD when new pages become available
+   viewer.world.getItemAt(0).setOpacity(0.99); // Force redraw
+   viewer.world.getItemAt(0).setOpacity(1.0);
+   ```
+
+3. **Don't cache blank tiles**
+   ```javascript
+   // In generateTile(): Don't cache blank tiles, return fresh each time
+   if (!canRenderWithFallback) {
+     return this._renderBlankTile(); // Don't cache!
+   }
+   ```
+
+4. **Dynamic tile source**
+   ```javascript
+   // Mark blank tiles as "temporary" so OSD doesn't cache them
+   // Requires custom tile caching strategy
+   ```
+
+5. **Progressive cache invalidation**
+   ```javascript
+   // As each page renders, invalidate affected tiles
+   onPageRendered(pageNum) {
+     const affectedTiles = this._tilesContainingPage(pageNum);
+     affectedTiles.forEach(tile => this.cache.delete(tile));
+     viewer.forceRedraw();
+   }
+   ```
+
+**Best approach:** Option 3 (don't cache blank tiles) combined with option 5 (invalidate affected tiles when pages render). This ensures tiles always reflect latest page availability without manual refresh.
+
+**Implementation priority:** Medium - current workaround (forceRedraw) is adequate but not optimal. User can also manually pan/zoom to trigger refresh.
