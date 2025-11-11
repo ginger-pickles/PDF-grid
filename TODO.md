@@ -3,13 +3,25 @@
 
 ## INTERFACE
 
-Increase scrollwheel zoom sensitivity
+Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
+
+Close help pane by clicking outside (on OSD viewer)
+
+On mobile, increase pan inertia (flickMomentum)
+
+When input field is cleared and blank value submitted, clear URL params and go to home screen
+
+Smartly harmonize home screen text with help screen text to include attribution, and do not display "drag & drop" on mobile
+
+When demo PDF fails to load (file not present when served), remove ?pdf URL parameter after elegant failure
 
 Handle situations where ?url and ?pdf parameters interact or error out depending on file:// vs http:// protocol in use
 
 Handle situations where a .pdf url redirects to some other URL (right now "Error laoding PDF from URL: Failed to fetch proxy.")
 
 Change the download command to expressly download the file to local storage, instead of loading a PDF in the browser
+
+Handle URL redirects properly - some PDF URLs redirect to different locations (e.g., academic publications from institutional repositories)
 
 
 ## PERFORMANCE
@@ -31,6 +43,10 @@ Incorporate external libraries somehow rather than pulling from whereever they c
 
 
 ## FUNCTIONALITY
+
+Grid layout of small even-numbered files is not wrong, but not right. Fixable but not critical.
+
+Support annotating PDFs (long horizon)
 
 Add support to switch between different page layouts: Staggered rotating grid (default), conventional wrapped grid,  vertical and horizontal scroll, Two-up, Infinite(?), etc. Fractal layout? Space-filling curve?
 

@@ -397,7 +397,7 @@ const tileSource = new ProgressiveTileSource(pdf);
 **Implementation complexity:** High
 
 **Changes required:**
-1. Modify CustomTileSource to accept PDF object instead of pre-rendered canvases
+1. Modify TileStreamer to accept PDF object instead of pre-rendered canvases
 2. Implement page rendering inside getTileUrl()
 3. Add in-memory LRU cache for rendered pages
 4. Handle async rendering (tiles may appear with delay)
