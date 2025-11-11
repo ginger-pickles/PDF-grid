@@ -417,3 +417,356 @@ const tileSource = new ProgressiveTileSource(pdf);
 - Minimal storage footprint
 - Best UX (instant viewer initialization)
 - Aligns with TODO item "support more than a hundred pages"
+
+## Exploiting Grid Pattern Periodicity
+
+### Observation (v1.7.1)
+
+The staggered diagonal grid pattern creates **spatial periodicity** - the arrangement of pages repeats in a predictable pattern across the grid. This is especially visible at minimap/overview scales.
+
+### Pattern Characteristics
+
+**Grid pattern example (5 pages):**
+```
+0 0 1 2 3
+0 1 2 3 4
+1 2 3 4 5
+2 3 4 5 0
+3 4 5 0 0
+```
+
+**Periodicity properties:**
+- Pattern repeats every N rows/columns (where N = number of pages)
+- At certain scales, tiles contain identical page arrangements
+- The diagonal structure creates predictable spatial relationships
+- Most pronounced at overview scales where full pattern is visible
+
+### Optimization Opportunities
+
+#### 1. Content-Based Tile Caching
+
+**Current approach:**
+- Cache key: `"${level}_${x}_${y}"` (position-based)
+- Same content at different positions = different cache entries
+- No exploitation of repeated patterns
+
+**Periodic approach:**
+```javascript
+// Generate content signature for tile
+function getTileContentSignature(level, x, y) {
+  // Calculate which pages intersect this tile
+  const pages = calculateIntersectingPages(level, x, y);
+
+  // Sort and hash page numbers + their relative positions
+  // Tiles with same pages in same arrangement = same signature
+  return hashPageArrangement(pages);
+}
+
+class PeriodicCache {
+  get(level, x, y) {
+    const signature = getTileContentSignature(level, x, y);
+    return this.cache.get(signature);  // Reuse tiles with same content
+  }
+}
+```
+
+**Benefits:**
+- Tiles with identical content share cache entries
+- Reduced memory footprint at overview scales
+- Fewer tile renders needed
+
+**Challenges:**
+- Computing content signature cost
+- Handling slight variations (partial page intersections)
+- More complex cache key management
+
+#### 2. Pattern Period Recognition
+
+**Observation:**
+- Grid size = N×N where N = number of pages
+- Pattern period = N (repeats every N rows/columns)
+- At certain zoom levels, tiles align with period boundaries
+
+**Optimization:**
+```javascript
+class PeriodicTileStreamer {
+  constructor(gridDims, pattern, pageStreamer, numPages) {
+    // Calculate pattern period
+    this.period = numPages;  // Grid repeats every N units
+
+    // At minimap scale, determine tile-to-period alignment
+    this.calculatePeriodicAlignment();
+  }
+
+  getTileUrl(level, x, y) {
+    // Check if we can reuse a tile from previous period
+    if (level <= this.minimapMaxLevel) {
+      const canonicalPos = this.mapToCanonicalPeriod(x, y);
+      const key = `${level}_${canonicalPos.x}_${canonicalPos.y}`;
+
+      if (this.cache.has(key)) {
+        return this.cache.get(key);
+      }
+    }
+
+    // Generate tile normally
+    return this._renderTile(level, x, y, ...);
+  }
+
+  mapToCanonicalPeriod(x, y) {
+    // Map tile position to canonical position within one period
+    return {
+      x: x % this.period,
+      y: y % this.period
+    };
+  }
+}
+```
+
+**Benefits:**
+- Dramatic cache reduction at overview scales
+- Predictable memory usage
+- Exploits mathematical properties of the grid
+
+**Challenges:**
+- Only works at specific scales where tiles align with periods
+- Edge cases (partial periods at grid boundaries)
+- Complexity in determining when periodicity applies
+
+#### 3. Smart Eviction with Period Awareness
+
+**Concept:**
+LRU cache that understands periodicity and prioritizes keeping one complete period in cache over scattered tiles.
+
+```javascript
+class PeriodicLRUCache {
+  evict() {
+    // Prefer evicting tiles outside the canonical period
+    // Keep one complete period worth of tiles
+    const canonical = this.findCanonicalPeriodTiles();
+    const nonCanonical = this.findNonCanonicalTiles();
+
+    if (nonCanonical.length > 0) {
+      this.evictLRU(nonCanonical);  // Evict duplicates first
+    } else {
+      this.evictLRU(canonical);      // Standard LRU
+    }
+  }
+}
+```
+
+**Benefits:**
+- Better cache hit rate for periodic content
+- Intelligent about what to keep/evict
+- Exploits content structure
+
+### When Periodicity Matters Most
+
+**High impact:**
+- Minimap/overview scales (pattern fully visible)
+- Large documents (many periods repeat)
+- Users zooming between overview and detail repeatedly
+
+**Low impact:**
+- Deep zoom (single page or partial pages visible)
+- Small documents (< 10 pages)
+- Linear exploration patterns
+
+### Implementation Complexity
+
+**Low complexity (2-3 hours):**
+- Add period calculation and documentation
+- Simple modulo-based canonical position mapping
+- Test with existing cache structure
+
+**Medium complexity (4-6 hours):**
+- Content-based tile signatures
+- Periodic cache key generation
+- Handle edge cases (partial periods)
+
+**High complexity (8-12 hours):**
+- Full periodic-aware cache with smart eviction
+- Content hashing for identical tile detection
+- Performance profiling to verify gains
+
+### Recommendation
+
+**Phase 1: Document and analyze**
+- Measure cache hit rates with current LRU
+- Profile which tiles are rendered most often
+- Determine if periodicity optimization would provide significant gains
+
+**Phase 2: If worthwhile**
+- Start with simple canonical position mapping
+- Add period awareness to existing LRU cache
+- Measure improvement before adding complexity
+
+**Phase 3: Advanced (if needed)**
+- Content-based signatures
+- Smart eviction with period awareness
+- Only if profiling shows clear benefit
+
+The key question: **Does the cache hit rate suffer from not recognizing periodicity?** With LRU (v1.7.1), frequently-accessed tiles already stay cached. Periodicity optimization may provide diminishing returns unless the cache is under significant memory pressure.
+
+## Rectangular Tiles
+
+### Current Implementation (v1.7.1)
+
+**Square tiles:**
+```javascript
+// index.html line ~927-930
+this.tileSize = Math.max(
+  CONFIG.MIN_TILE_SIZE,
+  Math.ceil(Math.max(gridDims.pageWidth, gridDims.pageHeight) / CONFIG.TILE_SIZE_MULTIPLIER) * CONFIG.TILE_SIZE_MULTIPLIER
+);
+this.tileCanvas.width = this.tileSize;
+this.tileCanvas.height = this.tileSize;  // Same as width
+```
+
+Tile size is determined by the larger dimension of the page (width or height), creating square tiles.
+
+### OpenSeadragon Support for Rectangular Tiles
+
+**Good news:** OpenSeadragon fully supports rectangular tiles via the tile source API:
+
+```javascript
+getTileWidth() {
+  return this.tileWidth;   // Can differ from height
+}
+
+getTileHeight() {
+  return this.tileHeight;  // Independent dimension
+}
+```
+
+The tile source simply needs to return different values for width and height. All coordinate calculations and rendering work with rectangular tiles.
+
+### Potential Benefits
+
+#### 1. Match Page Aspect Ratio
+
+**Standard US Letter:** 8.5" × 11" at 72 DPI = 612 × 792 pixels
+- Aspect ratio: ~1:1.3 (portrait)
+- Current square tiles: Larger dimension determines both
+- Rectangular tiles: Could match natural page proportions
+
+**Example:**
+```javascript
+// Current: Square tiles sized to max(612, 792) = 792×792
+// Rectangular: Could use 612×792 or scaled proportionally
+
+this.tileWidth = Math.ceil(gridDims.pageWidth / CONFIG.TILE_SIZE_MULTIPLIER) * CONFIG.TILE_SIZE_MULTIPLIER;
+this.tileHeight = Math.ceil(gridDims.pageHeight / CONFIG.TILE_SIZE_MULTIPLIER) * CONFIG.TILE_SIZE_MULTIPLIER;
+```
+
+#### 2. More Efficient Content Packing
+
+**Square tiles on rectangular content:**
+- Wasted space in tiles (blank areas)
+- Pages span across more tile boundaries
+- More tiles needed for full coverage
+
+**Rectangular tiles aligned to pages:**
+- Better utilization of tile canvas
+- Fewer tile boundaries intersecting pages
+- Potentially fewer total tiles for same coverage
+
+#### 3. Align with Grid Periodicity
+
+**Opportunity:**
+- Design tile dimensions to align with grid period
+- Tiles could cover exact multiples of pages
+- Exploit staggered pattern structure
+
+**Example:**
+```javascript
+// Tiles sized to contain exactly 1 page width × 1.5 page heights
+// Optimally captures the diagonal stagger pattern
+this.tileWidth = gridDims.pageWidth + gridDims.spacing;
+this.tileHeight = Math.floor(1.5 * (gridDims.pageHeight + gridDims.spacing));
+```
+
+### Trade-offs
+
+**Benefits:**
+- Better match to rectangular PDF pages
+- Potentially more efficient tile packing
+- Could reduce total tile count
+- May align better with grid structure
+- Smaller tile data URLs (less wasted canvas space)
+
+**Challenges:**
+- More complex coordinate math (width ≠ height)
+- Cache considerations (aspect ratio variations)
+- Need to handle both dimensions independently
+- Testing required to verify performance gains
+- May not improve performance if pages are nearly square
+
+### Implementation Approach
+
+**Phase 1: Analysis (1-2 hours)**
+1. Measure current tile utilization (how much of each tile is blank?)
+2. Calculate optimal rectangular tile dimensions for typical PDFs
+3. Estimate potential memory/performance savings
+
+**Phase 2: Prototype (3-4 hours)**
+1. Modify TileStreamer to support separate width/height
+2. Update getTileWidth() and getTileHeight() methods
+3. Adjust coordinate calculations for rectangular tiles
+4. Update tile canvas sizing
+
+**Phase 3: Testing (2-3 hours)**
+1. Test with various PDF aspect ratios
+2. Measure tile count and memory usage vs square tiles
+3. Verify no visual artifacts
+4. Profile rendering performance
+
+**Phase 4: Optimization (2-4 hours, if needed)**
+1. Tune tile dimensions for optimal coverage
+2. Consider aspect-ratio-aware tile sizing
+3. Align with grid periodicity (advanced)
+
+### Key Questions to Investigate
+
+1. **What's the current tile utilization?**
+   - Measure: % of tile canvas containing page content vs blank
+   - If high (>80%), square tiles may already be optimal
+
+2. **What are typical page aspect ratios in target PDFs?**
+   - US Letter: 1:1.3
+   - A4: 1:1.4
+   - If close to square, rectangular tiles won't help much
+
+3. **Do rectangular tiles reduce total tile count?**
+   - Count tiles needed for full coverage: square vs rectangular
+   - Consider tile boundary intersections with pages
+
+4. **Does it improve cache efficiency?**
+   - Smaller tiles (less blank space) = more tiles fit in cache
+   - But more tiles needed overall might offset this
+
+5. **Does it align with grid periodicity?**
+   - Can tile dimensions be chosen to match pattern period?
+   - Would this compound benefits with periodic caching?
+
+### Recommendation
+
+**Start with measurement:**
+- Profile current tile utilization (content vs blank space)
+- Calculate theoretical improvement with rectangular tiles
+- Only implement if gains are significant (>20% improvement)
+
+**Quick win potential:**
+If typical PDFs have strong portrait/landscape bias, rectangular tiles could provide easy memory savings without significant complexity.
+
+**Defer if:**
+- Current square tiles already have high utilization
+- Pages in typical PDFs are near-square
+- Performance is already acceptable
+
+**Best case scenario:**
+Rectangular tiles + periodic caching could compound benefits at overview scales, where tiles could be sized to optimally capture the repeating diagonal pattern.
+
+### Related Work
+
+See TODO.md line 39 for periodicity exploitation and tile optimization tasks.
