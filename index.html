@@ -1007,13 +1007,14 @@
             this.cache = new TileCache();
             this.cacheGeneration = 0; // Increment to invalidate cached tiles
 
-            // Rectangular tiles matching base page dimensions (not including spacing)
-            // This ensures rendered pages span exact integer number of tiles
-            // E.g., at 3x render scale, each page = 3×3 tiles; at 1x, each page = 1×1 tile
-            // Spacing is handled separately in grid layout, not in tile size
+            // Tile size = (page + spacing) / renderScale
+            // At max zoom (3x render), each page+gutter spans 3×3 tiles
             const { pageWidth, pageHeight, spacing } = gridDims;
-            this.tileWidth = pageWidth;
-            this.tileHeight = pageHeight;
+            const cellWidth = pageWidth + spacing;  // Grid cell size
+            const cellHeight = pageHeight + spacing;
+
+            this.tileWidth = cellWidth / CONFIG.PDF_RENDER_SCALE;
+            this.tileHeight = cellHeight / CONFIG.PDF_RENDER_SCALE;
 
             // Calculate max level based on grid dimensions and tile size
             const widthLevels = Math.ceil(Math.log2(gridDims.totalWidth / this.tileWidth));
@@ -1023,15 +1024,17 @@
             // Calculate minimap max level (low zoom levels use low-res)
             this.minimapMaxLevel = this.calculateMinimapMaxLevel();
 
-            // Create reusable tile canvas (rectangular)
+            // Tile canvas size matches tile grid size (NOT scaled by renderScale)
+            // This keeps tile canvases small for memory efficiency
             this.tileCanvas = document.createElement('canvas');
-            this.tileCanvas.width = this.tileWidth;
-            this.tileCanvas.height = this.tileHeight;
+            this.tileCanvas.width = Math.round(this.tileWidth);
+            this.tileCanvas.height = Math.round(this.tileHeight);
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
-            console.log(`Tile size: ${this.tileWidth}×${this.tileHeight} (base page dimensions), Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
-            console.log(`Page dimensions: ${pageWidth}×${pageHeight}, Spacing: ${spacing}`);
-            console.log(`At ${CONFIG.PDF_RENDER_SCALE}x render: each page = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
+            console.log(`Tile size: ${this.tileWidth.toFixed(1)}×${this.tileHeight.toFixed(1)} (grid coords)`);
+            console.log(`Tile canvas: ${this.tileCanvas.width}×${this.tileCanvas.height}px`);
+            console.log(`Grid cell: ${cellWidth.toFixed(0)}×${cellHeight.toFixed(0)} (page ${pageWidth}×${pageHeight} + ${spacing}px spacing)`);
+            console.log(`Max level: ${this.maxLevel}, At max zoom: each page+gutter = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
             console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
           }
 
@@ -1236,7 +1239,7 @@
 
             // Clear tile with background color
             this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
-            this.tileCtx.fillRect(0, 0, this.tileWidth, this.tileHeight);
+            this.tileCtx.fillRect(0, 0, this.tileCanvas.width, this.tileCanvas.height);
 
             // Draw portions of pages that intersect this tile
             for (let row = 0; row < gridSize; row++) {
@@ -1249,7 +1252,7 @@
             if (CONFIG.DEBUG_MODE) {
               this.tileCtx.strokeStyle = '#00FF00'; // Bright green
               this.tileCtx.lineWidth = 10;
-              this.tileCtx.strokeRect(5, 5, this.tileWidth - 10, this.tileHeight - 10);
+              this.tileCtx.strokeRect(5, 5, this.tileCanvas.width - 10, this.tileCanvas.height - 10);
 
               // Draw level number at center
               this.tileCtx.font = 'bold 48px monospace';
@@ -1259,11 +1262,11 @@
               // Black outline for contrast
               this.tileCtx.strokeStyle = '#000000';
               this.tileCtx.lineWidth = 4;
-              this.tileCtx.strokeText(`L${level}`, this.tileWidth / 2, this.tileHeight / 2);
+              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2);
 
               // White text
               this.tileCtx.fillStyle = '#FFFFFF';
-              this.tileCtx.fillText(`L${level}`, this.tileWidth / 2, this.tileHeight / 2);
+              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2);
             }
 
             // Convert to data URL
@@ -1280,7 +1283,7 @@
           _renderBlankTile() {
             // DEBUG: Fill with bright green instead of background color
             this.tileCtx.fillStyle = '#00FF00'; // Bright green
-            this.tileCtx.fillRect(0, 0, this.tileWidth, this.tileHeight);
+            this.tileCtx.fillRect(0, 0, this.tileCanvas.width, this.tileCanvas.height);
 
             // Return blank tile as data URL
             if (CONFIG.TILE_FORMAT === 'png') {
@@ -1349,7 +1352,8 @@
             const srcW = (intersectRight - intersectLeft) * canvasScaleFactor;
             const srcH = (intersectBottom - intersectTop) * canvasScaleFactor;
 
-            // Destination coordinates (within the tile)
+            // Destination coordinates (within the tile canvas)
+            // Grid coords → canvas pixels
             const destX = (intersectLeft - tileLeft) * scale;
             const destY = (intersectTop - tileTop) * scale;
             const destW = (intersectRight - intersectLeft) * scale;
