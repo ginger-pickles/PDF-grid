@@ -76,7 +76,7 @@
           VERSION: '1.8.0',
 
           // Debug
-          DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
+          DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
           DEBUG_TILES: false,  // Enable tile cache diagnostics logging
 
           // Auto-load
@@ -1007,11 +1007,8 @@
             this.cache = new TileCache();
             this.cacheGeneration = 0; // Increment to invalidate cached tiles
 
-            // Calculate tile parameters
-            this.tileSize = Math.max(
-              CONFIG.MIN_TILE_SIZE,
-              Math.ceil(Math.max(gridDims.pageWidth, gridDims.pageHeight) / CONFIG.TILE_SIZE_MULTIPLIER) * CONFIG.TILE_SIZE_MULTIPLIER
-            );
+            // Use fixed 512px square tiles (optimal for performance)
+            this.tileSize = 512;
 
             const maxDimension = Math.max(gridDims.totalWidth, gridDims.totalHeight);
             this.maxLevel = Math.ceil(Math.log2(maxDimension / this.tileSize));
@@ -1025,7 +1022,7 @@
             this.tileCanvas.height = this.tileSize;
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
-            console.log(`Tile size: ${this.tileSize}, Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
+            console.log(`Tile size: ${this.tileSize}×${this.tileSize}, Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
             console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
           }
 
@@ -1138,9 +1135,13 @@
               this._requestPagesAsync(neededPages, resolution);
 
               // Return blank tile - will be cleared later with clearTilesFor()
+              // DEBUG: Make blank tiles bright green for visibility
               const blankCanvas = document.createElement('canvas');
               blankCanvas.width = this.tileSize;
               blankCanvas.height = this.tileSize;
+              const blankCtx = blankCanvas.getContext('2d');
+              blankCtx.fillStyle = '#00FF00'; // Bright green
+              blankCtx.fillRect(0, 0, this.tileSize, this.tileSize);
               const blankTile = blankCanvas.toDataURL();
               return blankTile;
             }
@@ -1244,11 +1245,25 @@
               }
             }
 
-            // DEBUG: Draw 10px bright green border around tile
+            // DEBUG: Draw 10px bright green border around tile and show level
             if (CONFIG.DEBUG_MODE) {
               this.tileCtx.strokeStyle = '#00FF00'; // Bright green
               this.tileCtx.lineWidth = 10;
               this.tileCtx.strokeRect(5, 5, this.tileSize - 10, this.tileSize - 10);
+
+              // Draw level number at center
+              this.tileCtx.font = 'bold 48px monospace';
+              this.tileCtx.textAlign = 'center';
+              this.tileCtx.textBaseline = 'middle';
+
+              // Black outline for contrast
+              this.tileCtx.strokeStyle = '#000000';
+              this.tileCtx.lineWidth = 4;
+              this.tileCtx.strokeText(`L${level}`, this.tileSize / 2, this.tileSize / 2);
+
+              // White text
+              this.tileCtx.fillStyle = '#FFFFFF';
+              this.tileCtx.fillText(`L${level}`, this.tileSize / 2, this.tileSize / 2);
             }
 
             // Convert to data URL
@@ -1263,8 +1278,8 @@
            * Render a blank tile (for when no page data is available yet)
            */
           _renderBlankTile() {
-            // Clear tile with background color
-            this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
+            // DEBUG: Fill with bright green instead of background color
+            this.tileCtx.fillStyle = '#00FF00'; // Bright green
             this.tileCtx.fillRect(0, 0, this.tileSize, this.tileSize);
 
             // Return blank tile as data URL
