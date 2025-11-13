@@ -73,11 +73,11 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.7.2',
+          VERSION: '1.7.3',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
-          DEBUG_TILES: true,  // Enable tile cache diagnostics logging
+          DEBUG_TILES: false,  // Enable tile cache diagnostics logging
 
           // Auto-load
           AUTO_LOAD_PDF: null, // Set to null to disable auto-load, or filename to try loading
@@ -1069,17 +1069,18 @@
             );
 
             if (!canRenderWithFallback) {
-              // No pages available at all - return blank tile instead of null
-              // (returning null causes "failed to load" errors)
+              // Pages not available - return NULL instead of blank tile
+              // This tells OSD "tile failed/not ready" rather than "tile is blank"
+              // OSD may retry failed tiles naturally, unlike cached blank images
               if (CONFIG.DEBUG_TILES) {
-                console.log(`[TileStreamer] BLANK TILE: ${key} (pages needed: ${neededPages.join(',')}, resolution: ${resolution})`);
+                console.log(`[TileStreamer] TILE NOT READY (returning null): ${key} (pages needed: ${neededPages.join(',')}, resolution: ${resolution})`);
               }
-              const blankTile = this._renderBlankTile();
-              this.cache.set(key, blankTile);
 
               // Trigger async rendering for future requests
               this._requestPagesAsync(neededPages, resolution);
-              return blankTile;
+
+              // Return null - tell OSD this tile isn't ready yet
+              return null;
             }
 
             // If not all high-res pages available, trigger background loading
@@ -1324,14 +1325,14 @@
             const devicePixelRatio = window.devicePixelRatio || 1;
 
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden'}`);
+            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden (mobile)'}`);
             console.log(`Device pixel ratio: ${devicePixelRatio}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileStreamer.getOSDConfig(),
-              showNavigator: showNavigator,
+              showNavigator: showNavigator, // All low-res pages rendered before viewer shown
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
               showZoomControl: false, // Hide zoom in/out buttons
@@ -1624,21 +1625,22 @@
               const pageWidth = firstHighRes.width;
               const pageHeight = firstHighRes.height;
 
-              // Phase 2: Render initial batch of low-res pages for minimap (fast!)
+              // Phase 2: Render ALL low-res pages before showing viewer
+              // This is the ONLY way to prevent blank tiles in OpenSeadragon
+              // Optimized with larger batch size for faster rendering
               setLoadingStatus('Rendering minimap...');
               const scatteredOrder = PDFUtils.bitReversalOrder(pdf.numPages);
-              const initialLowResCount = Math.min(20, pdf.numPages); // First 20 pages scattered
               await pageStreamer.renderBatch(
-                scatteredOrder.slice(0, initialLowResCount),
+                scatteredOrder,
                 'low',
-                10,
+                20, // Increased from 10 to 20 for faster rendering
                 (current, total) => {
                   setPagesLoaded(current);
-                  setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
+                  setLoadingStatus(`Rendering minimap (${current}/${pdf.numPages})...`);
                 }
               );
 
-              // Phase 3: Initialize viewer (user can interact now!)
+              // Phase 3: Initialize viewer with navigator (all pages ready!)
               setLoadingStatus('Initializing viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
@@ -1648,10 +1650,8 @@
               const cacheStats = pageStreamer.getCacheStats();
               console.log(`Initial rendering complete:`);
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority)`);
-              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial, rest rendering in background...)`);
-
-              // Phase 4: Render remaining low-res pages in background
-              renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
+              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL rendered - no blank tiles!)`);
+              console.log(`  Performance: Optimized with batch size 20`);
 
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
@@ -1668,6 +1668,7 @@
           /**
            * Background rendering of remaining low-res pages for minimap
            * Non-blocking, yields to browser to keep UI responsive
+           * Adds navigator when complete
            */
           const renderLowResInBackground = async (pageStreamer, numPages, startIndex = 0) => {
             console.log(`Starting background minimap rendering from index ${startIndex}...`);
@@ -1684,12 +1685,6 @@
               // Render low-res page
               await pageStreamer.renderPage(pageNum, 'low');
 
-              // Force OpenSeadragon to redraw every few pages
-              // This makes new tiles appear as they render
-              if ((i - startIndex) % 10 === 0 && window.osdViewerRef) {
-                window.osdViewerRef.forceRedraw();
-              }
-
               // Yield to browser every 5 pages to keep UI responsive
               if (i % 5 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
@@ -1702,9 +1697,57 @@
               }
             }
 
-            // Final redraw to show all completed tiles
-            if (window.osdViewerRef) {
-              window.osdViewerRef.forceRedraw();
+            // All low-res pages rendered - invalidate OSD's cache to refresh blank tiles
+            if (window.osdViewerRef && window.osdViewerRef.world) {
+              if (CONFIG.DEBUG_TILES) {
+                console.log('[Background] All low-res pages ready, invalidating tile cache...');
+              }
+
+              // Force OSD to re-request all tiles (including the blank ones)
+              window.osdViewerRef.world.resetItems();
+
+              if (CONFIG.DEBUG_TILES) {
+                console.log('[Background] Tile cache invalidated');
+              }
+            }
+
+            // Now add the navigator!
+            // Only add if not on mobile (small phone)
+            if (window.osdViewerRef && window.osdShowNavigator) {
+              // Wait a moment for resetItems() to take effect
+              await new Promise(resolve => setTimeout(resolve, 100));
+
+              if (CONFIG.DEBUG_TILES) {
+                console.log('[Background] Adding navigator...');
+              }
+
+              try {
+                // Create navigator container element
+                const navContainer = document.createElement('div');
+                navContainer.id = 'navigator-' + new Date().getTime();
+                navContainer.className = 'navigator';
+                navContainer.style.position = 'absolute';
+                navContainer.style.top = '10px';
+                navContainer.style.right = '10px';
+                navContainer.style.width = '200px';
+                navContainer.style.height = '200px';
+                navContainer.style.zIndex = '1000';
+
+                // Add to viewer container
+                window.osdViewerRef.container.appendChild(navContainer);
+
+                // Create Navigator instance
+                window.osdViewerRef.navigator = new OpenSeadragon.Navigator({
+                  element: navContainer,
+                  viewer: window.osdViewerRef
+                });
+
+                if (CONFIG.DEBUG_TILES) {
+                  console.log('[Background] Navigator added successfully');
+                }
+              } catch (error) {
+                console.error('[Background] Failed to add navigator:', error);
+              }
             }
 
             console.log('Background minimap rendering complete');
