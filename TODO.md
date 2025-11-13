@@ -23,6 +23,8 @@ Change the download command to expressly download the file to local storage, ins
 
 Handle URL redirects properly - some PDF URLs redirect to different locations (e.g., academic publications from institutional repositories)
 
+Debug and fix iPadOS Safari download behavior (requires automated testing) - Download PDF button currently saves to browser's Downloads manager instead of filesystem. Need to determine which code path executes (Web Share API vs fallback), verify iPadOS detection, and implement proper filesystem save dialog or share sheet.
+
 
 ## PERFORMANCE
 
