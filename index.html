@@ -73,10 +73,11 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.7.1',
+          VERSION: '1.7.2',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging and detailed error messages
+          DEBUG_TILES: true,  // Enable tile cache diagnostics logging
 
           // Auto-load
           AUTO_LOAD_PDF: null, // Set to null to disable auto-load, or filename to try loading
@@ -441,6 +442,9 @@
               const canvas = await PDFUtils.renderPageToCanvas(page, scale);
               this.pageCache.set(key, canvas);
               this.renderingInProgress.delete(key);
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
+              }
               return canvas;
             })();
 
@@ -702,20 +706,33 @@
               // LRU: Move to end (most recently used)
               this.cache.delete(key);
               this.cache.set(key, value);
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[TileCache] HIT: ${key}`);
+              }
+            } else if (CONFIG.DEBUG_TILES) {
+              console.log(`[TileCache] MISS: ${key}`);
             }
             return value || null;
           }
 
           set(key, value) {
             // LRU: If key exists, delete it first to move to end
-            if (this.cache.has(key)) {
+            const isUpdate = this.cache.has(key);
+            if (isUpdate) {
               this.cache.delete(key);
             } else if (this.cache.size >= this.maxSize) {
               // Remove least recently used (first in Map)
               const firstKey = this.cache.keys().next().value;
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[TileCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
+              }
               this.cache.delete(firstKey);
             }
             this.cache.set(key, value);
+            if (CONFIG.DEBUG_TILES) {
+              const action = isUpdate ? 'UPDATE' : 'ADD';
+              console.log(`[TileCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
+            }
           }
 
           has(key) {
@@ -1054,6 +1071,9 @@
             if (!canRenderWithFallback) {
               // No pages available at all - return blank tile instead of null
               // (returning null causes "failed to load" errors)
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[TileStreamer] BLANK TILE: ${key} (pages needed: ${neededPages.join(',')}, resolution: ${resolution})`);
+              }
               const blankTile = this._renderBlankTile();
               this.cache.set(key, blankTile);
 
@@ -1064,6 +1084,10 @@
 
             // If not all high-res pages available, trigger background loading
             if (!allPagesCached && resolution === 'high') {
+              if (CONFIG.DEBUG_TILES) {
+                const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, 'high'));
+                console.log(`[TileStreamer] FALLBACK: ${key} missing high-res pages: ${missingPages.join(',')}`);
+              }
               this._requestPagesAsync(neededPages, 'high');
             }
 
@@ -1072,6 +1096,11 @@
 
             // Cache the tile
             this.cache.set(key, tileUrl);
+
+            if (CONFIG.DEBUG_TILES) {
+              const status = allPagesCached ? 'FULL' : 'FALLBACK';
+              console.log(`[TileStreamer] RENDER ${status}: ${key} (pages: ${neededPages.join(',')}, resolution: ${resolution})`);
+            }
 
             return tileUrl;
           }
