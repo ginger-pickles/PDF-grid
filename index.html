@@ -73,10 +73,10 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.7.3',
+          VERSION: '1.8.0',
 
           // Debug
-          DEBUG_MODE: false, // Enable verbose logging and detailed error messages
+          DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
           DEBUG_TILES: false,  // Enable tile cache diagnostics logging
 
           // Auto-load
@@ -585,24 +585,81 @@
           },
 
           /**
-           * Calculate which pages are in the initial viewport
-           * Initial view centers on page 1 at 1.5x zoom (shows ~2.25 page areas)
+           * Calculate which pages intersect with initial viewport
+           * Returns pages needed for initial view (for low-res rendering)
+           */
+          calculateInitialViewportPages(totalPages, pageWidth, pageHeight) {
+            const pattern = this.generate(totalPages, totalPages);
+            const gridDims = this.calculateDimensions(totalPages, pageWidth, pageHeight);
+            const { spacing, gridSize } = gridDims;
+
+            // Find page 1 position in grid
+            let page1Row = -1, page1Col = -1;
+            for (let row = 0; row < gridSize; row++) {
+              for (let col = 0; col < gridSize; col++) {
+                if (pattern[row][col] === 1) {
+                  page1Row = row;
+                  page1Col = col;
+                  break;
+                }
+              }
+              if (page1Row !== -1) break;
+            }
+
+            // Calculate page 1 position in pixel coordinates
+            const page1X = page1Col * (pageWidth + spacing);
+            const page1Y = page1Row * (pageHeight + spacing);
+
+            // Initial viewport: 1.5x page dimensions centered on page 1
+            const viewWidth = pageWidth * 1.5;
+            const viewHeight = pageHeight * 1.5;
+            const viewX = page1X - (viewWidth - pageWidth) / 2;
+            const viewY = page1Y - (viewHeight - pageHeight) / 2;
+
+            // Expand viewport significantly to account for:
+            // - Tile overlap and pyramid structure
+            // - OSD requests tiles at multiple levels (0-4) for progressive loading
+            // - Overview tiles (levels 0-2) can cover large portions of the grid
+            const buffer = 3.0; // 3x expansion to cover tiles at multiple zoom levels
+            const expandedX = viewX - viewWidth * buffer;
+            const expandedY = viewY - viewHeight * buffer;
+            const expandedWidth = viewWidth * (1 + 2 * buffer);
+            const expandedHeight = viewHeight * (1 + 2 * buffer);
+
+            // Find all pages that intersect with expanded viewport
+            const viewportPages = new Set();
+            for (let row = 0; row < gridSize; row++) {
+              for (let col = 0; col < gridSize; col++) {
+                const pageNum = pattern[row][col];
+                if (pageNum === 0) continue;
+
+                const pageLeft = col * (pageWidth + spacing);
+                const pageTop = row * (pageHeight + spacing);
+                const pageRight = pageLeft + pageWidth;
+                const pageBottom = pageTop + pageHeight;
+
+                // Check intersection with expanded viewport
+                if (!(pageRight <= expandedX || pageLeft >= expandedX + expandedWidth ||
+                      pageBottom <= expandedY || pageTop >= expandedY + expandedHeight)) {
+                  viewportPages.add(pageNum);
+                }
+              }
+            }
+
+            return Array.from(viewportPages).sort((a, b) => a - b);
+          },
+
+          /**
+           * Calculate which pages are priority for high-res rendering
            * Returns page numbers that should be rendered first in high-res
            */
-          calculateInitialViewportPages(totalPages) {
-            // Initial viewport centers on page 1 and shows 1.5x page dimensions
-            // In the staggered grid, page 1 is at center-top, with pages 2-N flowing diagonally
-            // A 1.5x viewport around page 1 typically shows 5-10 pages depending on layout
-
-            // Conservative estimate: first 10 pages cover the initial view
-            // These are the top-center pages where user starts
+          calculatePriorityPages(totalPages) {
+            // Conservative estimate: first 10 pages for high-res detail
             const initialViewCount = Math.min(10, totalPages);
-
             const priorityPages = [];
             for (let i = 1; i <= initialViewCount; i++) {
               priorityPages.push(i);
             }
-
             return priorityPages;
           }
         };
@@ -948,6 +1005,7 @@
             this.pageStreamer = pageStreamer;
             this.numPages = numPages;
             this.cache = new TileCache();
+            this.cacheGeneration = 0; // Increment to invalidate cached tiles
 
             // Calculate tile parameters
             this.tileSize = Math.max(
@@ -987,7 +1045,7 @@
            */
           _calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom) {
             const { pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
-            const intersectingPages = [];
+            const intersectingPages = new Set(); // Use Set to avoid duplicates
 
             for (let row = 0; row < gridSize; row++) {
               for (let col = 0; col < gridSize; col++) {
@@ -1005,12 +1063,12 @@
                 // Check intersection
                 if (!(pageRight <= tileLeft || pageLeft >= tileRight ||
                       pageBottom <= tileTop || pageTop >= tileBottom)) {
-                  intersectingPages.push(pageNum);
+                  intersectingPages.add(pageNum);
                 }
               }
             }
 
-            return intersectingPages;
+            return Array.from(intersectingPages);
           }
 
           /**
@@ -1038,7 +1096,8 @@
            * Generate a tile at specified level and coordinates
            */
           generateTile(level, x, y) {
-            const key = `${level}_${x}_${y}`;
+            // Include cache generation in key to invalidate old cached tiles
+            const key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
 
             // Check tile cache first
             const cached = this.cache.get(key);
@@ -1069,18 +1128,21 @@
             );
 
             if (!canRenderWithFallback) {
-              // Pages not available - return NULL instead of blank tile
-              // This tells OSD "tile failed/not ready" rather than "tile is blank"
-              // OSD may retry failed tiles naturally, unlike cached blank images
+              // Pages not available - return blank tile
+              // We'll clear these from OSD's cache after background rendering completes
               if (CONFIG.DEBUG_TILES) {
-                console.log(`[TileStreamer] TILE NOT READY (returning null): ${key} (pages needed: ${neededPages.join(',')}, resolution: ${resolution})`);
+                console.log(`[TileStreamer] BLANK TILE: ${key} needs pages [${neededPages.join(',')}] at ${resolution}-res (not available)`);
               }
 
               // Trigger async rendering for future requests
               this._requestPagesAsync(neededPages, resolution);
 
-              // Return null - tell OSD this tile isn't ready yet
-              return null;
+              // Return blank tile - will be cleared later with clearTilesFor()
+              const blankCanvas = document.createElement('canvas');
+              blankCanvas.width = this.tileSize;
+              blankCanvas.height = this.tileSize;
+              const blankTile = blankCanvas.toDataURL();
+              return blankTile;
             }
 
             // If not all high-res pages available, trigger background loading
@@ -1104,6 +1166,15 @@
             }
 
             return tileUrl;
+          }
+
+          /**
+           * Invalidate all cached tiles by incrementing generation number
+           * Call this after background rendering to force fresh tile generation
+           */
+          invalidateCache() {
+            this.cacheGeneration++;
+            console.log(`[TileStreamer] Cache generation incremented to ${this.cacheGeneration} - all tiles invalidated`);
           }
 
           /**
@@ -1171,6 +1242,13 @@
               for (let col = 0; col < gridSize; col++) {
                 this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution);
               }
+            }
+
+            // DEBUG: Draw 10px bright green border around tile
+            if (CONFIG.DEBUG_MODE) {
+              this.tileCtx.strokeStyle = '#00FF00'; // Bright green
+              this.tileCtx.lineWidth = 10;
+              this.tileCtx.strokeRect(5, 5, this.tileSize - 10, this.tileSize - 10);
             }
 
             // Convert to data URL
@@ -1311,28 +1389,30 @@
 
           /**
            * Initialize OpenSeadragon viewer
+           * @param {boolean} forceShowNavigator - If true, show navigator immediately (used during recreation)
            */
-          initialize(tileStreamer, pageWidth, pageHeight, gridSize) {
+          initialize(tileStreamer, pageWidth, pageHeight, gridSize, forceShowNavigator = false) {
             // Set fixed minZoomImageRatio - grid should fill ~90% of viewport when fully zoomed out
             const minZoomImageRatio = 0.9;
 
             // Detect small phone and hide navigator on mobile
             const isSmallPhone = this.isTouchDevice();
             const showNavigator = !isSmallPhone;
+            window.osdShowNavigator = showNavigator; // Store for later use
 
             // Adjust maxZoomPixelRatio for high DPI displays (Retina, etc.)
             // This ensures same zoom depth regardless of screen pixel density
             const devicePixelRatio = window.devicePixelRatio || 1;
 
             console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'shown' : 'hidden (mobile)'}`);
+            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'enabled' : 'hidden (mobile)'}`);
             console.log(`Device pixel ratio: ${devicePixelRatio}`);
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileStreamer.getOSDConfig(),
-              showNavigator: showNavigator, // All low-res pages rendered before viewer shown
+              showNavigator: showNavigator, // Always show if not mobile
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
               showZoomControl: false, // Hide zoom in/out buttons
@@ -1607,8 +1687,8 @@
               window.pageStreamerRef = pageStreamer; // Store globally for TileStreamer access
 
               // Phase 1: Render priority high-res pages FIRST
-              const priorityPages = GridPattern.calculateInitialViewportPages(pdf.numPages);
-              console.log(`Rendering ${priorityPages.length} priority pages for initial view...`);
+              const priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
+              console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
               setLoadingStatus('Rendering initial view...');
               await pageStreamer.renderBatch(
                 priorityPages,
@@ -1625,22 +1705,23 @@
               const pageWidth = firstHighRes.width;
               const pageHeight = firstHighRes.height;
 
-              // Phase 2: Render ALL low-res pages before showing viewer
-              // This is the ONLY way to prevent blank tiles in OpenSeadragon
-              // Optimized with larger batch size for faster rendering
+              // Phase 2: Render low-res pages needed for initial viewport (calculated dynamically)
+              // v1.8: Calculate which pages are visible/needed in initial view
               setLoadingStatus('Rendering minimap...');
-              const scatteredOrder = PDFUtils.bitReversalOrder(pdf.numPages);
+              const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
+              console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
+              const initialLowResCount = initialLowResPages.length;
               await pageStreamer.renderBatch(
-                scatteredOrder,
+                initialLowResPages,
                 'low',
-                20, // Increased from 10 to 20 for faster rendering
+                20,
                 (current, total) => {
                   setPagesLoaded(current);
-                  setLoadingStatus(`Rendering minimap (${current}/${pdf.numPages})...`);
+                  setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
                 }
               );
 
-              // Phase 3: Initialize viewer with navigator (all pages ready!)
+              // Phase 3: Initialize viewer (user can interact immediately!)
               setLoadingStatus('Initializing viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
@@ -1649,9 +1730,13 @@
 
               const cacheStats = pageStreamer.getCacheStats();
               console.log(`Initial rendering complete:`);
-              console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority)`);
-              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL rendered - no blank tiles!)`);
-              console.log(`  Performance: Optimized with batch size 20`);
+              console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
+              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
+              console.log(`  Navigator: shown immediately`);
+              console.log(`  Strategy: TiledImage recreation when all pages ready`);
+
+              // Phase 4: Background render remaining pages (sequential), then add navigator
+              renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
 
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
@@ -1668,85 +1753,99 @@
           /**
            * Background rendering of remaining low-res pages for minimap
            * Non-blocking, yields to browser to keep UI responsive
-           * Adds navigator when complete
+           * Sequential rendering for simplicity
            */
-          const renderLowResInBackground = async (pageStreamer, numPages, startIndex = 0) => {
-            console.log(`Starting background minimap rendering from index ${startIndex}...`);
-            const scatteredOrder = PDFUtils.bitReversalOrder(numPages);
+          const renderLowResInBackground = async (pageStreamer, numPages, startPage = 1) => {
+            console.log(`Starting background minimap rendering from page ${startPage + 1}...`);
 
-            for (let i = startIndex; i < scatteredOrder.length; i++) {
-              const pageNum = scatteredOrder[i];
+            for (let pageNum = startPage + 1; pageNum <= numPages; pageNum++) {
 
               // Check if already cached
               if (pageStreamer.pageCache.has(`${pageNum}_low`)) {
+                if (CONFIG.DEBUG_MODE) {
+                  console.log(`[Background] Page ${pageNum} low-res already cached, skipping`);
+                }
                 continue;
               }
 
               // Render low-res page
+              if (CONFIG.DEBUG_MODE) {
+                console.log(`[Background] Rendering page ${pageNum} low-res...`);
+              }
               await pageStreamer.renderPage(pageNum, 'low');
 
               // Yield to browser every 5 pages to keep UI responsive
-              if (i % 5 === 0) {
+              if (pageNum % 5 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
               }
 
               // Log progress periodically
-              if ((i + 1) % 10 === 0 || i === scatteredOrder.length - 1) {
+              if (pageNum % 10 === 0 || pageNum === numPages) {
                 const cacheStats = pageStreamer.getCacheStats();
                 console.log(`Background minimap: ${cacheStats.low}/${numPages} pages rendered`);
               }
             }
 
-            // All low-res pages rendered - invalidate OSD's cache to refresh blank tiles
-            if (window.osdViewerRef && window.osdViewerRef.world) {
-              if (CONFIG.DEBUG_TILES) {
-                console.log('[Background] All low-res pages ready, invalidating tile cache...');
-              }
+            // Verify all pages actually rendered
+            const finalStats = pageStreamer.getCacheStats();
+            console.log(`[Background] Loop completed: ${finalStats.low}/${numPages} low-res pages in cache`);
 
-              // Force OSD to re-request all tiles (including the blank ones)
-              window.osdViewerRef.world.resetItems();
-
-              if (CONFIG.DEBUG_TILES) {
-                console.log('[Background] Tile cache invalidated');
-              }
+            // Only proceed if ALL pages are actually rendered
+            if (finalStats.low < numPages) {
+              console.error(`[Background] ERROR: Only ${finalStats.low}/${numPages} pages rendered! Cannot add navigator.`);
+              return;
             }
 
-            // Now add the navigator!
-            // Only add if not on mobile (small phone)
-            if (window.osdViewerRef && window.osdShowNavigator) {
-              // Wait a moment for resetItems() to take effect
-              await new Promise(resolve => setTimeout(resolve, 100));
-
-              if (CONFIG.DEBUG_TILES) {
-                console.log('[Background] Adding navigator...');
-              }
+            // All low-res pages rendered - RECREATE TILEDIMAGE with fresh tiles!
+            // Lighter weight than recreating entire viewer - just refresh the image layer
+            if (window.osdViewerRef) {
+              console.log('[Background] All low-res pages ready - recreating TiledImage...');
 
               try {
-                // Create navigator container element
-                const navContainer = document.createElement('div');
-                navContainer.id = 'navigator-' + new Date().getTime();
-                navContainer.className = 'navigator';
-                navContainer.style.position = 'absolute';
-                navContainer.style.top = '10px';
-                navContainer.style.right = '10px';
-                navContainer.style.width = '200px';
-                navContainer.style.height = '200px';
-                navContainer.style.zIndex = '1000';
+                const viewer = window.osdViewerRef;
 
-                // Add to viewer container
-                window.osdViewerRef.container.appendChild(navContainer);
+                // Save current viewport state
+                const currentZoom = viewer.viewport.getZoom();
+                const currentCenter = viewer.viewport.getCenter();
+                console.log(`[Background] Saving viewport: zoom=${currentZoom}, center=${currentCenter.x},${currentCenter.y}`);
 
-                // Create Navigator instance
-                window.osdViewerRef.navigator = new OpenSeadragon.Navigator({
-                  element: navContainer,
-                  viewer: window.osdViewerRef
-                });
-
-                if (CONFIG.DEBUG_TILES) {
-                  console.log('[Background] Navigator added successfully');
+                // Get current TiledImage and remove it
+                const oldTiledImage = viewer.world.getItemAt(0);
+                if (oldTiledImage) {
+                  console.log('[Background] Removing old TiledImage...');
+                  viewer.world.removeItem(oldTiledImage);
                 }
+
+                // Invalidate our tile cache so new TiledImage gets fresh tiles
+                if (window.tileStreamerRef) {
+                  window.tileStreamerRef.invalidateCache();
+                  console.log('[Background] TileStreamer cache invalidated');
+                }
+
+                // Wait a tick for cleanup
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // Add fresh TiledImage with same tileSource
+                console.log('[Background] Adding new TiledImage...');
+                const tileStreamer = window.tileStreamerRef;
+                viewer.addTiledImage({
+                  tileSource: tileStreamer.getOSDConfig(),
+                  success: () => {
+                    console.log('[Background] New TiledImage added successfully');
+
+                    // Restore viewport state
+                    console.log('[Background] Restoring viewport...');
+                    viewer.viewport.zoomTo(currentZoom, null, true); // immediate
+                    viewer.viewport.panTo(currentCenter, true); // immediate
+
+                    console.log('[Background] TiledImage recreation complete - all tiles fresh with content!');
+                  },
+                  error: (event) => {
+                    console.error('[Background] Error adding new TiledImage:', event);
+                  }
+                });
               } catch (error) {
-                console.error('[Background] Failed to add navigator:', error);
+                console.error('[Background] Error recreating TiledImage:', error);
               }
             }
 
@@ -1891,7 +1990,7 @@
             setPdfFile(null);
           };
 
-          const initializeViewer = (numPages, pageWidth, pageHeight) => {
+          const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = false) => {
             // Clean up existing viewer
             if (osdViewerRef.current) {
               osdViewerRef.current.destroy();
@@ -1920,10 +2019,19 @@
             tileStreamerRef.current = tileStreamer;
             window.tileStreamerRef = tileStreamer; // Store globally for debugging
 
+            // Store grid dimensions globally for viewer recreation
+            window.gridPageWidth = pageWidth;
+            window.gridPageHeight = pageHeight;
+            window.gridSize = gridDims.gridSize;
+
             // Initialize OpenSeadragon viewer
-            const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize);
+            const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize, showNavigator);
             osdViewerRef.current = viewer;
             window.osdViewerRef = viewer; // Store globally for async tile updates
+          };
+
+          const initializeViewerWithNavigator = (numPages, pageWidth, pageHeight) => {
+            return initializeViewer(numPages, pageWidth, pageHeight, true);
           };
 
           /**
