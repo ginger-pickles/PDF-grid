@@ -1007,12 +1007,13 @@
             this.cache = new TileCache();
             this.cacheGeneration = 0; // Increment to invalidate cached tiles
 
-            // Rectangular tiles matching page aspect ratio + spacing
+            // Rectangular tiles matching base page dimensions (not including spacing)
             // This ensures rendered pages span exact integer number of tiles
             // E.g., at 3x render scale, each page = 3×3 tiles; at 1x, each page = 1×1 tile
+            // Spacing is handled separately in grid layout, not in tile size
             const { pageWidth, pageHeight, spacing } = gridDims;
-            this.tileWidth = pageWidth + spacing;
-            this.tileHeight = pageHeight + spacing;
+            this.tileWidth = pageWidth;
+            this.tileHeight = pageHeight;
 
             // Calculate max level based on grid dimensions and tile size
             const widthLevels = Math.ceil(Math.log2(gridDims.totalWidth / this.tileWidth));
@@ -1028,7 +1029,7 @@
             this.tileCanvas.height = this.tileHeight;
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
-            console.log(`Tile size: ${this.tileWidth}×${this.tileHeight} (page+spacing), Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
+            console.log(`Tile size: ${this.tileWidth}×${this.tileHeight} (base page dimensions), Max level: ${this.maxLevel}, Minimap max level: ${this.minimapMaxLevel}`);
             console.log(`Page dimensions: ${pageWidth}×${pageHeight}, Spacing: ${spacing}`);
             console.log(`At ${CONFIG.PDF_RENDER_SCALE}x render: each page = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
             console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
