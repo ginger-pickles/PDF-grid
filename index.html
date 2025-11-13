@@ -1248,11 +1248,11 @@
               }
             }
 
-            // DEBUG: Draw 10px bright green border around tile and show level
+            // DEBUG: Draw 5px bright green border around tile and show level
             if (CONFIG.DEBUG_MODE) {
               this.tileCtx.strokeStyle = '#00FF00'; // Bright green
-              this.tileCtx.lineWidth = 10;
-              this.tileCtx.strokeRect(5, 5, this.tileCanvas.width - 10, this.tileCanvas.height - 10);
+              this.tileCtx.lineWidth = 5;
+              this.tileCtx.strokeRect(2.5, 2.5, this.tileCanvas.width - 5, this.tileCanvas.height - 5);
 
               // Draw level number at center
               this.tileCtx.font = 'bold 48px monospace';
