@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.0',
+          VERSION: '1.8.1',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1117,33 +1117,21 @@
               this.pageStreamer.hasPage(pageNum, resolution)
             );
 
-            // Check if we can render with bidirectional fallback
-            // High-res can use low-res, low-res can use high-res
-            const canRenderWithFallback = neededPages.every(pageNum =>
+            // Progressive loading: Always render tile with whatever pages are available
+            // If some pages aren't ready, render partial tile and trigger async load
+            // Cache will be invalidated periodically as pages render, causing re-requests
+            const availablePages = neededPages.filter(pageNum =>
               this.pageStreamer.hasPage(pageNum, resolution) ||
               this.pageStreamer.hasPage(pageNum, resolution === 'high' ? 'low' : 'high')
             );
 
-            if (!canRenderWithFallback) {
-              // Pages not available - return blank tile
-              // We'll clear these from OSD's cache after background rendering completes
+            if (availablePages.length < neededPages.length) {
+              // Some pages missing - render partial tile and request missing pages
+              const missingPages = neededPages.filter(p => !availablePages.includes(p));
               if (CONFIG.DEBUG_TILES) {
-                console.log(`[TileStreamer] BLANK TILE: ${key} needs pages [${neededPages.join(',')}] at ${resolution}-res (not available)`);
+                console.log(`[TileStreamer] PARTIAL TILE: ${key} has ${availablePages.length}/${neededPages.length} pages (missing: ${missingPages.join(',')})`);
               }
-
-              // Trigger async rendering for future requests
-              this._requestPagesAsync(neededPages, resolution);
-
-              // Return blank tile - will be cleared later with clearTilesFor()
-              // DEBUG: Make blank tiles bright green for visibility
-              const blankCanvas = document.createElement('canvas');
-              blankCanvas.width = this.tileSize;
-              blankCanvas.height = this.tileSize;
-              const blankCtx = blankCanvas.getContext('2d');
-              blankCtx.fillStyle = '#00FF00'; // Bright green
-              blankCtx.fillRect(0, 0, this.tileSize, this.tileSize);
-              const blankTile = blankCanvas.toDataURL();
-              return blankTile;
+              this._requestPagesAsync(missingPages, resolution);
             }
 
             // If not all high-res pages available, trigger background loading
@@ -1534,10 +1522,11 @@
             };
           }, []);
 
-          // Auto-load PDF on mount (priority: URL parameter > stored PDF > config)
+          // Auto-load PDF on mount
+          // Separated concerns: URL parameters always work, config auto-load is optional
           React.useEffect(() => {
-            const autoLoadPDF = async () => {
-              // Check URL parameters first (highest priority)
+            // Handle URL parameters - ALWAYS runs (independent of CONFIG.AUTO_LOAD_PDF)
+            const handleURLParameters = async () => {
               const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
 
               // Priority 1: ?url= parameter (remote URL)
@@ -1545,11 +1534,11 @@
                 try {
                   console.log(`Loading PDF from URL parameter: ${urlParam}`);
                   await loadPDFFromURL(urlParam, true); // skipHistory=true to avoid double-pushing
-                  return;
+                  return true; // Successfully handled
                 } catch (error) {
                   console.error(`Failed to load PDF from URL parameter: ${error.message}`);
                   alert(`Failed to load PDF from URL: ${error.message}`);
-                  return;
+                  return true; // Handled (even though it failed)
                 }
               }
 
@@ -1570,7 +1559,7 @@
 
                     const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
                     await loadPDF(pdf, stored.filename);
-                    return;
+                    return true; // Successfully handled
                   }
                 } catch (error) {
                   console.error(`Failed to load from storage:`, error);
@@ -1581,49 +1570,56 @@
                   try {
                     console.log(`PDF not in storage, attempting to fetch from server: ${pdfFilename}`);
                     await loadPDFFromURL(pdfFilename, true); // Load relative path, skipHistory=true
-                    return;
+                    return true; // Successfully handled
                   } catch (error) {
                     console.error(`Failed to fetch PDF from server: ${error.message}`);
                     alert(`PDF "${pdfFilename}" not found in storage or on server.`);
-                    // Fall through to next priority
+                    return true; // Handled (even though it failed)
                   }
                 } else {
                   console.log(`PDF "${pdfFilename}" not in storage, and file:// protocol prevents server fetch`);
-                  // Fall through to next priority
+                  return true; // Handled (even though it failed)
                 }
               }
 
-              // Priority 3: Stored local PDF (no parameter, just from storage)
-              if (!urlParam && !pdfParam) {
-                try {
-                  const stored = await PDFStorage.load();
-                  if (stored) {
-                    console.log(`Loading stored PDF from previous session: ${stored.filename}`);
-                    loadingCancelledRef.current = false; // Reset cancel flag
-                    setIsLoading(true);
-                    setLoadingStatus('Loading stored PDF...');
-                    setPdfFile({ name: stored.filename });
-                    setUrlInput(stored.filename);
+              return false; // No URL parameters present
+            };
 
-                    // Add ?pdf= parameter to URL
-                    URLManager.replaceState('pdf', stored.filename);
+            // Restore stored PDF from previous session - ALWAYS runs if no URL params
+            const restoreStoredPDF = async () => {
+              try {
+                const stored = await PDFStorage.load();
+                if (stored) {
+                  console.log(`Loading stored PDF from previous session: ${stored.filename}`);
+                  loadingCancelledRef.current = false; // Reset cancel flag
+                  setIsLoading(true);
+                  setLoadingStatus('Loading stored PDF...');
+                  setPdfFile({ name: stored.filename });
+                  setUrlInput(stored.filename);
 
-                    const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
-                    await loadPDF(pdf, stored.filename);
-                    return;
-                  }
-                } catch (error) {
-                  console.error(`Failed to load stored PDF:`, error);
-                  setIsLoading(false);
-                  // Show error and clear bad storage
-                  alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage and showing demo.`);
-                  await PDFStorage.clear();
-                  // Continue to config auto-load
+                  // Add ?pdf= parameter to URL
+                  URLManager.replaceState('pdf', stored.filename);
+
+                  const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                  await loadPDF(pdf, stored.filename);
+                  return true; // Successfully restored
                 }
+              } catch (error) {
+                console.error(`Failed to load stored PDF:`, error);
+                setIsLoading(false);
+                // Show error and clear bad storage
+                alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage.`);
+                await PDFStorage.clear();
               }
+              return false; // No stored PDF or failed to restore
+            };
 
-              // Fall back to config auto-load (lowest priority)
-              if (!CONFIG.AUTO_LOAD_PDF) return;
+            // Auto-load demo PDF - ONLY runs if CONFIG.AUTO_LOAD_PDF is set
+            const autoLoadDemo = async () => {
+              if (!CONFIG.AUTO_LOAD_PDF) {
+                console.log('No PDF to auto-load. Waiting for manual upload or URL parameters.');
+                return;
+              }
 
               // Skip auto-load for file:// protocol (browser security restrictions)
               if (window.location.protocol === 'file:') {
@@ -1632,7 +1628,7 @@
               }
 
               try {
-                console.log(`Attempting to auto-load: ${CONFIG.AUTO_LOAD_PDF}`);
+                console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
                 await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF);
               } catch (error) {
                 console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
@@ -1640,8 +1636,19 @@
               }
             };
 
-            // TEMPORARILY DISABLED: Auto-load
-            // autoLoadPDF();
+            // Run loading sequence
+            (async () => {
+              // First, check for URL parameters (highest priority, always runs)
+              const handledByURL = await handleURLParameters();
+              if (handledByURL) return;
+
+              // Second, try to restore stored PDF from previous session (always runs)
+              const restoredFromStorage = await restoreStoredPDF();
+              if (restoredFromStorage) return;
+
+              // Finally, auto-load demo if configured (only if CONFIG.AUTO_LOAD_PDF is set)
+              await autoLoadDemo();
+            })();
           }, []);
 
           // TEMPORARILY DISABLED: Handle browser back/forward navigation
@@ -1748,7 +1755,7 @@
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
               console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
               console.log(`  Navigator: shown immediately`);
-              console.log(`  Strategy: TiledImage recreation when all pages ready`);
+              console.log(`  Strategy: Progressive tile regeneration (no blanks, invalidate cache every 5 pages)`);
 
               // Phase 4: Background render remaining pages (sequential), then add navigator
               renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
@@ -1794,6 +1801,13 @@
                 await new Promise(resolve => setTimeout(resolve, 0));
               }
 
+              // Progressive loading: Invalidate tile cache every 5 pages to trigger re-requests
+              if (pageNum % 5 === 0 && window.tileStreamerRef && window.osdViewerRef) {
+                window.tileStreamerRef.invalidateCache();
+                window.osdViewerRef.forceRedraw();
+                console.log(`[Background] Cache invalidated at ${pageNum}/${numPages} pages - tiles will progressively update`);
+              }
+
               // Log progress periodically
               if (pageNum % 10 === 0 || pageNum === numPages) {
                 const cacheStats = pageStreamer.getCacheStats();
@@ -1805,58 +1819,46 @@
             const finalStats = pageStreamer.getCacheStats();
             console.log(`[Background] Loop completed: ${finalStats.low}/${numPages} low-res pages in cache`);
 
-            // Only proceed if ALL pages are actually rendered
-            if (finalStats.low < numPages) {
-              console.error(`[Background] ERROR: Only ${finalStats.low}/${numPages} pages rendered! Cannot add navigator.`);
-              return;
-            }
+            // Ensure level 0 tile (overview) is generated with all pages before recreation
+            if (window.tileStreamerRef && window.osdViewerRef) {
+              console.log('[Background] All pages ready - ensuring level 0 tile is complete...');
 
-            // All low-res pages rendered - RECREATE TILEDIMAGE with fresh tiles!
-            // Lighter weight than recreating entire viewer - just refresh the image layer
-            if (window.osdViewerRef) {
-              console.log('[Background] All low-res pages ready - recreating TiledImage...');
+              // Explicitly generate level 0 tile to ensure it has all pages
+              // This is the overview tile that shows the entire grid
+              try {
+                window.tileStreamerRef.generateTile(0, 0, 0);
+                console.log('[Background] Level 0 overview tile generated with all pages');
+              } catch (error) {
+                console.warn('[Background] Could not pre-generate level 0 tile:', error);
+              }
+
+              // Now do final TiledImage recreation for clean slate
+              console.log('[Background] Recreating TiledImage with all pages complete...');
 
               try {
                 const viewer = window.osdViewerRef;
-
-                // Save current viewport state
                 const currentZoom = viewer.viewport.getZoom();
                 const currentCenter = viewer.viewport.getCenter();
-                console.log(`[Background] Saving viewport: zoom=${currentZoom}, center=${currentCenter.x},${currentCenter.y}`);
 
-                // Get current TiledImage and remove it
+                // Remove old TiledImage
                 const oldTiledImage = viewer.world.getItemAt(0);
                 if (oldTiledImage) {
-                  console.log('[Background] Removing old TiledImage...');
                   viewer.world.removeItem(oldTiledImage);
                 }
 
-                // Invalidate our tile cache so new TiledImage gets fresh tiles
-                if (window.tileStreamerRef) {
-                  window.tileStreamerRef.invalidateCache();
-                  console.log('[Background] TileStreamer cache invalidated');
-                }
+                // Invalidate cache for fresh tiles
+                window.tileStreamerRef.invalidateCache();
 
-                // Wait a tick for cleanup
+                // Wait for cleanup
                 await new Promise(resolve => setTimeout(resolve, 50));
 
-                // Add fresh TiledImage with same tileSource
-                console.log('[Background] Adding new TiledImage...');
-                const tileStreamer = window.tileStreamerRef;
+                // Add fresh TiledImage
                 viewer.addTiledImage({
-                  tileSource: tileStreamer.getOSDConfig(),
+                  tileSource: window.tileStreamerRef.getOSDConfig(),
                   success: () => {
-                    console.log('[Background] New TiledImage added successfully');
-
-                    // Restore viewport state
-                    console.log('[Background] Restoring viewport...');
-                    viewer.viewport.zoomTo(currentZoom, null, true); // immediate
-                    viewer.viewport.panTo(currentCenter, true); // immediate
-
-                    console.log('[Background] TiledImage recreation complete - all tiles fresh with content!');
-                  },
-                  error: (event) => {
-                    console.error('[Background] Error adding new TiledImage:', event);
+                    viewer.viewport.zoomTo(currentZoom, null, true);
+                    viewer.viewport.panTo(currentCenter, true);
+                    console.log('[Background] TiledImage recreation complete - all tiles have full content!');
                   }
                 });
               } catch (error) {
@@ -1864,7 +1866,7 @@
               }
             }
 
-            console.log('Background minimap rendering complete');
+            console.log('[Background] Progressive minimap rendering complete');
           };
 
           const loadPDFFromURL = async (url, skipHistory = false) => {
@@ -2075,7 +2077,8 @@
           };
 
           /**
-           * Download current PDF
+           * Download current PDF to device filesystem
+           * Handles different browsers: Chrome (File System API), iOS (Web Share), others (download link)
            */
           const handleDownload = async () => {
             if (!pdfDocRef.current || !currentFilename) {
@@ -2086,16 +2089,97 @@
             try {
               const pdf = pdfDocRef.current;
               const data = await pdf.getData();
-              const blob = new Blob([data], { type: 'application/pdf' });
+
+              // Extract filename from URL or use default
+              let filename = currentFilename.replace(/^https?:\/\/.*\//, '') || 'document.pdf';
+
+              // Ensure .pdf extension
+              if (!filename.toLowerCase().endsWith('.pdf')) {
+                filename += '.pdf';
+              }
+
+              // Detect iOS/iPadOS
+              // Note: iPadOS 13+ reports as macOS in desktop mode, but still supports touch/share
+              const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+              const isIPadOS = (navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /MacIntel/.test(navigator.platform));
+              const isMobileSafari = isIOS || isIPadOS;
+
+              // Try modern File System Access API first (Chrome, Edge, Opera - but not iOS/iPadOS)
+              if (!isMobileSafari && window.showSaveFilePicker) {
+                try {
+                  const handle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                      description: 'PDF Document',
+                      accept: { 'application/pdf': ['.pdf'] }
+                    }]
+                  });
+
+                  const writable = await handle.createWritable();
+                  await writable.write(data);
+                  await writable.close();
+
+                  console.log(`PDF saved as: ${filename}`);
+                  return;
+                } catch (error) {
+                  if (error.name === 'AbortError') {
+                    console.log('Save cancelled by user');
+                    return;
+                  }
+                  // Fall through to next method
+                  console.log('File System Access API failed, trying next method');
+                }
+              }
+
+              // iOS/iPadOS Safari: Use Web Share API (works for saving files on iOS/iPadOS)
+              if (isMobileSafari && navigator.share && navigator.canShare) {
+                try {
+                  const file = new File([data], filename, { type: 'application/pdf' });
+
+                  if (navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                      files: [file],
+                      title: 'Download PDF',
+                      text: filename
+                    });
+                    console.log('PDF shared successfully on iOS');
+                    return;
+                  }
+                } catch (error) {
+                  if (error.name === 'AbortError') {
+                    console.log('Share cancelled by user');
+                    return;
+                  }
+                  console.log('Web Share API failed, trying fallback');
+                }
+              }
+
+              // Fallback for desktop Firefox, Safari, and older browsers
+              // Create blob with octet-stream to force download behavior
+              const blob = new Blob([data], { type: 'application/octet-stream' });
+
+              // Create object URL
               const url = URL.createObjectURL(blob);
 
+              // Create and configure download link
               const a = document.createElement('a');
               a.href = url;
-              a.download = currentFilename.replace(/^https?:\/\/.*\//, '') || 'download.pdf';
+              a.download = filename; // Set filename
+              a.target = '_blank'; // Prevent navigation in current tab
+
+              // Important: Must append to DOM for Firefox
               document.body.appendChild(a);
+
+              // Trigger download
               a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
+
+              // Cleanup after download starts
+              setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }, 250);
+
+              console.log(`Download triggered for: ${filename}`);
             } catch (error) {
               console.error('Error downloading PDF:', error);
               alert('Failed to download PDF');
