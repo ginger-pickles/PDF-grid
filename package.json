@@ -1,0 +1,33 @@
+{
+  "name": "pdf-grid",
+  "version": "1.0.0",
+  "description": "A viewer that displays pages in a continuous rotating grid pattern, allowing patterns in the document to emerge.",
+  "main": "index.js",
+  "scripts": {
+    "test:clean": "rm -rf playwright-report",
+    "test:clean:all": "rm -rf playwright-report test-results",
+    "pretest": "npm run test:clean",
+    "test": "playwright test",
+    "posttest": "ln -sf playwright-report/index.html test-report.html",
+    "pretest:headed": "npm run test:clean",
+    "test:headed": "playwright test --headed",
+    "posttest:headed": "ln -sf playwright-report/index.html test-report.html",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ginger-pickles/PDF-grid.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ginger-pickles/PDF-grid/issues"
+  },
+  "homepage": "https://github.com/ginger-pickles/PDF-grid#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}
