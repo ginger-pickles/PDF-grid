@@ -35,15 +35,15 @@ In a separate terminal:
 
 ```bash
 # Run all tests (headless mode)
-# Automatically cleans old reports before running
+# Automatically cleans old reports AND videos before running
 npm test
 
 # Run tests with browser visible (useful for debugging)
-# Automatically cleans old reports before running
+# Automatically cleans old reports AND videos before running
 npm run test:headed
 
 # Run tests in interactive UI mode (recommended for development)
-# Does NOT clean reports - keeps history for comparison
+# Does NOT clean reports or videos - keeps history for comparison
 npm run test:ui
 
 # View test report after running tests (opens in browser)
@@ -52,14 +52,14 @@ npm run test:report
 # OR: Open the HTML report file directly in your browser
 # File location: playwright-report/index.html
 
-# Manually clean old HTML report (keeps videos in test-results/)
+# Manually clean old HTML report only (keeps videos in test-results/)
 npm run test:clean
 
-# Clean everything including videos
+# Manually clean everything including videos
 npm run test:clean:all
 ```
 
-**Note:** Test videos and screenshots are preserved in `test-results/` for review. Only the HTML report is cleaned between test runs.
+**Note:** Running `npm test` or `npm run test:headed` automatically cleans both reports and videos before each run to prevent cruft accumulation. Videos from the most recent test run are always available for review.
 
 **Quick Report Access:** After tests run, simply double-click one of these files in your file browser:
 - `test-report.html` (convenient symlink at project root)
