@@ -1212,16 +1212,22 @@
               const lastPage = sortedPages[sortedPages.length - 1];
 
               // Detect edge tiles: tiles at the boundary of the grid that may have partial/irregular content
-              // These need disambiguation from interior tiles that might share the same page range
+              // These need disambiguation from interior tiles AND from each other based on which edge(s) they're on
               const tilesWide = Math.ceil(this.gridDims.totalWidth / (this.tileWidth / scale));
               const tilesHigh = Math.ceil(this.gridDims.totalHeight / (this.tileHeight / scale));
-              const isEdgeTile = (x >= tilesWide - 1) || (y >= tilesHigh - 1);
+
+              const isRightEdge = (x >= tilesWide - 1);
+              const isBottomEdge = (y >= tilesHigh - 1);
+              const isEdgeTile = isRightEdge || isBottomEdge;
 
               const pageRange = firstPage === lastPage ? `p${firstPage}` : `p${firstPage}-${lastPage}`;
 
               if (isEdgeTile) {
-                // Edge tile: add marker to prevent collisions with interior tiles
-                key = `${level}_edge_${pageRange}`;
+                // Edge tile: specify which edge(s) to prevent collisions
+                let edgeMarker = '';
+                if (isRightEdge) edgeMarker += 'r';
+                if (isBottomEdge) edgeMarker += 'b';
+                key = `${level}_edge${edgeMarker}_${pageRange}`;
               } else {
                 // Interior tile: pure page-range key for maximum deduplication
                 key = `${level}_${pageRange}`;
