@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.10',
+          VERSION: '1.8.11',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1037,7 +1037,6 @@
             this.pageStreamer = pageStreamer;
             this.numPages = numPages;
             this.cache = new TileCache();
-            this.cacheGeneration = 0; // Increment to invalidate cached tiles
             this.checkedCanvases = new Set(); // Track which pages we've already validated
 
             // Tile size = (page + spacing) / renderScale
@@ -1222,22 +1221,22 @@
               if (hasFractionalCoverage) {
                 // Fractional coverage: include position to prevent collisions
                 if (firstPage === lastPage) {
-                  key = `${level}_${x}_${y}_p${firstPage}_gen${this.cacheGeneration}`;
+                  key = `${level}_${x}_${y}_p${firstPage}`;
                 } else {
-                  key = `${level}_${x}_${y}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
+                  key = `${level}_${x}_${y}_p${firstPage}-${lastPage}`;
                 }
               } else {
                 // Clean coverage: pure page-range keys for maximum deduplication
                 if (firstPage === lastPage) {
-                  key = `${level}_p${firstPage}_gen${this.cacheGeneration}`;
+                  key = `${level}_p${firstPage}`;
                 } else {
-                  key = `${level}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
+                  key = `${level}_p${firstPage}-${lastPage}`;
                 }
               }
 
             } else {
               // Partial pages or page portions - use position to distinguish regions
-              key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
+              key = `${level}_${x}_${y}`;
             }
 
             // Periodicity diagnostic: track tile requests at minimap levels
@@ -1302,17 +1301,6 @@
             }
 
             return tileUrl;
-          }
-
-          /**
-           * Invalidate all cached tiles by incrementing generation number
-           * Call this after background rendering to force fresh tile generation
-           */
-          invalidateCache() {
-            this.cacheGeneration++;
-            this.checkedCanvases.clear(); // Reset canvas validation tracking
-            this._contextStateChecked = false; // Reset context state check flag
-            console.log(`[TileStreamer] Cache generation incremented to ${this.cacheGeneration} - all tiles invalidated`);
           }
 
           /**
@@ -1618,9 +1606,9 @@
             // }
 
             // Debug: Check tile context state before drawing (first draw only)
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && !this._contextStateChecked) {
+            if (CONFIG.DEBUG_MODE && level === 1 && !this._contextStateChecked) {
               this._contextStateChecked = true;
-              console.log(`[L1 gen1 Context] globalAlpha=${this.tileCtx.globalAlpha}, globalCompositeOperation=${this.tileCtx.globalCompositeOperation}, imageSmoothingEnabled=${this.tileCtx.imageSmoothingEnabled}`);
+              console.log(`[L1 Context] globalAlpha=${this.tileCtx.globalAlpha}, globalCompositeOperation=${this.tileCtx.globalCompositeOperation}, imageSmoothingEnabled=${this.tileCtx.imageSmoothingEnabled}`);
             }
 
             // Debug: Disabled per-draw bounds checking
@@ -2049,7 +2037,7 @@
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
               console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
               console.log(`  Navigator: shown immediately`);
-              console.log(`  Strategy: Progressive tile refresh (cache invalidated every 5 pages during background loading)`);
+              console.log(`  Strategy: Render all pages in background, then recreate viewer for complete grid`);
 
               // Phase 4: Background render remaining pages (sequential), then add navigator
               renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
@@ -2093,13 +2081,6 @@
               // Yield to browser every 5 pages to keep UI responsive
               if (pageNum % 5 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
-              }
-
-              // Progressive loading: Invalidate tile cache every 5 pages to trigger re-requests
-              if (pageNum % 5 === 0 && window.tileStreamerRef && window.osdViewerRef) {
-                window.tileStreamerRef.invalidateCache();
-                window.osdViewerRef.forceRedraw();
-                console.log(`[Background] Cache invalidated at ${pageNum}/${numPages} pages - tiles will progressively update`);
               }
 
               // Log progress periodically
@@ -2171,10 +2152,6 @@
                   console.log('[Background] Old TiledImage removed');
                 }
 
-                console.log('[Background] About to invalidate cache...');
-                // Invalidate cache for fresh tiles
-                window.tileStreamerRef.invalidateCache();
-                console.log('[Background] Cache invalidated successfully');
 
                 // Wait for cleanup
                 await new Promise(resolve => setTimeout(resolve, 50));
