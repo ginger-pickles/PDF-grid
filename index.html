@@ -73,12 +73,12 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.13',
+          VERSION: '1.8.14',
 
           // Debug
-          DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
+          DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
           DEBUG_TILES: false,  // Enable tile cache diagnostics logging
-          DEBUG_INITIAL_VIEW_WHOLE_GRID: true, // Show entire grid on load (true) or center on page 1 (false)
+          DEBUG_INITIAL_VIEW_WHOLE_GRID: false, // Show entire grid on load (true) or center on page 1 (false)
 
           // Auto-load
           AUTO_LOAD_PDF: 'demo-1.pdf', // Set to null to disable auto-load, or filename to try loading
@@ -1056,11 +1056,13 @@
             // Calculate minimap max level (low zoom levels use low-res)
             this.minimapMaxLevel = this.calculateMinimapMaxLevel();
 
-            // Tile canvas size matches tile grid size (NOT scaled by renderScale)
+            // Tile canvas size matches tile grid size plus overlap (NOT scaled by renderScale)
             // This keeps tile canvases small for memory efficiency
+            // 1-pixel overlap on all sides prevents hairline gaps
+            this.tileOverlap = 1;
             this.tileCanvas = document.createElement('canvas');
-            this.tileCanvas.width = Math.round(this.tileWidth);
-            this.tileCanvas.height = Math.round(this.tileHeight);
+            this.tileCanvas.width = Math.round(this.tileWidth + 2 * this.tileOverlap);
+            this.tileCanvas.height = Math.round(this.tileHeight + 2 * this.tileOverlap);
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
             console.log(`Tile size: ${this.tileWidth.toFixed(1)}×${this.tileHeight.toFixed(1)} (grid coords)`);
@@ -1179,6 +1181,7 @@
               tileSize: Math.max(this.tileWidth, this.tileHeight), // OSD requires tileSize for some calculations
               getTileWidth: () => this.tileWidth,
               getTileHeight: () => this.tileHeight,
+              tileOverlap: 1, // 1-pixel overlap to prevent hairline gaps from rounding errors
               minLevel: 0,
               maxLevel: this.maxLevel,
               getTileUrl: this.generateTile.bind(this)
@@ -1191,10 +1194,24 @@
           generateTile(level, x, y) {
             // Calculate which pages this tile needs
             const scale = Math.pow(2, level - this.maxLevel);
-            const tileLeft = x * this.tileWidth / scale;
-            const tileTop = y * this.tileHeight / scale;
-            const tileRight = Math.min(tileLeft + this.tileWidth / scale, this.gridDims.totalWidth);
-            const tileBottom = Math.min(tileTop + this.tileHeight / scale, this.gridDims.totalHeight);
+            const tileWidthInGrid = this.tileWidth / scale;
+            const tileHeightInGrid = this.tileHeight / scale;
+
+            // Base tile boundaries (for cache key calculation)
+            const tileLeft = x * tileWidthInGrid;
+            const tileTop = y * tileHeightInGrid;
+            const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
+            const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
+
+            // Extended boundaries with 1-pixel overlap to prevent hairline gaps
+            // Overlap in grid coordinates = pixel overlap / scale
+            // Don't extend beyond grid edges
+            const overlapPixels = 1;
+            const overlapInGrid = overlapPixels / scale;
+            const renderLeft = Math.max(0, tileLeft - overlapInGrid);
+            const renderTop = Math.max(0, tileTop - overlapInGrid);
+            const renderRight = Math.min(this.gridDims.totalWidth, tileRight + overlapInGrid);
+            const renderBottom = Math.min(this.gridDims.totalHeight, tileBottom + overlapInGrid);
 
             const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
 
@@ -1234,8 +1251,47 @@
               }
 
             } else {
-              // Partial pages or page portions - use position to distinguish regions
-              key = `${level}_${x}_${y}`;
+              // Partial pages or page portions at deep zoom
+              // If tile shows portion of a single page, use page-relative position for deduplication
+              if (neededPages.length === 1) {
+                const pageNum = neededPages[0];
+
+                // Find which occurrence of this page the tile intersects
+                // (pages can appear multiple times in staggered grid)
+                const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
+                let pageLeft = 0, pageTop = 0;
+                let found = false;
+
+                for (let row = 0; row < gridRows && !found; row++) {
+                  for (let col = 0; col < gridCols && !found; col++) {
+                    if (this.pattern[row][col] === pageNum) {
+                      const candidateLeft = col * (pageWidth + spacing);
+                      const candidateTop = row * (pageHeight + spacing);
+                      const candidateRight = candidateLeft + pageWidth;
+                      const candidateBottom = candidateTop + pageHeight;
+
+                      // Check if tile intersects this occurrence of the page
+                      if (!(tileRight <= candidateLeft || tileLeft >= candidateRight ||
+                            tileBottom <= candidateTop || tileTop >= candidateBottom)) {
+                        pageLeft = candidateLeft;
+                        pageTop = candidateTop;
+                        found = true;
+                      }
+                    }
+                  }
+                }
+
+                // Calculate tile index within this page (not pixel offset)
+                const tileWidthInGrid = this.tileWidth / scale;
+                const tileHeightInGrid = this.tileHeight / scale;
+                const tileIndexX = Math.floor((tileLeft - pageLeft) / tileWidthInGrid);
+                const tileIndexY = Math.floor((tileTop - pageTop) / tileHeightInGrid);
+
+                key = `${level}_p${pageNum}_x${tileIndexX}_y${tileIndexY}`;
+              } else {
+                // Multiple pages or complex intersection - use position
+                key = `${level}_${x}_${y}`;
+              }
             }
 
             // Periodicity diagnostic: track tile requests at minimap levels
@@ -1289,7 +1345,7 @@
             }
 
             // Render tile (will use fallback if needed)
-            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution);
+            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, renderLeft, renderTop, renderRight, renderBottom);
 
             // Cache the tile
             this.cache.set(key, tileUrl);
@@ -1385,14 +1441,10 @@
           /**
            * Render tile content
            */
-          _renderTile(level, x, y, scale, key, neededPages, resolution) {
+          _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
             const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
 
-            // Calculate tile boundaries in full-resolution grid coordinates
-            const tileLeft = x * this.tileWidth / scale;
-            const tileTop = y * this.tileHeight / scale;
-            const tileRight = Math.min(tileLeft + this.tileWidth / scale, totalWidth);
-            const tileBottom = Math.min(tileTop + this.tileHeight / scale, totalHeight);
+            // Tile boundaries passed in (with 1px overlap for seamless rendering)
 
             // Configure interpolation based on zoom level
             if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
