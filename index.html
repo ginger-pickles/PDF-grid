@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.4',
+          VERSION: '1.8.5',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1124,15 +1124,6 @@
            * Generate a tile at specified level and coordinates
            */
           generateTile(level, x, y) {
-            // Include cache generation in key to invalidate old cached tiles
-            const key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
-
-            // Check tile cache first
-            const cached = this.cache.get(key);
-            if (cached) {
-              return cached;
-            }
-
             // Calculate which pages this tile needs
             const scale = Math.pow(2, level - this.maxLevel);
             const tileLeft = x * this.tileWidth / scale;
@@ -1141,6 +1132,52 @@
             const tileBottom = Math.min(tileTop + this.tileHeight / scale, this.gridDims.totalHeight);
 
             const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+
+            // Two-tier cache key strategy:
+            // 1. Whole pages (one or more) → abbreviated page range (massive dedup)
+            // 2. Page portions → position (correctness for deep zoom)
+            let key;
+            const wholePagesLevel = this.maxLevel - Math.log2(CONFIG.PDF_RENDER_SCALE);
+
+            if (level <= wholePagesLevel && neededPages.length > 0) {
+              // Tile shows whole pages - use abbreviated page range for deduplication
+              // Works for minimap (many pages) and one-page level (single page)
+              const sortedPages = [...neededPages].sort((a, b) => a - b);
+              const firstPage = sortedPages[0];
+              const lastPage = sortedPages[sortedPages.length - 1];
+
+              if (firstPage === lastPage) {
+                // Single page
+                key = `${level}_p${firstPage}_gen${this.cacheGeneration}`;
+              } else {
+                // Multiple pages - use range notation
+                key = `${level}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
+              }
+            } else {
+              // Partial pages or page portions - use position to distinguish regions
+              key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
+            }
+
+            // Periodicity diagnostic: track tile requests at minimap levels
+            if (CONFIG.DEBUG_MODE && level <= this.minimapMaxLevel) {
+              const pageSignature = [...neededPages].sort((a, b) => a - b).join(',');
+              if (!this._periodicityStats) {
+                this._periodicityStats = new Map(); // pageSignature -> [{level, x, y}]
+              }
+              if (!this._periodicityStats.has(pageSignature)) {
+                this._periodicityStats.set(pageSignature, []);
+              }
+              this._periodicityStats.get(pageSignature).push({level, x, y});
+            }
+
+            // Check tile cache first
+            const cached = this.cache.get(key);
+            if (cached) {
+              if (CONFIG.DEBUG_MODE && level <= wholePagesLevel) {
+                console.log(`[Deduplication] Cache hit for L${level}(${x},${y}) using page range key [${key}]`);
+              }
+              return cached;
+            }
             const resolution = this._getResolutionForLevel(level);
 
             // Check if all needed pages are cached at desired resolution
@@ -1195,6 +1232,54 @@
           invalidateCache() {
             this.cacheGeneration++;
             console.log(`[TileStreamer] Cache generation incremented to ${this.cacheGeneration} - all tiles invalidated`);
+          }
+
+          /**
+           * Analyze and report tile periodicity patterns
+           * Shows deduplication efficiency with content-based caching
+           */
+          analyzePeriodicityPatterns() {
+            if (!this._periodicityStats || this._periodicityStats.size === 0) {
+              console.log('[Periodicity] No statistics collected. Enable DEBUG_MODE and zoom around minimap levels.');
+              return;
+            }
+
+            const duplicateSignatures = [];
+            let totalTileRequests = 0;
+            let actualGenerations = 0;
+
+            for (const [signature, positions] of this._periodicityStats.entries()) {
+              totalTileRequests += positions.length;
+              actualGenerations++; // Only one generation per unique signature
+              if (positions.length > 1) {
+                duplicateSignatures.push({signature, positions});
+              }
+            }
+
+            const savedGenerations = totalTileRequests - actualGenerations;
+            const savingsPercent = (100 * savedGenerations / totalTileRequests).toFixed(1);
+
+            console.log(`\n[Deduplication Analysis]`);
+            console.log(`Unique page combinations: ${this._periodicityStats.size}`);
+            console.log(`Total tile requests: ${totalTileRequests}`);
+            console.log(`Actual tiles generated: ${actualGenerations}`);
+            console.log(`Tiles served from cache: ${savedGenerations} (${savingsPercent}% savings)`);
+
+            if (duplicateSignatures.length > 0) {
+              console.log(`\nTop ${Math.min(5, duplicateSignatures.length)} deduplicated patterns:`);
+              duplicateSignatures
+                .sort((a, b) => b.positions.length - a.positions.length)
+                .slice(0, 5)
+                .forEach(({signature, positions}, i) => {
+                  const pages = signature || '(empty)';
+                  const requests = positions.length;
+                  const savings = requests - 1;
+                  console.log(`  ${i+1}. Pages [${pages}]: ${requests} requests, ${savings} saved`);
+                  console.log(`     Positions: ${positions.slice(0, 3).map(p => `L${p.level}(${p.x},${p.y})`).join(', ')}${positions.length > 3 ? '...' : ''}`);
+                });
+            }
+
+            console.log(`\nCache efficiency: ${actualGenerations}/${totalTileRequests} unique tiles cached`);
           }
 
           /**
@@ -1264,25 +1349,39 @@
               }
             }
 
-            // DEBUG: Draw 5px bright green border around tile and show level
+            // DEBUG: Draw 5px bright green border around tile and show level + cache key
             if (CONFIG.DEBUG_MODE) {
               this.tileCtx.strokeStyle = '#00FF00'; // Bright green
               this.tileCtx.lineWidth = 5;
               this.tileCtx.strokeRect(2.5, 2.5, this.tileCanvas.width - 5, this.tileCanvas.height - 5);
 
+              // Abbreviate key for display
+              let displayKey = key;
+              if (displayKey.length > 40) {
+                displayKey = displayKey.substring(0, 37) + '...';
+              }
+
               // Draw level number at center
-              this.tileCtx.font = 'bold 48px monospace';
+              this.tileCtx.font = 'bold 60px monospace';
               this.tileCtx.textAlign = 'center';
               this.tileCtx.textBaseline = 'middle';
 
               // Black outline for contrast
               this.tileCtx.strokeStyle = '#000000';
-              this.tileCtx.lineWidth = 4;
-              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2);
+              this.tileCtx.lineWidth = 5;
+              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 40);
 
               // White text
               this.tileCtx.fillStyle = '#FFFFFF';
-              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2);
+              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 40);
+
+              // Draw cache key below level
+              this.tileCtx.font = 'bold 32px monospace';
+              this.tileCtx.strokeStyle = '#000000';
+              this.tileCtx.lineWidth = 3;
+              this.tileCtx.strokeText(displayKey, this.tileCanvas.width / 2, this.tileCanvas.height / 2 + 40);
+              this.tileCtx.fillStyle = '#FFFF00'; // Yellow for key
+              this.tileCtx.fillText(displayKey, this.tileCanvas.width / 2, this.tileCanvas.height / 2 + 40);
             }
 
             // Convert to data URL
@@ -2072,6 +2171,10 @@
             );
             tileStreamerRef.current = tileStreamer;
             window.tileStreamerRef = tileStreamer; // Store globally for debugging
+
+            // Expose periodicity analysis function globally
+            window.analyzePeriodicityPatterns = () => tileStreamer.analyzePeriodicityPatterns();
+            console.log('Tip: Call analyzePeriodicityPatterns() from console to see tile deduplication opportunities');
 
             // Store grid dimensions globally for viewer recreation
             window.gridPageWidth = pageWidth;
