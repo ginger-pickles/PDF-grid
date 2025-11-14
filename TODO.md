@@ -25,6 +25,8 @@ Handle URL redirects properly - some PDF URLs redirect to different locations (e
 
 Debug and fix iPadOS Safari download behavior (requires automated testing) - Download PDF button currently saves to browser's Downloads manager instead of filesystem. Need to determine which code path executes (Web Share API vs fallback), verify iPadOS detection, and implement proper filesystem save dialog or share sheet.
 
+**Investigate solutions for sub-pixel hairline gaps between tiles** - Flickering hairline gaps (1px or sub-pixel) appear at tile boundaries across all zoom levels. Root cause: OpenSeadragon positions tiles at fractional pixel coordinates (e.g., 100.73px), forcing browser sub-pixel rendering that rounds differently per frame. Attempted solutions that failed: (1) Tile overlap (1-4px) - OSD's tileOverlap doesn't prevent browser rounding gaps, (2) Edge feathering with alpha transparency - created wider visible gaps by exposing background, (3) CSS tricks (backface-visibility, transform: translateZ(0), image-rendering) - minimal effect. This is a known issue in tile-based viewers (Google Maps, Leaflet). Research: (a) OpenSeadragon pixel-snapping configuration options, (b) Alternative rendering approaches (single-canvas compositing vs DOM tiles), (c) Shader-based solutions, (d) Whether this is acceptable as documented limitation. See v1.8.14 for overlap implementation attempts.
+
 
 ## PERFORMANCE
 

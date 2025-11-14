@@ -58,6 +58,31 @@
             image-rendering: crisp-edges;           /* Standard */
             -ms-interpolation-mode: nearest-neighbor; /* IE */
         }
+
+        /* Prevent sub-pixel rendering gaps between tiles */
+        #openseadragon-viewer,
+        .openseadragon-canvas {
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+            transform: translateZ(0);
+            -webkit-transform: translateZ(0);
+            will-change: transform;
+        }
+
+        .openseadragon-canvas img,
+        .openseadragon-canvas canvas {
+            display: block;
+            outline: 1px solid transparent; /* Force pixel snapping */
+            transform: translate3d(0,0,0);
+            image-rendering: optimizeSpeed;
+            image-rendering: -webkit-optimize-contrast;
+        }
+
+        /* Disable anti-aliasing on the canvas container */
+        .openseadragon-canvas {
+            image-rendering: pixelated;
+            -ms-interpolation-mode: nearest-neighbor;
+        }
     </style>
 </head>
 <body>
@@ -1056,10 +1081,11 @@
             // Calculate minimap max level (low zoom levels use low-res)
             this.minimapMaxLevel = this.calculateMinimapMaxLevel();
 
-            // Tile canvas size matches tile grid size plus overlap (NOT scaled by renderScale)
+            // Tile canvas size matches tile grid size (NOT scaled by renderScale)
             // This keeps tile canvases small for memory efficiency
-            // 1-pixel overlap on all sides prevents hairline gaps
-            this.tileOverlap = 1;
+            // Note: Sub-pixel gaps between tiles are a browser rendering artifact
+            // caused by fractional pixel positioning in OSD viewport transforms
+            this.tileOverlap = 0;
             this.tileCanvas = document.createElement('canvas');
             this.tileCanvas.width = Math.round(this.tileWidth + 2 * this.tileOverlap);
             this.tileCanvas.height = Math.round(this.tileHeight + 2 * this.tileOverlap);
@@ -1178,10 +1204,10 @@
             return {
               height: this.gridDims.totalHeight,
               width: this.gridDims.totalWidth,
-              tileSize: Math.max(this.tileWidth, this.tileHeight), // OSD requires tileSize for some calculations
+              tileSize: Math.max(this.tileWidth, this.tileHeight),
               getTileWidth: () => this.tileWidth,
               getTileHeight: () => this.tileHeight,
-              tileOverlap: 1, // 1-pixel overlap to prevent hairline gaps from rounding errors
+              tileOverlap: this.tileOverlap,
               minLevel: 0,
               maxLevel: this.maxLevel,
               getTileUrl: this.generateTile.bind(this)
@@ -1197,22 +1223,13 @@
             const tileWidthInGrid = this.tileWidth / scale;
             const tileHeightInGrid = this.tileHeight / scale;
 
-            // Base tile boundaries (for cache key calculation)
+            // Tile boundaries in grid coordinates
             const tileLeft = x * tileWidthInGrid;
             const tileTop = y * tileHeightInGrid;
             const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
             const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
 
-            // Extended boundaries with 1-pixel overlap to prevent hairline gaps
-            // Overlap in grid coordinates = pixel overlap / scale
-            // Don't extend beyond grid edges
-            const overlapPixels = 1;
-            const overlapInGrid = overlapPixels / scale;
-            const renderLeft = Math.max(0, tileLeft - overlapInGrid);
-            const renderTop = Math.max(0, tileTop - overlapInGrid);
-            const renderRight = Math.min(this.gridDims.totalWidth, tileRight + overlapInGrid);
-            const renderBottom = Math.min(this.gridDims.totalHeight, tileBottom + overlapInGrid);
-
+            // Calculate which pages this tile intersects
             const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
 
             // Two-tier cache key strategy:
@@ -1345,7 +1362,7 @@
             }
 
             // Render tile (will use fallback if needed)
-            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, renderLeft, renderTop, renderRight, renderBottom);
+            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom);
 
             // Cache the tile
             this.cache.set(key, tileUrl);
@@ -1444,7 +1461,7 @@
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
             const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
 
-            // Tile boundaries passed in (with 1px overlap for seamless rendering)
+            // Tile boundaries in grid coordinates
 
             // Configure interpolation based on zoom level
             if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
@@ -1473,11 +1490,37 @@
             }
 
 
-            // DEBUG: Draw 5px bright green border around tile and show level + cache key
+            // DEBUG: Draw colored borders on each edge to verify overlap
             if (CONFIG.DEBUG_MODE) {
-              this.tileCtx.strokeStyle = '#00FF00'; // Bright green
-              this.tileCtx.lineWidth = 5;
-              this.tileCtx.strokeRect(2.5, 2.5, this.tileCanvas.width - 5, this.tileCanvas.height - 5);
+              this.tileCtx.lineWidth = 3;
+
+              // Top edge - RED
+              this.tileCtx.strokeStyle = '#FF0000';
+              this.tileCtx.beginPath();
+              this.tileCtx.moveTo(0, 1.5);
+              this.tileCtx.lineTo(this.tileCanvas.width, 1.5);
+              this.tileCtx.stroke();
+
+              // Right edge - GREEN
+              this.tileCtx.strokeStyle = '#00FF00';
+              this.tileCtx.beginPath();
+              this.tileCtx.moveTo(this.tileCanvas.width - 1.5, 0);
+              this.tileCtx.lineTo(this.tileCanvas.width - 1.5, this.tileCanvas.height);
+              this.tileCtx.stroke();
+
+              // Bottom edge - BLUE
+              this.tileCtx.strokeStyle = '#0000FF';
+              this.tileCtx.beginPath();
+              this.tileCtx.moveTo(0, this.tileCanvas.height - 1.5);
+              this.tileCtx.lineTo(this.tileCanvas.width, this.tileCanvas.height - 1.5);
+              this.tileCtx.stroke();
+
+              // Left edge - YELLOW
+              this.tileCtx.strokeStyle = '#FFFF00';
+              this.tileCtx.beginPath();
+              this.tileCtx.moveTo(1.5, 0);
+              this.tileCtx.lineTo(1.5, this.tileCanvas.height);
+              this.tileCtx.stroke();
 
               // Draw level number at center
               this.tileCtx.font = 'bold 60px monospace';
