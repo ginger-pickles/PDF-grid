@@ -47,42 +47,8 @@
                 height: 200px !important;
             }
         }
-        /* Control browser image rendering - disable smoothing for crisp pixels */
-        #openseadragon-viewer canvas,
-        #openseadragon-viewer img,
-        .openseadragon-canvas canvas,
-        .openseadragon-canvas img {
-            image-rendering: -moz-crisp-edges;      /* Firefox */
-            image-rendering: -webkit-crisp-edges;   /* Safari */
-            image-rendering: pixelated;             /* Chrome */
-            image-rendering: crisp-edges;           /* Standard */
-            -ms-interpolation-mode: nearest-neighbor; /* IE */
-        }
-
-        /* Prevent sub-pixel rendering gaps between tiles */
-        #openseadragon-viewer,
-        .openseadragon-canvas {
-            backface-visibility: hidden;
-            -webkit-backface-visibility: hidden;
-            transform: translateZ(0);
-            -webkit-transform: translateZ(0);
-            will-change: transform;
-        }
-
-        .openseadragon-canvas img,
-        .openseadragon-canvas canvas {
-            display: block;
-            outline: 1px solid transparent; /* Force pixel snapping */
-            transform: translate3d(0,0,0);
-            image-rendering: optimizeSpeed;
-            image-rendering: -webkit-optimize-contrast;
-        }
-
-        /* Disable anti-aliasing on the canvas container */
-        .openseadragon-canvas {
-            image-rendering: pixelated;
-            -ms-interpolation-mode: nearest-neighbor;
-        }
+        /* Let browser handle image rendering naturally - no forced overrides
+           Our canvas code controls smoothing at the tile generation level */
     </style>
 </head>
 <body>
