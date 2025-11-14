@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.12',
+          VERSION: '1.8.13',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1206,32 +1206,25 @@
 
             if (level <= wholePagesLevel && neededPages.length > 0) {
               // Tile shows whole pages - use page-range keys for deduplication
-              // Special case: add position for levels with fractional tile coverage to prevent collisions
+              // Edge tiles get "_edge" marker to prevent collisions with interior tiles
               const sortedPages = [...neededPages].sort((a, b) => a - b);
               const firstPage = sortedPages[0];
               const lastPage = sortedPages[sortedPages.length - 1];
 
-              // Detect fractional tile coverage: at these levels, grid doesn't fit evenly into tiles
-              // This causes cache collisions where tiles at different positions share page ranges
-              // but have different actual content (e.g., L1 with 2x2 tiles covering 12x12 grid)
+              // Detect edge tiles: tiles at the boundary of the grid that may have partial/irregular content
+              // These need disambiguation from interior tiles that might share the same page range
               const tilesWide = Math.ceil(this.gridDims.totalWidth / (this.tileWidth / scale));
               const tilesHigh = Math.ceil(this.gridDims.totalHeight / (this.tileHeight / scale));
-              const hasFractionalCoverage = (tilesWide <= 3 || tilesHigh <= 3);
+              const isEdgeTile = (x >= tilesWide - 1) || (y >= tilesHigh - 1);
 
-              if (hasFractionalCoverage) {
-                // Fractional coverage: include position to prevent collisions
-                if (firstPage === lastPage) {
-                  key = `${level}_${x}_${y}_p${firstPage}`;
-                } else {
-                  key = `${level}_${x}_${y}_p${firstPage}-${lastPage}`;
-                }
+              const pageRange = firstPage === lastPage ? `p${firstPage}` : `p${firstPage}-${lastPage}`;
+
+              if (isEdgeTile) {
+                // Edge tile: add marker to prevent collisions with interior tiles
+                key = `${level}_edge_${pageRange}`;
               } else {
-                // Clean coverage: pure page-range keys for maximum deduplication
-                if (firstPage === lastPage) {
-                  key = `${level}_p${firstPage}`;
-                } else {
-                  key = `${level}_p${firstPage}-${lastPage}`;
-                }
+                // Interior tile: pure page-range key for maximum deduplication
+                key = `${level}_${pageRange}`;
               }
 
             } else {
@@ -1443,9 +1436,9 @@
               this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 100);
 
               // Draw cache key below level, wrapped across multiple lines
-              this.tileCtx.font = 'bold 24px monospace';
+              this.tileCtx.font = 'bold 48px monospace';
               const maxWidth = this.tileCanvas.width - 20; // Leave 10px margin on each side
-              const lineHeight = 28;
+              const lineHeight = 56;
 
               // Split key into words/chunks at underscores
               const chunks = key.split('_');
@@ -1469,7 +1462,7 @@
               // Draw each line
               const startY = this.tileCanvas.height / 2 - 20;
               this.tileCtx.strokeStyle = '#000000';
-              this.tileCtx.lineWidth = 3;
+              this.tileCtx.lineWidth = 6;
 
               lines.forEach((line, i) => {
                 const y = startY + (i * lineHeight);
