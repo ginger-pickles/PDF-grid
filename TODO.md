@@ -60,7 +60,7 @@ Incorporate external libraries somehow rather than pulling from whereever they c
 
 ## FUNCTIONALITY
 
-Grid layout of small even-numbered files is not wrong, but not right. Fixable but not critical.
+**Improve grid layout for even-numbered page counts** - Current staggered diagonal pattern creates aesthetically unbalanced layouts for even-page PDFs, especially with small page counts. Example: 4-page PDF has heavy blank space in upper-left and ends with partial row containing trailing blank. Consider: (1) Add extra row at bottom to balance the layout, (2) Shift entire pattern one row up to reduce top blanks, (3) Use different pattern formula for even N vs odd N, (4) Special cases for common sizes (2-page already handled in v1.8.8, consider 4-page, 6-page, 8-page). Goal: More visually balanced grid that doesn't feel "incomplete" or top-heavy. Not critical but affects polish and user experience with shorter documents.
 
 Support annotating PDFs (long horizon)
 
