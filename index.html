@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.11',
+          VERSION: '1.8.12',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -2144,6 +2144,11 @@
                 const currentZoom = viewer.viewport.getZoom();
                 const currentCenter = viewer.viewport.getCenter();
 
+                // Clear tile cache so new TiledImage gets fresh tiles with all pages
+                console.log('[Background] Clearing tile cache for fresh regeneration...');
+                window.tileStreamerRef.cache.clear();
+                console.log('[Background] Tile cache cleared');
+
                 console.log('[Background] About to remove old TiledImage...');
                 // Remove old TiledImage
                 const oldTiledImage = viewer.world.getItemAt(0);
@@ -2151,7 +2156,6 @@
                   viewer.world.removeItem(oldTiledImage);
                   console.log('[Background] Old TiledImage removed');
                 }
-
 
                 // Wait for cleanup
                 await new Promise(resolve => setTimeout(resolve, 50));
