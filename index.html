@@ -124,8 +124,8 @@
           DEFAULT_TILE_SIZE: 512,
           MIN_TILE_SIZE: 512,
           TILE_SIZE_MULTIPLIER: 256,
-          TILE_FORMAT: 'png',        // 'jpeg' or 'png' - PNG is lossless but larger
-          TILE_JPEG_QUALITY: 0.85,   // Only used if TILE_FORMAT is 'jpeg'
+          TILE_FORMAT: 'jpeg',       // 'jpeg' or 'png' - JPEG avoids sub-pixel gaps issue
+          TILE_JPEG_QUALITY: 0.92,   // High quality to minimize compression artifacts
 
           // Canvas Interpolation (affects tile compositing quality)
           // At low zoom: smoothing helps blend minimap
@@ -1083,9 +1083,8 @@
 
             // Tile canvas size matches tile grid size (NOT scaled by renderScale)
             // This keeps tile canvases small for memory efficiency
-            // Note: Sub-pixel gaps between tiles are a browser rendering artifact
-            // caused by fractional pixel positioning in OSD viewport transforms
-            this.tileOverlap = 0;
+            // 1-pixel overlap helps on some browsers (iOS Safari) where subPixelRoundingForTransparency isn't enough
+            this.tileOverlap = 1;
             this.tileCanvas = document.createElement('canvas');
             this.tileCanvas.width = Math.round(this.tileWidth + 2 * this.tileOverlap);
             this.tileCanvas.height = Math.round(this.tileHeight + 2 * this.tileOverlap);
@@ -1223,14 +1222,21 @@
             const tileWidthInGrid = this.tileWidth / scale;
             const tileHeightInGrid = this.tileHeight / scale;
 
-            // Tile boundaries in grid coordinates
+            // Base tile boundaries (for cache keys)
             const tileLeft = x * tileWidthInGrid;
             const tileTop = y * tileHeightInGrid;
             const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
             const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
 
-            // Calculate which pages this tile intersects
-            const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+            // Extended boundaries with overlap for rendering (helps iOS Safari)
+            const overlapInGrid = this.tileOverlap / scale;
+            const renderLeft = tileLeft - overlapInGrid;
+            const renderTop = tileTop - overlapInGrid;
+            const renderRight = tileRight + overlapInGrid;
+            const renderBottom = tileBottom + overlapInGrid;
+
+            // Calculate which pages this tile intersects (use extended boundaries for rendering)
+            const neededPages = this._calculateIntersectingPages(renderLeft, renderTop, renderRight, renderBottom);
 
             // Two-tier cache key strategy:
             // 1. Whole pages → page-range keys (max dedup), with position for fractional tile levels
@@ -1361,8 +1367,8 @@
               this._requestPagesAsync(neededPages, 'high');
             }
 
-            // Render tile (will use fallback if needed)
-            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom);
+            // Render tile (will use fallback if needed) - pass extended boundaries for overlap
+            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, renderLeft, renderTop, renderRight, renderBottom);
 
             // Cache the tile
             this.cache.set(key, tileUrl);
@@ -1461,7 +1467,7 @@
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
             const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
 
-            // Tile boundaries in grid coordinates
+            // Tile boundaries (extended with overlap) in grid coordinates
 
             // Configure interpolation based on zoom level
             if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
@@ -1810,7 +1816,10 @@
                 flickEnabled: true,
                 flickMinSpeed: 0.5,
                 flickMomentum: 0.25
-              }
+              },
+              // Reduce sub-pixel rounding artifacts between tiles
+              // See: https://github.com/openseadragon/openseadragon/issues/2515
+              subPixelRoundingForTransparency: 2
             };
 
             // Only set minZoomLevel if specified
@@ -1822,6 +1831,11 @@
 
             // Set initial view (switchable via DEBUG_INITIAL_VIEW_WHOLE_GRID)
             viewer.addHandler('open', function() {
+              // Workaround for sub-pixel gaps with PNG tiles
+              // Tell OSD our tiles don't have transparency to avoid transparency rendering artifacts
+              // See: https://github.com/openseadragon/openseadragon/issues/2515
+              viewer.world.getItemAt(0).source.hasTransparency = () => false;
+
               if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
                 // Debug mode: Show the entire grid at once (fills ~90% of viewport per minZoomImageRatio)
                 viewer.viewport.goHome(true);
