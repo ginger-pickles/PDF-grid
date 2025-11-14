@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.7',
+          VERSION: '1.8.8',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -549,7 +549,16 @@
            */
           generate(totalPages, cols) {
             const pattern = [];
-            const N = totalPages; // N×N grid
+
+            // Special case: 2-page PDFs use 2×3 grid for better layout
+            if (totalPages === 2) {
+              pattern.push([0, 1, 2]);  // Row 0: blank, page 1, page 2
+              pattern.push([1, 2, 0]);  // Row 1: page 1, page 2, blank
+              return pattern;
+            }
+
+            // General case: N×N grid with diagonal band pattern
+            const N = totalPages;
             const halfN = Math.floor(N / 2);
 
             for (let row = 0; row < N; row++) {
@@ -577,15 +586,21 @@
           /**
            * Calculate grid dimensions
            */
-          calculateDimensions(numPages, pageWidth, pageHeight) {
-            const gridSize = numPages;
+          calculateDimensions(numPages, pageWidth, pageHeight, pattern) {
+            const gridSize = numPages; // Keep for backward compatibility
             const spacing = Math.floor(pageWidth * CONFIG.GRID_SPACING_RATIO);
 
-            const totalWidth = gridSize * pageWidth + (gridSize - 1) * spacing;
-            const totalHeight = gridSize * pageHeight + (gridSize - 1) * spacing;
+            // Use actual pattern dimensions (handles 2-page special case: 2×3 grid)
+            const gridRows = pattern.length;
+            const gridCols = pattern[0].length;
+
+            const totalWidth = gridCols * pageWidth + (gridCols - 1) * spacing;
+            const totalHeight = gridRows * pageHeight + (gridRows - 1) * spacing;
 
             return {
-              gridSize,
+              gridSize,      // Legacy: equals numPages
+              gridRows,      // Actual rows in pattern
+              gridCols,      // Actual columns in pattern
               spacing,
               totalWidth,
               totalHeight,
@@ -600,13 +615,13 @@
            */
           calculateInitialViewportPages(totalPages, pageWidth, pageHeight) {
             const pattern = this.generate(totalPages, totalPages);
-            const gridDims = this.calculateDimensions(totalPages, pageWidth, pageHeight);
-            const { spacing, gridSize } = gridDims;
+            const gridDims = this.calculateDimensions(totalPages, pageWidth, pageHeight, pattern);
+            const { spacing, gridRows, gridCols } = gridDims;
 
             // Find page 1 position in grid
             let page1Row = -1, page1Col = -1;
-            for (let row = 0; row < gridSize; row++) {
-              for (let col = 0; col < gridSize; col++) {
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
                 if (pattern[row][col] === 1) {
                   page1Row = row;
                   page1Col = col;
@@ -638,8 +653,8 @@
 
             // Find all pages that intersect with expanded viewport
             const viewportPages = new Set();
-            for (let row = 0; row < gridSize; row++) {
-              for (let col = 0; col < gridSize; col++) {
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
                 const pageNum = pattern[row][col];
                 if (pageNum === 0) continue;
 
@@ -1071,11 +1086,11 @@
            * Returns array of page numbers
            */
           _calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom) {
-            const { pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+            const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
             const intersectingPages = new Set(); // Use Set to avoid duplicates
 
-            for (let row = 0; row < gridSize; row++) {
-              for (let col = 0; col < gridSize; col++) {
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
                 const pageNum = this.pattern[row][col];
 
                 // Skip blank cells
@@ -1113,15 +1128,15 @@
           _generateTileFingerprint(neededPages, tileLeft, tileTop) {
             if (neededPages.length === 0) return 'empty';
 
-            const { pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+            const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
             const pagePositions = [];
 
             // For each needed page, find its grid position and calculate relative offset
             for (const pageNum of neededPages) {
               // Find (row, col) for this pageNum in the pattern
               let row = -1, col = -1;
-              for (let r = 0; r < gridSize; r++) {
-                for (let c = 0; c < gridSize; c++) {
+              for (let r = 0; r < gridRows; r++) {
+                for (let c = 0; c < gridCols; c++) {
                   if (this.pattern[r][c] === pageNum) {
                     row = r;
                     col = c;
@@ -1195,6 +1210,12 @@
               // Tiles with identical page arrangements get the same key regardless of position
               const fingerprint = this._generateTileFingerprint(neededPages, tileLeft, tileTop);
               key = `${level}_${fingerprint}_gen${this.cacheGeneration}`;
+
+              // Debug: Log fingerprint details for minimap tiles to identify dedup issues
+              if (CONFIG.DEBUG_MODE && level <= 1) {
+                const sortedPages = [...neededPages].sort((a, b) => a - b);
+                console.log(`[Fingerprint] L${level}(${x},${y}): pages=[${sortedPages.join(',')}], tilePos=(${tileLeft.toFixed(0)},${tileTop.toFixed(0)}), fp="${fingerprint.substring(0, 50)}..."`);
+              }
             } else {
               // Partial pages or page portions - use position to distinguish regions
               key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
@@ -1362,7 +1383,7 @@
            * Render tile content
            */
           _renderTile(level, x, y, scale, key, neededPages, resolution) {
-            const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+            const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
 
             // Calculate tile boundaries in full-resolution grid coordinates
             const tileLeft = x * this.tileWidth / scale;
@@ -1389,8 +1410,8 @@
             // Draw portions of pages that intersect this tile
             let pagesDrawnCount = 0;
 
-            for (let row = 0; row < gridSize; row++) {
-              for (let col = 0; col < gridSize; col++) {
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
                 const wasDrawn = this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution, level);
                 if (wasDrawn) pagesDrawnCount++;
               }
@@ -1403,12 +1424,6 @@
               this.tileCtx.lineWidth = 5;
               this.tileCtx.strokeRect(2.5, 2.5, this.tileCanvas.width - 5, this.tileCanvas.height - 5);
 
-              // Abbreviate key for display
-              let displayKey = key;
-              if (displayKey.length > 40) {
-                displayKey = displayKey.substring(0, 37) + '...';
-              }
-
               // Draw level number at center
               this.tileCtx.font = 'bold 60px monospace';
               this.tileCtx.textAlign = 'center';
@@ -1417,19 +1432,47 @@
               // Black outline for contrast
               this.tileCtx.strokeStyle = '#000000';
               this.tileCtx.lineWidth = 5;
-              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 40);
+              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 100);
 
               // White text
               this.tileCtx.fillStyle = '#FFFFFF';
-              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 40);
+              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 100);
 
-              // Draw cache key below level
-              this.tileCtx.font = 'bold 32px monospace';
+              // Draw cache key below level, wrapped across multiple lines
+              this.tileCtx.font = 'bold 24px monospace';
+              const maxWidth = this.tileCanvas.width - 20; // Leave 10px margin on each side
+              const lineHeight = 28;
+
+              // Split key into words/chunks at underscores
+              const chunks = key.split('_');
+              const lines = [];
+              let currentLine = '';
+
+              for (const chunk of chunks) {
+                const testLine = currentLine ? currentLine + '_' + chunk : chunk;
+                const metrics = this.tileCtx.measureText(testLine);
+
+                if (metrics.width > maxWidth && currentLine) {
+                  // Line is too long, save current line and start new one
+                  lines.push(currentLine);
+                  currentLine = chunk;
+                } else {
+                  currentLine = testLine;
+                }
+              }
+              if (currentLine) lines.push(currentLine);
+
+              // Draw each line
+              const startY = this.tileCanvas.height / 2 - 20;
               this.tileCtx.strokeStyle = '#000000';
               this.tileCtx.lineWidth = 3;
-              this.tileCtx.strokeText(displayKey, this.tileCanvas.width / 2, this.tileCanvas.height / 2 + 40);
-              this.tileCtx.fillStyle = '#FFFF00'; // Yellow for key
-              this.tileCtx.fillText(displayKey, this.tileCanvas.width / 2, this.tileCanvas.height / 2 + 40);
+
+              lines.forEach((line, i) => {
+                const y = startY + (i * lineHeight);
+                this.tileCtx.strokeText(line, this.tileCanvas.width / 2, y);
+                this.tileCtx.fillStyle = '#FFFF00'; // Yellow for key
+                this.tileCtx.fillText(line, this.tileCanvas.width / 2, y);
+              });
             }
 
             // Convert to data URL
@@ -2289,9 +2332,9 @@
 
             // Generate grid pattern and dimensions
             const pattern = GridPattern.generate(numPages, numPages);
-            const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight);
+            const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight, pattern);
 
-            console.log(`Grid: ${gridDims.gridSize}×${gridDims.gridSize} pages, ${pageWidth}x${pageHeight}px each, Total: ${gridDims.totalWidth}x${gridDims.totalHeight}px`);
+            console.log(`Grid: ${gridDims.gridRows}×${gridDims.gridCols} pages, ${pageWidth}x${pageHeight}px each, Total: ${gridDims.totalWidth}x${gridDims.totalHeight}px`);
 
             // Create tile streamer with PageStreamer
             const pageStreamer = window.pageStreamerRef;
