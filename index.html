@@ -102,7 +102,8 @@
           IMAGE_SMOOTHING_THRESHOLD_LEVEL: 4,  // Level at which to switch from smooth to crisp
 
           // Caching
-          MAX_CACHE_SIZE: 300,
+          MAX_CACHE_SIZE: 300,           // Max tiles in TileCache (LRU eviction)
+          PAGE_CACHE_MAX_SIZE: 100,      // Max pages in PageCache (LRU eviction) - helps prevent iOS Safari crashes
 
           // Performance
           RENDER_BATCH_SIZE: 5, // Yield to browser every N pages
@@ -118,7 +119,7 @@
           STORAGE_EXPIRY_DAYS: 7, // Auto-delete stored local PDFs after N days
 
           // UI
-          BACKGROUND_COLOR: '#ffffff'  // White to prevent dark antialiasing halos at tile edges
+          BACKGROUND_COLOR: '#1f2937'
         };
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -394,14 +395,78 @@
         // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
-         * PageStreamer: Manages on-demand page rendering with caching
+         * LRU cache for rendered page canvases
+         * Tracks access patterns to keep frequently-used pages in cache
+         * Evicts least recently used pages when full
+         * Similar to TileCache but for full-page canvases
+         */
+        class PageCache {
+          constructor(maxSize = CONFIG.PAGE_CACHE_MAX_SIZE) {
+            this.cache = new Map();
+            this.maxSize = maxSize;
+          }
+
+          get(key) {
+            const value = this.cache.get(key);
+            if (value) {
+              // LRU: Move to end (most recently used)
+              this.cache.delete(key);
+              this.cache.set(key, value);
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[PageCache] HIT: ${key}`);
+              }
+            } else if (CONFIG.DEBUG_TILES) {
+              console.log(`[PageCache] MISS: ${key}`);
+            }
+            return value || null;
+          }
+
+          set(key, value) {
+            // LRU: If key exists, delete it first to move to end
+            const isUpdate = this.cache.has(key);
+            if (isUpdate) {
+              this.cache.delete(key);
+            } else if (this.cache.size >= this.maxSize) {
+              // Remove least recently used (first in Map)
+              const firstKey = this.cache.keys().next().value;
+              if (CONFIG.DEBUG_TILES) {
+                console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
+              }
+              this.cache.delete(firstKey);
+            }
+            this.cache.set(key, value);
+            if (CONFIG.DEBUG_TILES) {
+              const action = isUpdate ? 'UPDATE' : 'ADD';
+              console.log(`[PageCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
+            }
+          }
+
+          has(key) {
+            return this.cache.has(key);
+          }
+
+          get size() {
+            return this.cache.size;
+          }
+
+          keys() {
+            return this.cache.keys();
+          }
+
+          clear() {
+            this.cache.clear();
+          }
+        }
+
+        /**
+         * PageStreamer: Manages on-demand page rendering with LRU caching
          * Sits between PDF.js and TileStreamer
          * Handles parallel batch rendering and page-level caching
          */
         class PageStreamer {
           constructor(pdfDoc) {
             this.pdfDoc = pdfDoc;
-            this.pageCache = new Map(); // Key: "pageNum_resolution" → canvas
+            this.pageCache = new PageCache(); // LRU cache: "pageNum_resolution" → canvas
             this.renderingInProgress = new Map(); // Key: "pageNum_resolution" → Promise
           }
 
@@ -1795,6 +1860,9 @@
 
             const viewer = OpenSeadragon(viewerConfig);
 
+            // Expose viewer globally for automated testing
+            window.viewer = viewer;
+
             // Set initial view (switchable via DEBUG_INITIAL_VIEW_WHOLE_GRID)
             viewer.addHandler('open', function() {
               // Workaround for sub-pixel gaps with PNG tiles
@@ -2431,6 +2499,40 @@
             const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize, showNavigator);
             osdViewerRef.current = viewer;
             window.osdViewerRef = viewer; // Store globally for async tile updates
+
+            // Expose diagnostics API for automated testing
+            window.__PDFGridDiagnostics = {
+              getPageCacheSize: () => pageStreamer?.pageCache.size || 0,
+              getTileCacheSize: () => tileStreamer?.cache.cache.size || 0,
+              getCacheStats: () => {
+                const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
+                return {
+                  pages: {
+                    low: pageStats.low,
+                    high: pageStats.high,
+                    total: pageStats.low + pageStats.high
+                  },
+                  tiles: tileStreamer?.cache.cache.size || 0
+                };
+              },
+              getCurrentZoom: () => viewer?.viewport?.getZoom() || 0,
+              getMemoryEstimate: () => {
+                const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
+                const totalPages = pageStats.low + pageStats.high;
+                // Rough estimate: avg 500KB per low-res, 2MB per high-res canvas
+                const estimatedMB = (pageStats.low * 0.5 + pageStats.high * 2).toFixed(1);
+                return {
+                  pages: totalPages,
+                  estimatedMB: parseFloat(estimatedMB),
+                  warning: totalPages > 200 ? 'High memory usage' : null
+                };
+              },
+              clearCaches: () => {
+                pageStreamer?.clear();
+                tileStreamer?.cache.clear();
+                return 'Caches cleared';
+              }
+            };
           };
 
           const initializeViewerWithNavigator = (numPages, pageWidth, pageHeight) => {

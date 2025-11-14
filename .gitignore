@@ -1,0 +1,7 @@
+test-report.html
+node_modules/
+playwright-report/
+test-results/
+
+# Test PDFs
+*.pdf
