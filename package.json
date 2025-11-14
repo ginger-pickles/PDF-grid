@@ -6,10 +6,10 @@
   "scripts": {
     "test:clean": "rm -rf playwright-report",
     "test:clean:all": "rm -rf playwright-report test-results",
-    "pretest": "npm run test:clean",
+    "pretest": "npm run test:clean:all",
     "test": "playwright test",
     "posttest": "ln -sf playwright-report/index.html test-report.html",
-    "pretest:headed": "npm run test:clean",
+    "pretest:headed": "npm run test:clean:all",
     "test:headed": "playwright test --headed",
     "posttest:headed": "ln -sf playwright-report/index.html test-report.html",
     "test:ui": "playwright test --ui",
