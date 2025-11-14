@@ -66,14 +66,14 @@
     <script type="text/babel">
         const { useState, useRef } = React;
 
-        // ============================================================================
-        // CONFIGURATION
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                             CONFIGURATION                                ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.3',
+          VERSION: '1.8.4',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -129,9 +129,9 @@
           BACKGROUND_COLOR: '#1f2937'
         };
 
-        // ============================================================================
-        // ERROR CODES
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                              ERROR CODES                                 ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         const ErrorCodes = {
           // File errors
@@ -167,10 +167,14 @@
           }
         };
 
-        // ============================================================================
-        // PDF UTILITIES MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                          PDF UTILITIES MODULE                            ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
+        /**
+         * PDF.js wrapper utilities for rendering and manipulation
+         * Handles worker initialization, file loading, and canvas rendering
+         */
         const PDFUtils = {
           /**
            * Initialize PDF.js worker
@@ -393,9 +397,9 @@
           }
         };
 
-        // ============================================================================
-        // PAGE STREAMER MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                          PAGE STREAMER MODULE                            ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
          * PageStreamer: Manages on-demand page rendering with caching
@@ -520,10 +524,15 @@
           }
         }
 
-        // ============================================================================
-        // GRID PATTERN MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                          GRID PATTERN MODULE                             ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
+        /**
+         * Staggered diagonal grid layout generator
+         * Creates N×N grid with rotating diagonal band pattern
+         * Spatial periodicity enables tile deduplication opportunities
+         */
         const GridPattern = {
           /**
            * Generate staggered grid pattern
@@ -664,9 +673,9 @@
           }
         };
 
-        // ============================================================================
-        // URL AND HISTORY MANAGER MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                     URL AND HISTORY MANAGER MODULE                       ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
          * Manages URL parameters and browser history for PDF loading
@@ -742,9 +751,9 @@
           }
         };
 
-        // ============================================================================
-        // TILE CACHE MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                           TILE CACHE MODULE                              ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
          * LRU cache for tile data URLs
@@ -805,9 +814,9 @@
           }
         }
 
-        // ============================================================================
-        // PDF STORAGE MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                          PDF STORAGE MODULE                              ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
          * Hybrid storage for local PDF persistence across page refreshes
@@ -994,10 +1003,17 @@
           }
         };
 
-        // ============================================================================
-        // TILE STREAMER MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                          TILE STREAMER MODULE                            ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
+        /**
+         * TileStreamer: Generates tiles on-demand for OpenSeadragon deep zoom
+         * Manages tile pyramid with power-of-2 level scaling
+         * Handles rectangular tiles sized to (page+spacing)/renderScale
+         * At 4x render scale: each page = 4×4 tiles at max zoom (level 6)
+         * Exploits grid periodicity opportunities for tile deduplication
+         */
         class TileStreamer {
           constructor(gridDims, pattern, pageStreamer, numPages) {
             this.gridDims = gridDims;
@@ -1008,7 +1024,7 @@
             this.cacheGeneration = 0; // Increment to invalidate cached tiles
 
             // Tile size = (page + spacing) / renderScale
-            // At max zoom (3x render), each page+gutter spans 3×3 tiles
+            // At max zoom (4x render), each page+gutter spans 4×4 tiles
             const { pageWidth, pageHeight, spacing } = gridDims;
             const cellWidth = pageWidth + spacing;  // Grid cell size
             const cellHeight = pageHeight + spacing;
@@ -1244,7 +1260,7 @@
             // Draw portions of pages that intersect this tile
             for (let row = 0; row < gridSize; row++) {
               for (let col = 0; col < gridSize; col++) {
-                this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution);
+                this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution, level);
               }
             }
 
@@ -1296,7 +1312,7 @@
           /**
            * Draw page intersection with tile
            */
-          _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution) {
+          _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
             const { pageWidth, pageHeight, spacing } = this.gridDims;
 
             // Calculate page position in grid
@@ -1319,17 +1335,25 @@
               return false;
             }
 
-            // Get canvas from PageStreamer cache with bidirectional fallback
+            // Get canvas from PageStreamer cache with conditional fallback
             let pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_${resolution}`);
 
-            // Fallback logic: use whatever resolution is available
+            // Fallback logic: prevent high-res from being downsampled excessively
             if (!pageCanvas && resolution === 'high') {
-              // High-res requested but not available, use low-res
+              // High-res requested but not available, use low-res (always safe)
               pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_low`);
             } else if (!pageCanvas && resolution === 'low') {
-              // Low-res requested but not available, use high-res
-              pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_high`);
+              // Low-res requested but not available - check if high-res would be acceptable
+              // Calculate sampling ratio: how much would we downsample high-res?
+              // Sampling ratio = scale / PDF_RENDER_SCALE
+              // Only use high-res if sampling ratio >= 0.5 (no more than 2x downsampling)
+              const minSafeScale = 0.5 * CONFIG.PDF_RENDER_SCALE; // 0.5 * 4.0 = 2.0
+              if (scale >= minSafeScale) {
+                pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_high`);
+              }
             }
+            // Note: At low scales, if low-res unavailable, we leave blank rather than
+            // waste memory/CPU on heavily downsampled high-res (sampling < 0.5x)
 
             if (!pageCanvas) {
               // Neither resolution available yet - tile will be blank
@@ -1370,10 +1394,14 @@
           }
         }
 
-        // ============================================================================
-        // OPENSEADRAGON MANAGER MODULE
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                      OPENSEADRAGON MANAGER MODULE                        ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
+        /**
+         * OpenSeadragon viewer initialization and configuration
+         * Handles device detection, viewport setup, and navigator management
+         */
         const OSDManager = {
           /**
            * Detect if device is a small phone (not tablet/iPad)
@@ -1494,9 +1522,9 @@
           }
         };
 
-        // ============================================================================
-        // MAIN COMPONENT
-        // ============================================================================
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                            MAIN COMPONENT                                ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
 
         const PDFGridViewer = () => {
           const [pdfFile, setPdfFile] = useState(null);
@@ -1771,7 +1799,7 @@
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
               console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
               console.log(`  Navigator: shown immediately`);
-              console.log(`  Strategy: Progressive tile regeneration (no blanks, invalidate cache every 5 pages)`);
+              console.log(`  Strategy: On-demand tile generation (cache invalidation disabled for testing)`);
 
               // Phase 4: Background render remaining pages (sequential), then add navigator
               renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
@@ -1798,30 +1826,23 @@
 
             for (let pageNum = startPage + 1; pageNum <= numPages; pageNum++) {
 
+              // Check if loading was cancelled
+              if (loadingCancelledRef.current) {
+                console.log('[Background] Rendering cancelled by user');
+                return;
+              }
+
               // Check if already cached
               if (pageStreamer.pageCache.has(`${pageNum}_low`)) {
-                if (CONFIG.DEBUG_MODE) {
-                  console.log(`[Background] Page ${pageNum} low-res already cached, skipping`);
-                }
                 continue;
               }
 
               // Render low-res page
-              if (CONFIG.DEBUG_MODE) {
-                console.log(`[Background] Rendering page ${pageNum} low-res...`);
-              }
               await pageStreamer.renderPage(pageNum, 'low');
 
               // Yield to browser every 5 pages to keep UI responsive
               if (pageNum % 5 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
-              }
-
-              // Progressive loading: Invalidate tile cache every 5 pages to trigger re-requests
-              if (pageNum % 5 === 0 && window.tileStreamerRef && window.osdViewerRef) {
-                window.tileStreamerRef.invalidateCache();
-                window.osdViewerRef.forceRedraw();
-                console.log(`[Background] Cache invalidated at ${pageNum}/${numPages} pages - tiles will progressively update`);
               }
 
               // Log progress periodically
