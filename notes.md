@@ -42,6 +42,32 @@
 **Reference**:
 - TileCache implementation (lines 804-860) as reference for LRU pattern
 
+## Antialiasing Halo Issue (Dark Hairlines at Tile Edges)
+
+**Issue**: Dark hairlines visible at tile boundaries, especially at broad zoom levels.
+
+**Root Cause Identified**: Canvas antialiasing blends white page edges with dark background during tile rendering:
+- Tiles cleared with dark gray background (`BACKGROUND_COLOR: '#1f2937'`, line 121)
+- Pages rendered with `imageSmoothingEnabled = true` at low zoom (line 1475)
+- Canvas antialiasing blends page edges with background → creates semi-transparent edge pixels
+- JPEG encoding bakes blended pixels as dark halos around white page content
+- Visible as dark hairlines where tiles meet
+
+**Workaround (Confirmed)**: Changing background to white (#ffffff) eliminates hairlines by matching page color, but this is UX regression (dark background preferred).
+
+**Proper Solutions to Investigate**:
+1. **Disable smoothing for tile rendering** - Set `imageSmoothingEnabled = false` globally, accept aliasing
+2. **Two-stage rendering** - Fill tiles with white, render pages, composite final result (complex)
+3. **Pre-multiply alpha approach** - Render to temp canvas with alpha, composite without antialiasing
+4. **Padding/cropping** - Render tiles slightly larger, crop edge pixels that have halos
+5. **Different antialiasing strategy** - Use manual downsampling instead of canvas smoothing
+
+**Trade-offs**:
+- Solution #1 (disable smoothing): Simple but may reintroduce moiré artifacts
+- Solutions #2-5: More complex, performance impact unclear
+
+**Next Steps**: Test disabling imageSmoothingEnabled to see if moiré returns, compare visual quality trade-offs.
+
 ## Performance Optimization Ideas
 
 ### Sophisticated Lazy-LRU Cache (Future Reference)
