@@ -78,3 +78,8 @@ Add the ability to switch, with buttons, between PDFs residing in the local dire
 
 Add browser history support for back/forward navigation between local PDFs (see notes.md for implementation details)
 
+
+## DOCUMENTATION
+
+Review and purge obsolete content from documentation - Go through TODO.md, notes.md, and code comments to remove outdated items, completed tasks not marked done, and superseded implementation details. Update version references, remove dead links, consolidate duplicate information.
+
