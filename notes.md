@@ -1,5 +1,47 @@
 # PDF Grid Viewer - Development Notes
 
+## NEXT: Fix iOS Safari Crash on Broad Zoom-Out
+
+**Issue**: iOS Safari crashes when zooming out to show entire grid, especially with large PDFs (300+ pages).
+
+**Root Cause (Suspected)**: Unlimited PageStreamer.pageCache causes memory exhaustion on iOS Safari:
+- PageCache is a Map with no size limit - grows unbounded
+- At broad zoom-out, many pages rendered and cached forever
+- Both low-res AND high-res versions kept in cache simultaneously
+- For 300-page PDF: potentially 600 large canvases in memory (300 low + 300 high)
+- iOS Safari has strict memory limits (~100-200MB for canvas memory)
+- TileCache has LRU eviction (max 300 tiles), but PageCache does not
+
+**Current State**:
+- `PageStreamer.pageCache = new Map()` (line 438) - unlimited
+- `TileCache` has LRU eviction with max 300 entries (line 805)
+- No memory diagnostics or warnings
+
+**Proposed Solution**:
+1. **Add diagnostics first** to confirm memory is the issue:
+   - Log PageCache size during zoom: `pageCache.size`, low vs high counts
+   - Add keyboard shortcut (e.g., 'M') to log cache stats
+   - Test on iOS Safari and watch for correlation between cache size and crashes
+
+2. **Implement LRU eviction for PageCache**:
+   - Similar to TileCache, add maxSize parameter (suggest 100-150 pages)
+   - Evict least recently used pages when limit exceeded
+   - Prioritize keeping low-res pages over high-res at low zoom levels
+   - Consider separate limits for low-res vs high-res
+
+3. **Additional optimizations**:
+   - Clear high-res pages when zoom level drops below threshold
+   - More aggressive eviction on mobile devices (detect iOS Safari)
+   - Consider removing pages that aren't visible in viewport
+
+**Files to modify**:
+- Line 438: `PageStreamer` class constructor - add LRU cache
+- Line 457-474: `renderPage()` - implement eviction logic
+- Add cache stats logging for diagnostics
+
+**Reference**:
+- TileCache implementation (lines 804-860) as reference for LRU pattern
+
 ## Performance Optimization Ideas
 
 ### Sophisticated Lazy-LRU Cache (Future Reference)
