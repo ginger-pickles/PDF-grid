@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.8',
+          VERSION: '1.8.10',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1200,22 +1200,41 @@
             const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
 
             // Two-tier cache key strategy:
-            // 1. Whole pages → content fingerprint (dedup tiles with identical layouts)
+            // 1. Whole pages → page-range keys (max dedup), with position for fractional tile levels
             // 2. Page portions → position (correctness for deep zoom)
             let key;
             const wholePagesLevel = this.maxLevel - Math.log2(CONFIG.PDF_RENDER_SCALE);
 
             if (level <= wholePagesLevel && neededPages.length > 0) {
-              // Tile shows whole pages - use content fingerprint for deduplication
-              // Tiles with identical page arrangements get the same key regardless of position
-              const fingerprint = this._generateTileFingerprint(neededPages, tileLeft, tileTop);
-              key = `${level}_${fingerprint}_gen${this.cacheGeneration}`;
+              // Tile shows whole pages - use page-range keys for deduplication
+              // Special case: add position for levels with fractional tile coverage to prevent collisions
+              const sortedPages = [...neededPages].sort((a, b) => a - b);
+              const firstPage = sortedPages[0];
+              const lastPage = sortedPages[sortedPages.length - 1];
 
-              // Debug: Log fingerprint details for minimap tiles to identify dedup issues
-              if (CONFIG.DEBUG_MODE && level <= 1) {
-                const sortedPages = [...neededPages].sort((a, b) => a - b);
-                console.log(`[Fingerprint] L${level}(${x},${y}): pages=[${sortedPages.join(',')}], tilePos=(${tileLeft.toFixed(0)},${tileTop.toFixed(0)}), fp="${fingerprint.substring(0, 50)}..."`);
+              // Detect fractional tile coverage: at these levels, grid doesn't fit evenly into tiles
+              // This causes cache collisions where tiles at different positions share page ranges
+              // but have different actual content (e.g., L1 with 2x2 tiles covering 12x12 grid)
+              const tilesWide = Math.ceil(this.gridDims.totalWidth / (this.tileWidth / scale));
+              const tilesHigh = Math.ceil(this.gridDims.totalHeight / (this.tileHeight / scale));
+              const hasFractionalCoverage = (tilesWide <= 3 || tilesHigh <= 3);
+
+              if (hasFractionalCoverage) {
+                // Fractional coverage: include position to prevent collisions
+                if (firstPage === lastPage) {
+                  key = `${level}_${x}_${y}_p${firstPage}_gen${this.cacheGeneration}`;
+                } else {
+                  key = `${level}_${x}_${y}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
+                }
+              } else {
+                // Clean coverage: pure page-range keys for maximum deduplication
+                if (firstPage === lastPage) {
+                  key = `${level}_p${firstPage}_gen${this.cacheGeneration}`;
+                } else {
+                  key = `${level}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
+                }
               }
+
             } else {
               // Partial pages or page portions - use position to distinguish regions
               key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
@@ -1236,9 +1255,6 @@
             // Check tile cache first
             const cached = this.cache.get(key);
             if (cached) {
-              if (CONFIG.DEBUG_MODE && level <= wholePagesLevel) {
-                console.log(`[Dedup] Cache hit L${level}(${x},${y}) using fingerprint: ${key.substring(0, 60)}${key.length > 60 ? '...' : ''}`);
-              }
               return cached;
             }
             const resolution = this._getResolutionForLevel(level);
