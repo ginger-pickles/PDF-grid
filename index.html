@@ -73,7 +73,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.8.6',
+          VERSION: '1.8.7',
 
           // Debug
           DEBUG_MODE: true, // Enable verbose logging, detailed error messages, and tile borders
@@ -1106,6 +1106,55 @@
           }
 
           /**
+           * Generate content fingerprint for tile deduplication
+           * Returns a signature based on page layout within the tile
+           * Tiles with identical page arrangements get identical fingerprints
+           */
+          _generateTileFingerprint(neededPages, tileLeft, tileTop) {
+            if (neededPages.length === 0) return 'empty';
+
+            const { pageWidth, pageHeight, spacing, gridSize } = this.gridDims;
+            const pagePositions = [];
+
+            // For each needed page, find its grid position and calculate relative offset
+            for (const pageNum of neededPages) {
+              // Find (row, col) for this pageNum in the pattern
+              let row = -1, col = -1;
+              for (let r = 0; r < gridSize; r++) {
+                for (let c = 0; c < gridSize; c++) {
+                  if (this.pattern[r][c] === pageNum) {
+                    row = r;
+                    col = c;
+                    break;
+                  }
+                }
+                if (row !== -1) break;
+              }
+
+              if (row === -1) continue; // Page not found in pattern (shouldn't happen)
+
+              // Calculate page's absolute position in grid
+              const pageLeft = col * (pageWidth + spacing);
+              const pageTop = row * (pageHeight + spacing);
+
+              // Calculate relative position within tile (rounded to avoid float precision issues)
+              const relX = Math.round(pageLeft - tileLeft);
+              const relY = Math.round(pageTop - tileTop);
+
+              pagePositions.push({ pageNum, relX, relY });
+            }
+
+            // Sort by relative position for deterministic fingerprint
+            pagePositions.sort((a, b) => {
+              if (a.relY !== b.relY) return a.relY - b.relY;
+              return a.relX - b.relX;
+            });
+
+            // Create compact fingerprint: p{num}@{x},{y}_p{num}@{x},{y}_...
+            return pagePositions.map(p => `p${p.pageNum}@${p.relX},${p.relY}`).join('_');
+          }
+
+          /**
            * Get OpenSeadragon tile source configuration
            * Uses rectangular tiles via getTileWidth/getTileHeight
            */
@@ -1136,25 +1185,16 @@
             const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
 
             // Two-tier cache key strategy:
-            // 1. Whole pages (one or more) → abbreviated page range (massive dedup)
+            // 1. Whole pages → content fingerprint (dedup tiles with identical layouts)
             // 2. Page portions → position (correctness for deep zoom)
             let key;
             const wholePagesLevel = this.maxLevel - Math.log2(CONFIG.PDF_RENDER_SCALE);
 
             if (level <= wholePagesLevel && neededPages.length > 0) {
-              // Tile shows whole pages - include position to prevent cache collisions
-              // between tiles at different locations with similar page ranges
-              const sortedPages = [...neededPages].sort((a, b) => a - b);
-              const firstPage = sortedPages[0];
-              const lastPage = sortedPages[sortedPages.length - 1];
-
-              if (firstPage === lastPage) {
-                // Single page - include position for correctness
-                key = `${level}_${x}_${y}_p${firstPage}_gen${this.cacheGeneration}`;
-              } else {
-                // Multiple pages - include position to prevent false deduplication
-                key = `${level}_${x}_${y}_p${firstPage}-${lastPage}_gen${this.cacheGeneration}`;
-              }
+              // Tile shows whole pages - use content fingerprint for deduplication
+              // Tiles with identical page arrangements get the same key regardless of position
+              const fingerprint = this._generateTileFingerprint(neededPages, tileLeft, tileTop);
+              key = `${level}_${fingerprint}_gen${this.cacheGeneration}`;
             } else {
               // Partial pages or page portions - use position to distinguish regions
               key = `${level}_${x}_${y}_gen${this.cacheGeneration}`;
@@ -1175,6 +1215,9 @@
             // Check tile cache first
             const cached = this.cache.get(key);
             if (cached) {
+              if (CONFIG.DEBUG_MODE && level <= wholePagesLevel) {
+                console.log(`[Dedup] Cache hit L${level}(${x},${y}) using fingerprint: ${key.substring(0, 60)}${key.length > 60 ? '...' : ''}`);
+              }
               return cached;
             }
             const resolution = this._getResolutionForLevel(level);
@@ -1343,105 +1386,16 @@
             this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
             this.tileCtx.fillRect(0, 0, this.tileCanvas.width, this.tileCanvas.height);
 
-            // Debug: Check canvas state before drawing
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key === '1_p3-12_gen1') {
-              console.log(`[L1 gen1 Tile ${key}] Canvas: ${this.tileCanvas.width}x${this.tileCanvas.height}, Context transform: ${this.tileCtx.getTransform ? this.tileCtx.getTransform() : 'N/A'}`);
-              // Draw test rectangle at bottom to verify drawable area
-              this.tileCtx.fillStyle = 'red';
-              this.tileCtx.fillRect(10, this.tileCanvas.height - 50, 100, 40);
-              this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR; // Reset
-            }
-
             // Draw portions of pages that intersect this tile
             let pagesDrawnCount = 0;
-
-            // Debug: Log the tile boundaries and which rows they cover
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key === '1_p3-12_gen1') {
-              const { pageWidth, pageHeight, spacing, totalHeight } = this.gridDims;
-              const cellHeight = pageHeight + spacing;
-
-              const topRow = Math.floor(tileTop / cellHeight);
-              const bottomRow = Math.floor(tileBottom / cellHeight);
-
-              console.error(`[L1 gen1 Tile ${key}] POSITION PROBLEM!`);
-              console.log(`  Tile position: level=${level}, x=${x}, y=${y}`);
-              console.log(`  Scale: ${scale}, tileHeight: ${this.tileHeight}, calculation: y * tileHeight / scale = ${y} * ${this.tileHeight} / ${scale} = ${y * this.tileHeight / scale}`);
-              console.log(`  Tile bounds: top=${tileTop.toFixed(0)}, bottom=${tileBottom.toFixed(0)}, height=${(tileBottom-tileTop).toFixed(0)}`);
-              console.log(`  Grid: totalHeight=${totalHeight}, cellHeight=${cellHeight}`);
-              console.log(`  Covers rows ${topRow} to ${bottomRow} (grid has ${gridSize} rows: 0-${gridSize-1})`);
-              console.log(`  Expected: y=1 should cover rows ~4-7, but actually covers rows ${topRow}-${bottomRow}`);
-            }
 
             for (let row = 0; row < gridSize; row++) {
               for (let col = 0; col < gridSize; col++) {
                 const wasDrawn = this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution, level);
                 if (wasDrawn) pagesDrawnCount++;
-
-                // Debug: Check if canvas is still intact after each draw
-                if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key === '1_p3-12_gen1' && pagesDrawnCount === 5) {
-                  // After drawing 5 pages, check if the top area still has content
-                  const testPixel = this.tileCtx.getImageData(100, 100, 1, 1).data;
-                  if (testPixel[3] === 0) {
-                    console.error(`[L1 gen1 Tile ${key}] Canvas was CLEARED after drawing ${pagesDrawnCount} pages! Top area is now blank.`);
-                  }
-                }
               }
             }
 
-            // Debug: Report how many pages were actually drawn and check top vs bottom
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key === '1_p3-12_gen1') {
-              console.log(`[L1 gen1 Tile ${key}] Drew ${pagesDrawnCount} pages total`);
-
-              // Sample top and bottom of canvas to see if both have content
-              const topPixel = this.tileCtx.getImageData(this.tileCanvas.width / 2, 100, 1, 1).data;
-              const bottomPixel = this.tileCtx.getImageData(this.tileCanvas.width / 2, this.tileCanvas.height - 100, 1, 1).data;
-
-              const topHasContent = topPixel[3] > 0;
-              const bottomHasContent = bottomPixel[3] > 0;
-
-              console.log(`[L1 gen1 Tile ${key}] Canvas check: top=${topHasContent}, bottom=${bottomHasContent}`);
-
-              if (topHasContent && !bottomHasContent) {
-                console.error(`[L1 gen1 Tile ${key}] BOTTOM HALF IS BLANK! Canvas: ${this.tileCanvas.width}x${this.tileCanvas.height}`);
-              }
-            }
-
-            // Debug: Sample tile canvas after all drawing to verify content
-            // Check if pages 7-10 specifically have content where they should be
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key.includes('p3-12')) {
-              const problematicPages = [7, 8, 9, 10];
-              for (const pageNum of problematicPages) {
-                if (neededPages.includes(pageNum)) {
-                  // Find this page in the grid to determine its position in the tile
-                  let pageFound = false;
-                  for (let row = 0; row < gridSize && !pageFound; row++) {
-                    for (let col = 0; col < gridSize && !pageFound; col++) {
-                      if (this.pattern[row][col] === pageNum) {
-                        // Calculate where this page should be in the tile canvas
-                        const pageLeft = col * (pageWidth + spacing);
-                        const pageTop = row * (pageHeight + spacing);
-
-                        // Convert to tile canvas coordinates
-                        const canvasX = Math.floor((pageLeft + pageWidth/2 - tileLeft) * scale);
-                        const canvasY = Math.floor((pageTop + pageHeight/2 - tileTop) * scale);
-
-                        if (canvasX >= 0 && canvasX < this.tileCanvas.width && canvasY >= 0 && canvasY < this.tileCanvas.height) {
-                          const pixelData = this.tileCtx.getImageData(canvasX, canvasY, 1, 1).data;
-                          const r = pixelData[0], g = pixelData[1], b = pixelData[2];
-                          const isBackground = (r === 232 && g === 232 && b === 232);
-                          if (isBackground) {
-                            console.warn(`[L1 gen1 Tile ${key}] Page ${pageNum} appears BLANK at tile position (${canvasX},${canvasY})`);
-                          } else {
-                            console.log(`[L1 gen1 Tile ${key}] Page ${pageNum} has content at tile position (${canvasX},${canvasY}): rgb(${r},${g},${b})`);
-                          }
-                        }
-                        pageFound = true;
-                      }
-                    }
-                  }
-                }
-              }
-            }
 
             // DEBUG: Draw 5px bright green border around tile and show level + cache key
             if (CONFIG.DEBUG_MODE) {
@@ -1484,41 +1438,6 @@
               dataUrl = this.tileCanvas.toDataURL('image/png');
             } else {
               dataUrl = this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
-            }
-
-            // Debug: Save problematic tile for inspection and auto-open in new window
-            if (CONFIG.DEBUG_MODE && this.cacheGeneration === 1 && level === 1 && key === '1_p3-12_gen1') {
-              window._debugTile_1_p3_12 = dataUrl;
-              console.log(`[L1 gen1 Tile] Opening tile ${key} in new window for inspection...`);
-
-              // Open in new window automatically
-              setTimeout(() => {
-                const win = window.open('', '_blank');
-                if (win) {
-                  win.document.write(`
-                    <html>
-                      <head>
-                        <title>Debug Tile: ${key}</title>
-                        <style>
-                          body { margin: 20px; background: #222; color: #fff; font-family: monospace; }
-                          img { border: 3px solid red; display: block; margin: 20px 0; }
-                          .info { background: #333; padding: 10px; margin: 10px 0; }
-                        </style>
-                      </head>
-                      <body>
-                        <h2>Debug Tile: ${key}</h2>
-                        <div class="info">
-                          <p>This tile should contain pages 3-12.</p>
-                          <p>Pages 7-10 are reportedly missing in the bottom rows.</p>
-                          <p>Check if they appear in this rendered tile image.</p>
-                        </div>
-                        <img src="${dataUrl}" />
-                      </body>
-                    </html>
-                  `);
-                  win.document.close();
-                }
-              }, 500);
             }
 
             return dataUrl;
