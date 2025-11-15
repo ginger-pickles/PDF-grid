@@ -41,25 +41,71 @@ Query parameters take precedence over auto-load configuration.
 
 **URL Parameters:**
 
-The viewer supports several URL parameters that can be combined:
+The viewer supports several URL parameters that can be combined for flexible debugging and testing workflows:
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `?url=<URL>` | Load PDF from external URL | `?url=https://example.com/file.pdf` |
-| `?pdf=<filename>` | Load PDF from same directory (when served) | `?pdf=demo.pdf` |
-| `?debug` | Open debug panel on page load | `?debug` or `?debug=1` |
+| Parameter | Description | Values | Example |
+|-----------|-------------|--------|---------|
+| `?url=<URL>` | Load PDF from external URL | Any valid URL | `?url=https://example.com/file.pdf` |
+| `?pdf=<filename>` | Load PDF from same directory (requires serving) | Filename in same directory | `?pdf=demo.pdf` |
+| `?debug` | Auto-open debug panel on page load | `true`, `1`, or empty (enabled)<br>`false`, `0` (disabled) | `?debug` or `?debug=1` |
 
-**Examples:**
+**URL Parameter Examples:**
+
+Basic usage:
+- Enable debug panel: `http://localhost:8000?debug`
+- Enable debug panel (explicit): `http://localhost:8000?debug=1` or `?debug=true`
+- Disable debug panel: `http://localhost:8000?debug=0` or `?debug=false`
+
+Combined with PDF loading:
 - Load local file with debug: `http://localhost:8000?pdf=demo.pdf&debug`
-- Load URL with debug: `http://localhost:8000?url=https://example.com/file.pdf&debug`
-- Disable debug explicitly: `?debug=0` or `?debug=false`
+- Load local file, debug off: `http://localhost:8000?pdf=demo.pdf&debug=0`
+- Load from URL with debug: `http://localhost:8000?url=https://example.com/file.pdf&debug`
 
 **Debug Panel Features:**
-- Performance toggles (Parallel, On-Demand, Predictive rendering)
-- Cache size controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
-- Memory usage statistics (total memory, cache weights, average sizes)
-- Live rendering statistics (cache hits/misses, fallback rates)
-- All settings persist in localStorage across page refreshes
+
+When enabled via `?debug` parameter or the "Show Debug" button, the debug panel provides:
+
+*Real-time Performance Monitoring:*
+- Live cache statistics (page cache: low-res/high-res, tile cache)
+- Tile rendering stats (full renders, fallback renders, fallback percentage)
+- Cache miss tracking and on-demand rendering metrics
+- Parallel rendering progress (pages rendered, rate in pages/second)
+- Memory usage statistics with breakdown by cache type
+
+*Interactive Performance Controls:*
+- **Parallel Rendering:** Toggle viewport-aware parallel rendering with worker pools
+- **On-Demand Rendering:** Toggle immediate page rendering when tiles need missing pages
+- **Predictive Rendering:** Toggle velocity-based predictive page loading
+- **Debug Tiles:** Toggle visual tile borders and labels showing level and cache keys
+
+*Cache Tuning Controls:*
+- **Tile Cache Size:** Adjust max tiles in TileCache (default: 300 desktop, 150 mobile)
+- **LowRes Pages:** Adjust low-res page cache for minimap (default: 100 desktop, 200 mobile)
+- **HighRes Pages:** Adjust high-res page cache for deep zoom (default: 100 desktop, 50 mobile)
+- **Viewport Radius:** Adjust priority zone (pages within N pages of viewport, default: 2)
+
+*Memory Usage Statistics:*
+- **Total Memory:** Combined memory usage across all caches (in MB)
+- **Cache Breakdown:** Memory per cache type with item counts
+- **Average Sizes:** Typical memory per tile, low-res page, and high-res page
+- **Live Updates:** Statistics refresh every 500ms during use
+
+*Additional Controls:*
+- **Refresh:** Force tile redraw to update display with newly-rendered pages
+- **Recreate:** Rebuild TiledImage and clear tile cache (preserves viewport position)
+- **Close (×):** Close debug panel
+
+*Persistence:*
+- All performance toggle states save to localStorage and persist across page refreshes
+- All cache size parameters save to localStorage and persist across page refreshes
+- Console logs all changes to performance features and cache parameters for debugging
+
+**Use Cases:**
+- **Testing:** Use `?pdf=demo.pdf&debug` to quickly test with debug panel open
+- **Sharing:** Share debugging URLs with collaborators: `?url=https://example.com/problem.pdf&debug`
+- **Development:** Iterate on cache tuning by adjusting parameters and refreshing
+- **Troubleshooting:** Monitor memory usage and cache behavior in real-time
+- **Performance Analysis:** Toggle features on/off to isolate performance issues
 
 **CORS Proxy:**
 
