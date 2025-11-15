@@ -3465,16 +3465,16 @@
 
                   // Calculate page cache memory (actual canvas dimensions)
                   if (pageStreamer) {
-                    if (pageStreamer.lowResPageCache) {
-                      for (const canvas of pageStreamer.lowResPageCache.values()) {
+                    if (pageStreamer.lowResPageCache?.cache) {
+                      for (const canvas of pageStreamer.lowResPageCache.cache.values()) {
                         if (canvas && canvas.width && canvas.height) {
                           lowResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
                           lowResPageCacheCount++;
                         }
                       }
                     }
-                    if (pageStreamer.highResPageCache) {
-                      for (const canvas of pageStreamer.highResPageCache.values()) {
+                    if (pageStreamer.highResPageCache?.cache) {
+                      for (const canvas of pageStreamer.highResPageCache.cache.values()) {
                         if (canvas && canvas.width && canvas.height) {
                           highResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
                           highResPageCacheCount++;
