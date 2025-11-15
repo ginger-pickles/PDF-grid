@@ -3445,57 +3445,73 @@
               },
               getCurrentZoom: () => viewer?.viewport?.getZoom() || 0,
               getMemoryStats: () => {
-                let tileCacheMB = 0;
-                let tileCacheCount = 0;
-                let lowResPageCacheMB = 0;
-                let lowResPageCacheCount = 0;
-                let highResPageCacheMB = 0;
-                let highResPageCacheCount = 0;
+                try {
+                  let tileCacheMB = 0;
+                  let tileCacheCount = 0;
+                  let lowResPageCacheMB = 0;
+                  let lowResPageCacheCount = 0;
+                  let highResPageCacheMB = 0;
+                  let highResPageCacheCount = 0;
 
-                // Calculate tile cache memory (actual canvas dimensions)
-                if (tileStreamer?.tileCache?.cache) {
-                  for (const canvas of tileStreamer.tileCache.cache.values()) {
-                    if (canvas && canvas.width && canvas.height) {
-                      tileCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
-                      tileCacheCount++;
-                    }
-                  }
-                }
-
-                // Calculate page cache memory (actual canvas dimensions)
-                if (pageStreamer) {
-                  if (pageStreamer.lowResPageCache) {
-                    for (const canvas of pageStreamer.lowResPageCache.values()) {
+                  // Calculate tile cache memory (actual canvas dimensions)
+                  if (tileStreamer?.tileCache?.cache) {
+                    for (const canvas of tileStreamer.tileCache.cache.values()) {
                       if (canvas && canvas.width && canvas.height) {
-                        lowResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
-                        lowResPageCacheCount++;
+                        tileCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                        tileCacheCount++;
                       }
                     }
                   }
-                  if (pageStreamer.highResPageCache) {
-                    for (const canvas of pageStreamer.highResPageCache.values()) {
-                      if (canvas && canvas.width && canvas.height) {
-                        highResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
-                        highResPageCacheCount++;
+
+                  // Calculate page cache memory (actual canvas dimensions)
+                  if (pageStreamer) {
+                    if (pageStreamer.lowResPageCache) {
+                      for (const canvas of pageStreamer.lowResPageCache.values()) {
+                        if (canvas && canvas.width && canvas.height) {
+                          lowResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                          lowResPageCacheCount++;
+                        }
+                      }
+                    }
+                    if (pageStreamer.highResPageCache) {
+                      for (const canvas of pageStreamer.highResPageCache.values()) {
+                        if (canvas && canvas.width && canvas.height) {
+                          highResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                          highResPageCacheCount++;
+                        }
                       }
                     }
                   }
+
+                  const totalMB = tileCacheMB + lowResPageCacheMB + highResPageCacheMB;
+
+                  return {
+                    totalMB: parseFloat(totalMB.toFixed(2)),
+                    tileCacheMB: parseFloat(tileCacheMB.toFixed(2)),
+                    tileCacheCount,
+                    avgTileMB: tileCacheCount > 0 ? parseFloat((tileCacheMB / tileCacheCount).toFixed(3)) : 0,
+                    lowResPageCacheMB: parseFloat(lowResPageCacheMB.toFixed(2)),
+                    lowResPageCacheCount,
+                    avgLowResPageMB: lowResPageCacheCount > 0 ? parseFloat((lowResPageCacheMB / lowResPageCacheCount).toFixed(3)) : 0,
+                    highResPageCacheMB: parseFloat(highResPageCacheMB.toFixed(2)),
+                    highResPageCacheCount,
+                    avgHighResPageMB: highResPageCacheCount > 0 ? parseFloat((highResPageCacheMB / highResPageCacheCount).toFixed(3)) : 0
+                  };
+                } catch (error) {
+                  console.error('[getMemoryStats] Error calculating memory:', error);
+                  return {
+                    totalMB: 0,
+                    tileCacheMB: 0,
+                    tileCacheCount: 0,
+                    avgTileMB: 0,
+                    lowResPageCacheMB: 0,
+                    lowResPageCacheCount: 0,
+                    avgLowResPageMB: 0,
+                    highResPageCacheMB: 0,
+                    highResPageCacheCount: 0,
+                    avgHighResPageMB: 0
+                  };
                 }
-
-                const totalMB = tileCacheMB + lowResPageCacheMB + highResPageCacheMB;
-
-                return {
-                  totalMB: parseFloat(totalMB.toFixed(2)),
-                  tileCacheMB: parseFloat(tileCacheMB.toFixed(2)),
-                  tileCacheCount,
-                  avgTileMB: tileCacheCount > 0 ? parseFloat((tileCacheMB / tileCacheCount).toFixed(3)) : 0,
-                  lowResPageCacheMB: parseFloat(lowResPageCacheMB.toFixed(2)),
-                  lowResPageCacheCount,
-                  avgLowResPageMB: lowResPageCacheCount > 0 ? parseFloat((lowResPageCacheMB / lowResPageCacheCount).toFixed(3)) : 0,
-                  highResPageCacheMB: parseFloat(highResPageCacheMB.toFixed(2)),
-                  highResPageCacheCount,
-                  avgHighResPageMB: highResPageCacheCount > 0 ? parseFloat((highResPageCacheMB / highResPageCacheCount).toFixed(3)) : 0
-                };
               },
               clearCaches: () => {
                 pageStreamer?.clear();
