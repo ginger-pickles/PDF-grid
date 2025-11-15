@@ -3291,9 +3291,9 @@
               const pdf = await PDFUtils.loadPDFFromFile(file);
               await loadPDF(pdf, file.name);
 
-              // TEMPORARILY DISABLED: Storage operations
-              // const fileData = await file.arrayBuffer();
-              // await PDFStorage.save(fileData, file.name);
+              // Save to storage for faster refresh
+              const fileData = await file.arrayBuffer();
+              await PDFStorage.save(fileData, file.name);
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
                 console.log('Loading cancelled');
