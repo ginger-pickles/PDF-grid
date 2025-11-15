@@ -69,7 +69,7 @@
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
           DEBUG_TILES: false,  // Enable tile cache diagnostics logging
-          DEBUG_INITIAL_VIEW_WHOLE_GRID: false, // Show entire grid on load (true) or center on page 1 (false)
+          DEBUG_INITIAL_VIEW_WHOLE_GRID: true, // Show entire grid on load (true) or center on page 1 (false)
 
           // Auto-load
           AUTO_LOAD_PDF: 'demo-1.pdf', // Set to null to disable auto-load, or filename to try loading
@@ -506,6 +506,94 @@
           clear() {
             this.cache.clear();
           }
+
+          /**
+           * Update maximum cache size
+           * If new size is smaller, evict oldest entries to fit
+           *
+           * @param {number} newSize - New maximum cache size
+           */
+          setCapacity(newSize) {
+            this.maxSize = newSize;
+
+            // If cache is now oversized, evict oldest entries
+            while (this.cache.size > this.maxSize) {
+              const firstKey = this.cache.keys().next().value;
+              this.cache.delete(firstKey);
+            }
+          }
+        }
+
+        /**
+         * Calculate optimal cache sizes based on PDF page count and device constraints
+         *
+         * Strategy:
+         * - Low-res cache: Should hold ALL pages for complete overview/minimap coverage
+         * - High-res cache: Should hold viewport + predictive buffer (typically 50-100 pages)
+         * - Respect absolute memory limits (especially on iOS)
+         *
+         * @param {number} numPages - Total pages in PDF
+         * @param {boolean} isIOS - Whether running on iOS
+         * @returns {{lowResSize: number, highResSize: number}}
+         */
+        function calculateOptimalCacheSizes(numPages, isIOS) {
+          // Detect available device memory (if supported)
+          const deviceMemoryGB = navigator.deviceMemory || 4; // Default to 4GB if not available
+
+          // Calculate low-res cache size
+          // Goal: Hold ALL pages for complete minimap/overview coverage
+          let lowResSize = numPages;
+
+          // Apply device-specific limits
+          if (isIOS) {
+            // iOS: Conservative limit due to memory constraints
+            // Still try to hold all pages, but cap at mobile limit
+            lowResSize = Math.min(numPages, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW);
+          } else {
+            // Desktop: Scale with device memory
+            // Rough heuristic: 500KB per low-res page
+            // Allow up to 200MB for low-res cache on 4GB device, scale up/down
+            const maxLowResMB = Math.min(200 * (deviceMemoryGB / 4), 500); // Cap at 500MB
+            const estimatedLowResMB = numPages * 0.5; // 500KB per page
+
+            if (estimatedLowResMB > maxLowResMB) {
+              // Would exceed memory budget, cap it
+              lowResSize = Math.floor(maxLowResMB / 0.5);
+              console.warn(`[Cache Sizing] Low-res cache limited to ${lowResSize} pages (${maxLowResMB}MB) for ${numPages}-page PDF`);
+            }
+
+            // Absolute maximum for safety
+            lowResSize = Math.min(lowResSize, 1000);
+          }
+
+          // Calculate high-res cache size
+          // Goal: Hold viewport + ahead-of-motion buffer
+          // Typically 50-100 pages sufficient for smooth navigation
+          let highResSize = Math.min(100, Math.ceil(numPages * 0.3)); // 30% of pages or 100, whichever is smaller
+
+          // Apply device-specific limits
+          if (isIOS) {
+            // iOS: Very conservative due to memory pressure
+            highResSize = Math.min(highResSize, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH);
+          } else {
+            // Desktop: Scale with device memory
+            // Rough heuristic: 2MB per high-res page
+            const maxHighResMB = Math.min(200 * (deviceMemoryGB / 4), 400); // Cap at 400MB
+            const estimatedHighResMB = highResSize * 2;
+
+            if (estimatedHighResMB > maxHighResMB) {
+              highResSize = Math.floor(maxHighResMB / 2);
+            }
+
+            // Absolute maximum for safety
+            highResSize = Math.min(highResSize, 500);
+          }
+
+          // Ensure minimum sizes
+          lowResSize = Math.max(lowResSize, 10);
+          highResSize = Math.max(highResSize, 10);
+
+          return { lowResSize, highResSize };
         }
 
         /**
@@ -514,6 +602,7 @@
          * Handles parallel batch rendering and page-level caching
          *
          * Uses separate LRU caches for low-res and high-res to prevent eviction conflicts
+         * Cache sizes are calculated dynamically based on PDF page count
          */
         class PageStreamer {
           constructor(pdfDoc) {
@@ -640,6 +729,26 @@
             this.lowResPageCache.clear();
             this.highResPageCache.clear();
             this.renderingInProgress.clear();
+          }
+
+          /**
+           * Update cache sizes based on PDF page count
+           * Should be called after PDF is loaded and page count is known
+           *
+           * @param {number} numPages - Total pages in PDF
+           * @param {boolean} isIOS - Whether running on iOS
+           */
+          updateCacheSizes(numPages, isIOS) {
+            const sizes = calculateOptimalCacheSizes(numPages, isIOS);
+
+            // Update cache capacities
+            this.lowResPageCache.setCapacity(sizes.lowResSize);
+            this.highResPageCache.setCapacity(sizes.highResSize);
+
+            console.log(`[Cache Sizing] Optimized for ${numPages}-page PDF:`);
+            console.log(`  Low-res cache: ${sizes.lowResSize} pages (for complete minimap coverage)`);
+            console.log(`  High-res cache: ${sizes.highResSize} pages (viewport + predictive buffer)`);
+            console.log(`  Device memory: ${navigator.deviceMemory || 'unknown'} GB`);
           }
         }
 
@@ -1196,6 +1305,10 @@
             this.tileCache = new TileCache();
             this.checkedCanvases = new Set(); // Track which pages we've already validated
 
+            // Debounced tile refresh: Batch forceRedraw() calls to avoid excessive redraws
+            this.redrawTimeout = null;
+            this.redrawPending = false;
+
             // Diagnostics: Track fallback tiles vs full tiles
             this.stats = {
               tilesRenderedFull: 0,      // Tiles rendered with all pages at correct resolution
@@ -1239,6 +1352,29 @@
           }
 
           /**
+           * Schedule a debounced tile redraw
+           * Batches multiple on-demand page renders to avoid excessive forceRedraw() calls
+           * Uses 100ms debounce to batch renders that complete in quick succession
+           */
+          scheduleRedraw() {
+            // Clear any pending redraw
+            if (this.redrawTimeout) {
+              clearTimeout(this.redrawTimeout);
+            }
+
+            // Schedule new redraw after 100ms of inactivity
+            this.redrawTimeout = setTimeout(() => {
+              if (window.viewer) {
+                if (CONFIG.DEBUG_TILES) {
+                  console.log('[TileStreamer] Forcing tile redraw after on-demand page renders');
+                }
+                window.viewer.forceRedraw();
+              }
+              this.redrawTimeout = null;
+            }, 100);
+          }
+
+          /**
            * Calculate the maximum level for minimap (navigator) usage
            * Minimap shows entire grid, typically at lower zoom levels
            */
@@ -1255,6 +1391,7 @@
           _calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom) {
             const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
             const intersectingPages = new Set(); // Use Set to avoid duplicates
+            const debugInfo = []; // Track intersection details for debugging
 
             for (let row = 0; row < gridRows; row++) {
               for (let col = 0; col < gridCols; col++) {
@@ -1270,8 +1407,10 @@
                 const pageBottom = pageTop + pageHeight;
 
                 // Check intersection
-                if (!(pageRight <= tileLeft || pageLeft >= tileRight ||
-                      pageBottom <= tileTop || pageTop >= tileBottom)) {
+                const intersects = !(pageRight <= tileLeft || pageLeft >= tileRight ||
+                      pageBottom <= tileTop || pageTop >= tileBottom);
+
+                if (intersects) {
                   intersectingPages.add(pageNum);
                 }
               }
@@ -1358,6 +1497,53 @@
            * Generate a tile at specified level and coordinates
            */
           generateTile(level, x, y) {
+            // Prevent duplicate initial L0 tile generation requests
+            // OSD often requests L0 tile multiple times in rapid succession during initial load
+            // We block duplicates within first 500ms, but allow regeneration after that
+            // This allows forceRedraw() to regenerate L0 tile when on-demand renders complete
+            if (level === 0) {
+              const now = Date.now();
+
+              // Track L0 tile generation attempts for diagnostics
+              if (!window.__L0TileGeneration) {
+                window.__L0TileGeneration = { calls: [], delayed: 0, firstRequestTime: now };
+              }
+
+              const timeSinceFirst = now - window.__L0TileGeneration.firstRequestTime;
+
+              // Block duplicate requests within first 500ms (initial load period)
+              // After 500ms, allow regeneration for forceRedraw() calls
+              if (timeSinceFirst < 500) {
+                // Check if we already have a cached L0 tile from first request
+                for (const [cacheKey, cachedTile] of this.tileCache.cache.entries()) {
+                  if (cacheKey.startsWith('0_')) {
+                    // Found cached L0 tile - return it to block duplicate generation
+                    if (!window.__L0TileGeneration.delayed) window.__L0TileGeneration.delayed = 0;
+                    window.__L0TileGeneration.delayed++;
+                    return cachedTile;
+                  }
+                }
+                // No cached tile yet - this is the first request, allow it to proceed
+              }
+
+              // Track L0 tile generation for diagnostics
+              const totalPages = this.pageCount;
+              const lowResCache = this.pageStreamer._getPageCache('low');
+              const cachedPageCount = lowResCache.size;
+              const cacheCompleteness = totalPages ? (cachedPageCount / totalPages) : 0;
+
+              if (!window.__L0TileGeneration.calls) window.__L0TileGeneration.calls = [];
+              window.__L0TileGeneration.calls.push({
+                time: now,
+                level, x, y,
+                timeSinceFirst,
+                cachedPages: cachedPageCount,
+                totalPages: totalPages,
+                completeness: Math.round(cacheCompleteness * 100) + '%',
+                timestamp: new Date().toISOString()
+              });
+            }
+
             // Calculate which pages this tile needs
             const scale = Math.pow(2, level - this.maxLevel);
             const tileWidthInGrid = this.tileWidth / scale;
@@ -1376,8 +1562,10 @@
             const renderRight = tileRight + overlapInGrid;
             const renderBottom = tileBottom + overlapInGrid;
 
-            // Calculate which pages this tile intersects (use extended boundaries for rendering)
-            const neededPages = this._calculateIntersectingPages(renderLeft, renderTop, renderRight, renderBottom);
+            // Calculate which pages this tile intersects (use base boundaries, not extended)
+            // Using extended boundaries causes tiles to detect pages they barely overlap (1px)
+            // resulting in incorrect cache keys like "p1-3" instead of "p1"
+            const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
 
             // Two-tier cache key strategy:
             // 1. Whole pages → page-range keys (max dedup), with position for fractional tile levels
@@ -1691,6 +1879,18 @@
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
             const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
 
+            // Track L0 tile rendering for diagnostics
+            if (level === 0) {
+              if (!window.__L0TileGeneration) window.__L0TileGeneration = { calls: [], renders: [] };
+              if (!window.__L0TileGeneration.renders) window.__L0TileGeneration.renders = [];
+              window.__L0TileGeneration.renders.push({
+                time: Date.now(),
+                key,
+                neededPages: [...neededPages],
+                resolution
+              });
+            }
+
             // Tile boundaries (extended with overlap) in grid coordinates
 
             // Configure interpolation based on zoom level
@@ -1866,17 +2066,54 @@
 
               // On-demand rendering: Immediately start rendering the missing page
               // This is fire-and-forget - we use fallback now, but the page will be ready soon
-              if (CONFIG.ON_DEMAND_RENDERING_ENABLED) {
+              // Deduplicate: Only trigger if not already rendering (exploit page periodicity)
+              const renderKey = `${pageNum}_${resolution}`;
+              const alreadyRendering = this.pageStreamer.renderingInProgress.has(renderKey);
+
+              // Track why on-demand was skipped for L0 diagnostics
+              if (level === 0 && !window.__L0OnDemandSkipped) {
+                window.__L0OnDemandSkipped = { enabled: CONFIG.ON_DEMAND_RENDERING_ENABLED, skipped: [] };
+              }
+
+              if (!CONFIG.ON_DEMAND_RENDERING_ENABLED && level === 0) {
+                window.__L0OnDemandSkipped.skipped.push({pageNum, reason: 'disabled'});
+              } else if (alreadyRendering && level === 0) {
+                window.__L0OnDemandSkipped.skipped.push({pageNum, reason: 'already_rendering'});
+              }
+
+              if (CONFIG.ON_DEMAND_RENDERING_ENABLED && !alreadyRendering) {
                 this.stats.onDemandRenders++;
+
+                // Track on-demand render for L0 diagnostics
+                if (level === 0) {
+                  if (!window.__L0OnDemandTracking) window.__L0OnDemandTracking = { triggered: [], completed: [], failed: [] };
+                  window.__L0OnDemandTracking.triggered.push({pageNum, resolution, time: Date.now()});
+                }
+
                 // Fire async render (don't await - use fallback for now)
                 this.pageStreamer.renderPage(pageNum, resolution)
                   .then(() => {
                     this.stats.onDemandHits++;
-                    if (CONFIG.DEBUG_TILES) {
-                      console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, tile will update on next OSD request`);
+
+                    // Track completion for L0 diagnostics
+                    if (level === 0) {
+                      window.__L0OnDemandTracking.completed.push({pageNum, resolution, time: Date.now()});
                     }
+
+                    if (CONFIG.DEBUG_TILES) {
+                      console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, scheduling tile refresh`);
+                    }
+
+                    // CRITICAL: Schedule tile refresh to show newly-rendered pages
+                    // Without this, tiles with blank pages won't update even though pages are now rendered
+                    // Uses debounced refresh to batch multiple page renders (100ms timeout)
+                    this.scheduleRedraw();
                   })
                   .catch(err => {
+                    // Track failure for L0 diagnostics
+                    if (level === 0) {
+                      window.__L0OnDemandTracking.failed.push({pageNum, resolution, error: err.message, time: Date.now()});
+                    }
                     console.warn(`[On-Demand] Failed to render page ${pageNum} at ${resolution}:`, err);
                   });
               }
@@ -1891,10 +2128,14 @@
               if (window.__tileCacheDebug.length > 8) window.__tileCacheDebug.shift();
             }
 
-            // Fallback logic: prevent high-res from being downsampled excessively
+            // Fallback logic: prevent excessive downsampling in either direction
             if (!pageCanvas && resolution === 'high') {
-              // High-res requested but not available, use low-res (always safe)
+              // High-res requested but not available - try low-res fallback
+              // canvasScaleFactor with low-res = PDF_LOW_RES_SCALE / PDF_RENDER_SCALE
+              // = 0.3 / 4.0 = 0.075
+              // Show downsampled content rather than empty tiles
               pageCanvas = this.pageStreamer.lowResPageCache.get(`${pageNum}_low`);
+              // On-demand rendering will eventually replace with high-res
             } else if (!pageCanvas && resolution === 'low') {
               // Low-res requested but not available - check if high-res would be acceptable
               // Calculate sampling ratio: how much would we downsample high-res?
@@ -1905,16 +2146,21 @@
                 pageCanvas = this.pageStreamer.highResPageCache.get(`${pageNum}_high`);
               }
             }
-            // Note: At low scales, if low-res unavailable, we leave blank rather than
-            // waste memory/CPU on heavily downsampled high-res (sampling < 0.5x)
+            // Note: If fallback would require excessive downsampling, we leave blank
+            // rather than show extremely blurry content. On-demand rendering will fill it in.
 
             if (!pageCanvas) {
+              // Track why drawing failed for diagnostics
+              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
+              window.__drawPageDebug.failures.push({
+                level, pageNum, resolution,
+                reason: 'no_canvas',
+                requestedRes: resolution,
+                highAvail: this.pageStreamer.hasPage(pageNum, 'high'),
+                lowAvail: this.pageStreamer.hasPage(pageNum, 'low')
+              });
+
               // Neither resolution available yet - tile will be blank
-              // Warnings disabled to reduce log noise during initial loading
-              // if (CONFIG.DEBUG_MODE && this.cacheGeneration >= 2) {
-              //   const genInfo = this.cacheGeneration ? ` gen${this.cacheGeneration}` : '';
-              //   console.warn(`[Drawing] Page ${pageNum} unavailable for tile at level ${level}${genInfo}, resolution=${resolution}, scale=${scale.toFixed(3)}`);
-              // }
               return false;
             }
 
@@ -1932,7 +2178,10 @@
 
             // Diagnostic: Warn if scale factor is unexpectedly small (indicates wrong resolution)
             if (CONFIG.DEBUG_MODE && level > this.minimapMaxLevel && canvasScaleFactor < 0.5) {
-              console.warn(`[TileStreamer] L${level} page ${pageNum}: canvasScaleFactor=${canvasScaleFactor.toFixed(3)} unexpectedly low! Canvas: ${pageCanvas.width}px, Grid: ${pageWidth}px. Using ${resolution} resolution but should use high-res at this zoom level.`);
+              // Detect actual resolution being used (not just requested)
+              const actualResolution = canvasScaleFactor < 0.15 ? 'low' : 'high';
+              const resolutionMatch = actualResolution === resolution ? 'as requested' : `fallback (requested ${resolution})`;
+              console.warn(`[TileStreamer] L${level} page ${pageNum}: Using ${actualResolution}-res ${resolutionMatch} at deep zoom. canvasScaleFactor=${canvasScaleFactor.toFixed(3)} (canvas ${pageCanvas.width}px / grid ${pageWidth}px). Expected high-res (≥0.5).`);
             }
 
             // Source coordinates (within the page canvas, adjusted for resolution)
@@ -1966,16 +2215,65 @@
 
             // Debug: Disabled per-draw bounds checking
 
+            // Validate drawing coordinates before attempting draw
+            if (srcW <= 0 || srcH <= 0 || destW <= 0 || destH <= 0) {
+              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
+              window.__drawPageDebug.failures.push({
+                level, pageNum, resolution,
+                reason: 'invalid_dimensions',
+                srcW, srcH, destW, destH,
+                canvasScaleFactor
+              });
+              return false;
+            }
+
+            // Bounds check with floating point tolerance (1px epsilon)
+            // Floating point math can produce values like 124.00000000000001 when canvas is 124px
+            // Allow small overshoot to prevent rejecting valid draws due to FP precision errors
+            const epsilon = 1.0;
+            const maxSrcX = pageCanvas.width + epsilon;
+            const maxSrcY = pageCanvas.height + epsilon;
+
+            if (srcX < -epsilon || srcY < -epsilon || srcX + srcW > maxSrcX || srcY + srcH > maxSrcY) {
+              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
+              window.__drawPageDebug.failures.push({
+                level, pageNum, resolution,
+                reason: 'source_out_of_bounds',
+                srcX, srcY, srcW, srcH,
+                canvasWidth: pageCanvas.width,
+                canvasHeight: pageCanvas.height,
+                canvasScaleFactor,
+                overshootX: (srcX + srcW) - pageCanvas.width,
+                overshootY: (srcY + srcH) - pageCanvas.height
+              });
+              return false;
+            }
+
             // Draw
-            this.tileCtx.drawImage(
-              pageCanvas,
-              srcX, srcY, srcW, srcH,
-              destX, destY, destW, destH
-            );
+            try {
+              this.tileCtx.drawImage(
+                pageCanvas,
+                srcX, srcY, srcW, srcH,
+                destX, destY, destW, destH
+              );
 
-            // Debug: Disabled per-draw logging
+              // Track successful draw for L0 diagnostics
+              if (level === 0) {
+                if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [], successes: [] };
+                if (!window.__drawPageDebug.successes) window.__drawPageDebug.successes = [];
+                window.__drawPageDebug.successes.push({ pageNum, resolution });
+              }
 
-            return true;
+              return true;
+            } catch (err) {
+              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
+              window.__drawPageDebug.failures.push({
+                level, pageNum, resolution,
+                reason: 'draw_exception',
+                error: err.message
+              });
+              return false;
+            }
           }
         }
 
@@ -2059,6 +2357,10 @@
               homeFillsViewer: false,
               immediateRender: true,
               preload: true,
+              maxImageCacheCount: 20, // Small cache to preserve successful tiles, prevent serving degraded regenerations
+              // Fallback options if this doesn't work:
+              // - Option 2: Throttle/dedupe L0 tile generation requests
+              // - Option 3: Delay L0 generation until page cache is complete
               zoomPerScroll: 1.5, // Increase scroll wheel sensitivity (default: 1.2)
               // Ensure touch gestures have same zoom limits as desktop
               gestureSettingsMouse: {
@@ -2092,6 +2394,9 @@
               // Tell OSD our tiles don't have transparency to avoid transparency rendering artifacts
               // See: https://github.com/openseadragon/openseadragon/issues/2515
               viewer.world.getItemAt(0).source.hasTransparency = () => false;
+
+              // Signal viewer is fully initialized and ready for testing
+              window.viewerReady = true;
 
               if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
                 // Debug mode: Show the entire grid at once (fills ~90% of viewport per minZoomImageRatio)
@@ -2355,6 +2660,9 @@
               const pageStreamer = new PageStreamer(pdf);
               window.pageStreamerRef = pageStreamer; // Store globally for TileStreamer access
 
+              // Update cache sizes based on PDF page count
+              pageStreamer.updateCacheSizes(pdf.numPages, isIOSSafari);
+
               // Phase 1: Render priority high-res pages FIRST
               const priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
               console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
@@ -2392,34 +2700,43 @@
                 }
               );
 
-              // Phase 3: Initialize viewer (user can interact immediately!)
+              // Phase 3: Render ALL remaining pages BEFORE viewer initialization
+              // Complete all page rendering NOW to avoid L0 tile issues
+              // Use same fast batch approach as initial rendering
+              const remainingPages = [];
+              for (let i = 1; i <= pdf.numPages; i++) {
+                if (!pageStreamer.hasPage(i, 'low')) {
+                  remainingPages.push(i);
+                }
+              }
+
+              if (remainingPages.length > 0) {
+                setLoadingStatus(`Rendering remaining ${remainingPages.length} pages...`);
+                console.log(`  Rendering remaining ${remainingPages.length} pages with fast batching...`);
+                await pageStreamer.renderBatch(
+                  remainingPages,
+                  'low',
+                  20,  // Same batch size as initial rendering (fast!)
+                  (current, total) => {
+                    setLoadingStatus(`Rendering minimap (${initialLowResCount + current}/${pdf.numPages})...`);
+                  }
+                );
+                console.log(`  All pages rendered!`);
+              }
+
+              // Phase 4: Initialize viewer (user can interact, all pages ready!)
               setLoadingStatus('Initializing viewer...');
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
+              // Note: window.viewerReady is set in the viewer's 'open' event handler
               setLoadingStatus('');
               setIsLoading(false);
 
               const cacheStats = pageStreamer.getCacheStats();
               console.log(`Initial rendering complete:`);
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
-              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
-              console.log(`  Navigator: shown immediately`);
-
-              // Phase 4: Background render remaining pages
-              // Parallel viewport-aware rendering for optimal performance
-              if (CONFIG.PARALLEL_RENDERING_ENABLED) {
-                console.log(`  Strategy: Parallel viewport-aware rendering for optimal coverage`);
-                renderParallelViewportAware(pageStreamer, viewer, pdf.numPages, 'low');
-              } else {
-                // Fallback to sequential rendering
-                if (!isIOSSafari) {
-                  console.log(`  Strategy: Sequential render all pages in background`);
-                  renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, false);
-                } else {
-                  console.log(`  Strategy (iOS): Lazy sequential rendering`);
-                  renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, true);
-                }
-              }
+              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL pages rendered!)`);
+              console.log(`  Navigator: shown with complete grid`)
 
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
@@ -2560,11 +2877,13 @@
            */
           const renderParallelViewportAware = async (pageStreamer, viewer, numPages, resolution = 'low') => {
             // Detect number of parallel workers
+            // Sweet spot appears to be ~10 workers for parallel canvas rendering
+            // Too many workers causes contention, too few is slow
             const isIOSSafari = /iPhone|iPad|iPod/.test(navigator.userAgent);
             const cpuCores = navigator.hardwareConcurrency || 4;
             const maxWorkers = isIOSSafari
               ? CONFIG.PARALLEL_WORKERS_MOBILE
-              : (CONFIG.PARALLEL_WORKERS_DESKTOP || cpuCores);
+              : (CONFIG.PARALLEL_WORKERS_DESKTOP || 10);
 
             console.log(`[Parallel Render] Starting with ${maxWorkers} workers (CPU cores: ${cpuCores}, iOS: ${isIOSSafari})`);
 
@@ -2622,6 +2941,9 @@
               renderStats.activeWorkers = batch.length;
               renderStats.maxActiveWorkers = Math.max(renderStats.maxActiveWorkers, batch.length);
 
+              const batchStartTime = performance.now();
+              console.log(`[Parallel Render] Batch ${reprioritizeCounter}: rendering ${batch.length} pages (${batch.slice(0, 5).join(', ')}...)`);
+
               // Render batch in parallel
               const promises = batch.map(pageNum =>
                 pageStreamer.renderPage(pageNum, resolution)
@@ -2641,6 +2963,9 @@
 
               // Wait for batch to complete
               await Promise.all(promises);
+
+              const batchElapsed = ((performance.now() - batchStartTime) / 1000).toFixed(2);
+              console.log(`[Parallel Render] Batch ${reprioritizeCounter} complete: ${batch.length} pages in ${batchElapsed}s (${(batch.length / parseFloat(batchElapsed)).toFixed(1)} pages/sec)`);
 
               // Update diagnostics
               renderStats.activeWorkers = 0;
@@ -3041,6 +3366,124 @@
                 const stats = window.__PDFGridDiagnostics.getCacheStats();
                 const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
                 alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.DEBUG_TILES ? 'ON' : 'OFF'}${tileDebug}`);
+              },
+              // Test tile intersection calculation
+              getTileIntersections: (level, x, y) => {
+                if (!tileStreamer) return null;
+
+                const scale = Math.pow(2, level - tileStreamer.maxLevel);
+                const tileWidthInGrid = tileStreamer.tileWidth / scale;
+                const tileHeightInGrid = tileStreamer.tileHeight / scale;
+
+                const tileLeft = x * tileWidthInGrid;
+                const tileTop = y * tileHeightInGrid;
+                const tileRight = Math.min(tileLeft + tileWidthInGrid, tileStreamer.gridDims.totalWidth);
+                const tileBottom = Math.min(tileTop + tileHeightInGrid, tileStreamer.gridDims.totalHeight);
+
+                const pages = tileStreamer._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+
+                return {
+                  level, x, y,
+                  tileBounds: {
+                    left: tileLeft.toFixed(1),
+                    top: tileTop.toFixed(1),
+                    right: tileRight.toFixed(1),
+                    bottom: tileBottom.toFixed(1)
+                  },
+                  intersectingPages: pages.sort((a, b) => a - b),
+                  pageCount: pages.length
+                };
+              },
+              // Diagnose L0 tile incompleteness
+              diagnoseL0Tile: () => {
+                if (!tileStreamer || !pageStreamer) return null;
+
+                // Get what pages L0 should contain
+                const scale = Math.pow(2, 0 - tileStreamer.maxLevel);
+                const tileWidthInGrid = tileStreamer.tileWidth / scale;
+                const tileHeightInGrid = tileStreamer.tileHeight / scale;
+                const tileLeft = 0;
+                const tileTop = 0;
+                const tileRight = Math.min(tileWidthInGrid, tileStreamer.gridDims.totalWidth);
+                const tileBottom = Math.min(tileHeightInGrid, tileStreamer.gridDims.totalHeight);
+
+                const neededPages = tileStreamer._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                const resolution = tileStreamer._getResolutionForLevel(0); // Should be 'low' for L0
+
+                // Check which pages are actually cached
+                const cachedPages = [];
+                const missingPages = [];
+                neededPages.forEach(pageNum => {
+                  const hasCached = pageStreamer.hasPage(pageNum, resolution);
+                  if (hasCached) {
+                    cachedPages.push(pageNum);
+                  } else {
+                    missingPages.push(pageNum);
+                  }
+                });
+
+                // Get on-demand tracking data
+                const tracking = window.__L0OnDemandTracking || { triggered: [], completed: [], failed: [] };
+                const skipped = window.__L0OnDemandSkipped || { enabled: true, skipped: [] };
+
+                // Get draw page debug data
+                const drawDebug = window.__drawPageDebug || { failures: [], successes: [] };
+                const l0Failures = drawDebug.failures.filter(f => f.level === 0);
+                const l0Successes = drawDebug.successes || [];
+
+                // Group failures by reason
+                const failuresByReason = {};
+                l0Failures.forEach(f => {
+                  if (!failuresByReason[f.reason]) failuresByReason[f.reason] = [];
+                  failuresByReason[f.reason].push(f);
+                });
+
+                return {
+                  neededPages: neededPages.sort((a, b) => a - b),
+                  neededCount: neededPages.length,
+                  resolution: resolution,
+                  cached: cachedPages.sort((a, b) => a - b),
+                  cachedCount: cachedPages.length,
+                  missing: missingPages.sort((a, b) => a - b),
+                  missingCount: missingPages.length,
+                  completeness: ((cachedPages.length / neededPages.length) * 100).toFixed(1) + '%',
+                  lowResCacheSize: pageStreamer.lowResPageCache.size,
+                  highResCacheSize: pageStreamer.highResPageCache.size,
+                  onDemandStats: tileStreamer.stats,
+                  onDemandTracking: {
+                    enabled: skipped.enabled,
+                    triggered: tracking.triggered.map(t => t.pageNum).sort((a, b) => a - b),
+                    triggeredCount: tracking.triggered.length,
+                    completed: tracking.completed.map(t => t.pageNum).sort((a, b) => a - b),
+                    completedCount: tracking.completed.length,
+                    failed: tracking.failed.map(t => ({page: t.pageNum, error: t.error})),
+                    failedCount: tracking.failed.length,
+                    skippedCount: skipped.skipped.length,
+                    skippedByReason: {
+                      disabled: skipped.skipped.filter(s => s.reason === 'disabled').length,
+                      alreadyRendering: skipped.skipped.filter(s => s.reason === 'already_rendering').length
+                    },
+                    skippedPages: [...new Set(skipped.skipped.map(s => s.pageNum))].sort((a, b) => a - b)
+                  },
+                  drawingDebug: {
+                    totalFailures: l0Failures.length,
+                    totalSuccesses: l0Successes.length,
+                    failuresByReason: Object.keys(failuresByReason).map(reason => ({
+                      reason,
+                      count: failuresByReason[reason].length,
+                      examples: failuresByReason[reason].slice(0, 3)
+                    })),
+                    successfulPages: [...new Set(l0Successes.map(s => s.pageNum))].sort((a, b) => a - b)
+                  },
+                  tileGeneration: {
+                    generateTileCalls: (window.__L0TileGeneration?.calls || []).length,
+                    renderTileCalls: (window.__L0TileGeneration?.renders || []).length,
+                    delayedCalls: window.__L0TileGeneration?.delayed || 0,
+                    callTimeline: window.__L0TileGeneration?.calls || [],
+                    renderTimeline: window.__L0TileGeneration?.renders || []
+                  },
+                  parallelRendering: window.__parallelRenderStats || null
+                };
               }
             };
 

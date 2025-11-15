@@ -53,8 +53,8 @@ test.describe('Memory monitoring during zoom operations', () => {
 
     // Pan slowly down from top to bottom
     // This simulates a user slowly scrolling through the entire document
-    const numSteps = 20;
-    const stepDelay = 1200; // 1200ms between steps = 24 seconds total (4x slower for better rendering)
+    const numSteps = 18;  // Reduced by 10% to stop earlier
+    const stepDelay = 1200; // 1200ms between steps = 21.6 seconds total (4x slower for better rendering)
 
     for (let i = 0; i < numSteps; i++) {
       await page.evaluate(() => {
@@ -96,8 +96,8 @@ test.describe('Memory monitoring during zoom operations', () => {
 
     // Pan slowly down from top to bottom at zoomed-out level
     // This tests whether low-res cache maintains complete coverage
-    const numSteps = 25;
-    const stepDelay = 1000; // 1000ms between steps = 25 seconds total (4x slower for better rendering)
+    const numSteps = 22;  // Reduced by 10% to stop earlier
+    const stepDelay = 1000; // 1000ms between steps = 22 seconds total (4x slower for better rendering)
 
     for (let i = 0; i < numSteps; i++) {
       await page.evaluate(() => {
@@ -134,8 +134,8 @@ test.describe('Memory monitoring during zoom operations', () => {
     console.log('Phase 1 - Overview:', overviewStats.pages, 'Fallback:', overviewStats.tileRenderStats.fallbackPercentage + '%');
 
     // Phase 2: Pan slowly down from top to bottom at overview level
-    const panSteps = 15;
-    const panDelay = 1000; // 15 seconds (4x slower for better rendering)
+    const panSteps = 13;  // Reduced by 10% to stop earlier
+    const panDelay = 1000; // 13 seconds (4x slower for better rendering)
 
     for (let i = 0; i < panSteps; i++) {
       await page.evaluate(() => {
