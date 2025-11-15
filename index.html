@@ -131,6 +131,12 @@
           // On-Demand Rendering (cache miss handling)
           ON_DEMAND_RENDERING_ENABLED: true, // Render immediately when tile requests missing page
 
+          // Predictive Rendering (velocity-based)
+          PREDICTIVE_RENDERING_ENABLED: true,  // Enable velocity-based predictive rendering
+          VELOCITY_HISTORY_SIZE: 3,            // Number of viewport positions to track for velocity calculation (smaller = more responsive)
+          VELOCITY_LOOKAHEAD_MULTIPLIER: 8.0,  // How far ahead to predict (multiplier of velocity magnitude)
+          VELOCITY_DIRECTION_WEIGHT: 2.5,      // Weight for directional prediction (higher = more aggressive ahead-of-motion rendering)
+
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
@@ -2428,8 +2434,51 @@
           };
 
           /**
-           * Calculate viewport-aware priority for pages
-           * Returns pages sorted by distance from viewport (closest = highest priority)
+           * Viewport history tracker for velocity-based prediction
+           */
+          const viewportHistory = {
+            positions: [], // Array of {x, y, timestamp}
+            maxSize: CONFIG.VELOCITY_HISTORY_SIZE,
+
+            add(x, y) {
+              const now = performance.now();
+              this.positions.push({ x, y, timestamp: now });
+
+              // Keep only recent history
+              if (this.positions.length > this.maxSize) {
+                this.positions.shift();
+              }
+            },
+
+            getVelocity() {
+              if (this.positions.length < 2) {
+                return { vx: 0, vy: 0, magnitude: 0 };
+              }
+
+              // Calculate velocity from first to last position in history
+              const first = this.positions[0];
+              const last = this.positions[this.positions.length - 1];
+              const dt = (last.timestamp - first.timestamp) / 1000; // seconds
+
+              if (dt === 0) {
+                return { vx: 0, vy: 0, magnitude: 0 };
+              }
+
+              const vx = (last.x - first.x) / dt;
+              const vy = (last.y - first.y) / dt;
+              const magnitude = Math.sqrt(vx * vx + vy * vy);
+
+              return { vx, vy, magnitude };
+            },
+
+            clear() {
+              this.positions = [];
+            }
+          };
+
+          /**
+           * Calculate viewport-aware priority for pages with velocity-based prediction
+           * Returns pages sorted by distance from predicted viewport (closest = highest priority)
            */
           const calculateViewportPriority = (viewer, numPages, gridPattern) => {
             if (!viewer?.viewport) {
@@ -2442,7 +2491,22 @@
             const centerX = bounds.x + bounds.width / 2;
             const centerY = bounds.y + bounds.height / 2;
 
-            // Calculate priority for each page based on distance from viewport center
+            // Track viewport position for velocity calculation
+            if (CONFIG.PREDICTIVE_RENDERING_ENABLED) {
+              viewportHistory.add(centerX, centerY);
+            }
+
+            // Get current velocity
+            const velocity = CONFIG.PREDICTIVE_RENDERING_ENABLED
+              ? viewportHistory.getVelocity()
+              : { vx: 0, vy: 0, magnitude: 0 };
+
+            // Calculate predicted viewport center based on velocity
+            const lookahead = velocity.magnitude * CONFIG.VELOCITY_LOOKAHEAD_MULTIPLIER;
+            const predictedCenterX = centerX + (velocity.magnitude > 0 ? (velocity.vx / velocity.magnitude) * lookahead : 0);
+            const predictedCenterY = centerY + (velocity.magnitude > 0 ? (velocity.vy / velocity.magnitude) * lookahead : 0);
+
+            // Calculate priority for each page based on distance from predicted viewport
             const pagePriorities = [];
             for (let pageNum = 1; pageNum <= numPages; pageNum++) {
               // Find page position in grid (simplified - assumes pages appear in order)
@@ -2456,17 +2520,37 @@
               const pageX = col + 0.5;
               const pageY = row + 0.5;
 
-              // Distance from viewport center
-              const distance = Math.sqrt(
+              // Distance from current viewport center
+              const currentDistance = Math.sqrt(
                 Math.pow(pageX - centerX, 2) +
                 Math.pow(pageY - centerY, 2)
               );
 
-              pagePriorities.push({ pageNum, distance });
+              // Distance from predicted viewport center
+              const predictedDistance = Math.sqrt(
+                Math.pow(pageX - predictedCenterX, 2) +
+                Math.pow(pageY - predictedCenterY, 2)
+              );
+
+              // Weighted distance: blend current and predicted based on velocity magnitude
+              // Higher velocity = more weight on predicted position
+              const velocityWeight = CONFIG.PREDICTIVE_RENDERING_ENABLED
+                ? Math.min(velocity.magnitude * CONFIG.VELOCITY_DIRECTION_WEIGHT, 1.0)
+                : 0;
+              const distance = (1 - velocityWeight) * currentDistance + velocityWeight * predictedDistance;
+
+              pagePriorities.push({ pageNum, distance, currentDistance, predictedDistance, velocityWeight });
             }
 
-            // Sort by distance (closest first)
+            // Sort by weighted distance (closest to predicted path = highest priority)
             pagePriorities.sort((a, b) => a.distance - b.distance);
+
+            // Debug logging for first re-prioritization
+            if (CONFIG.DEBUG_MODE && velocity.magnitude > 0.1) {
+              const top5 = pagePriorities.slice(0, 5).map(p => p.pageNum);
+              console.log(`[Predictive] Velocity: (${velocity.vx.toFixed(2)}, ${velocity.vy.toFixed(2)}), mag=${velocity.magnitude.toFixed(2)}, weight=${pagePriorities[0].velocityWeight.toFixed(2)}, top5: ${top5.join(',')}`);
+            }
+
             return pagePriorities.map(p => p.pageNum);
           };
 
