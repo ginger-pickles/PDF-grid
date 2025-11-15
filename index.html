@@ -122,6 +122,12 @@
           // Mobile-specific performance (override above if on iOS)
           MOBILE_RENDER_BATCH_SIZE: 1,   // Render one page at a time on iOS to minimize memory spikes
 
+          // Parallel Rendering (viewport-aware)
+          PARALLEL_RENDERING_ENABLED: true,  // Enable parallel viewport-aware rendering
+          PARALLEL_WORKERS_DESKTOP: null,    // Auto-detect CPU cores (null = navigator.hardwareConcurrency)
+          PARALLEL_WORKERS_MOBILE: 2,        // Conservative for iOS (memory-limited)
+          VIEWPORT_PRIORITY_RADIUS: 2,       // Pages within N pages of viewport = high priority
+
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
@@ -2371,14 +2377,20 @@
               console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
               console.log(`  Navigator: shown immediately`);
 
-              // Phase 4: Background render remaining pages (sequential)
-              // iOS: Lazy rendering with larger cache - prioritizes coverage over speed
-              if (!isIOSSafari) {
-                console.log(`  Strategy: Render all pages in background for complete grid`);
-                renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, false);
+              // Phase 4: Background render remaining pages
+              // Parallel viewport-aware rendering for optimal performance
+              if (CONFIG.PARALLEL_RENDERING_ENABLED) {
+                console.log(`  Strategy: Parallel viewport-aware rendering for optimal coverage`);
+                renderParallelViewportAware(pageStreamer, viewer, pdf.numPages, 'low');
               } else {
-                console.log(`  Strategy (iOS): Lazy background rendering for complete low-res coverage`);
-                renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, true);
+                // Fallback to sequential rendering
+                if (!isIOSSafari) {
+                  console.log(`  Strategy: Sequential render all pages in background`);
+                  renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, false);
+                } else {
+                  console.log(`  Strategy (iOS): Lazy sequential rendering`);
+                  renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, true);
+                }
               }
 
             } catch (error) {
@@ -2391,6 +2403,141 @@
                 throw error;
               }
             }
+          };
+
+          /**
+           * Calculate viewport-aware priority for pages
+           * Returns pages sorted by distance from viewport (closest = highest priority)
+           */
+          const calculateViewportPriority = (viewer, numPages, gridPattern) => {
+            if (!viewer?.viewport) {
+              // Fallback: sequential order if viewport not ready
+              return Array.from({length: numPages}, (_, i) => i + 1);
+            }
+
+            const viewport = viewer.viewport;
+            const bounds = viewport.getBounds();
+            const centerX = bounds.x + bounds.width / 2;
+            const centerY = bounds.y + bounds.height / 2;
+
+            // Calculate priority for each page based on distance from viewport center
+            const pagePriorities = [];
+            for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+              // Find page position in grid (simplified - assumes pages appear in order)
+              // For more complex grids, would need to search gridPattern
+              const pageIndex = pageNum - 1;
+              const gridSize = Math.ceil(Math.sqrt(numPages));
+              const row = Math.floor(pageIndex / gridSize);
+              const col = pageIndex % gridSize;
+
+              // Calculate page center in viewport coordinates
+              const pageX = col + 0.5;
+              const pageY = row + 0.5;
+
+              // Distance from viewport center
+              const distance = Math.sqrt(
+                Math.pow(pageX - centerX, 2) +
+                Math.pow(pageY - centerY, 2)
+              );
+
+              pagePriorities.push({ pageNum, distance });
+            }
+
+            // Sort by distance (closest first)
+            pagePriorities.sort((a, b) => a.distance - b.distance);
+            return pagePriorities.map(p => p.pageNum);
+          };
+
+          /**
+           * Parallel viewport-aware rendering
+           * Renders pages in parallel based on proximity to viewport
+           */
+          const renderParallelViewportAware = async (pageStreamer, viewer, numPages, resolution = 'low') => {
+            // Detect number of parallel workers
+            const isIOSSafari = /iPhone|iPad|iPod/.test(navigator.userAgent);
+            const cpuCores = navigator.hardwareConcurrency || 4;
+            const maxWorkers = isIOSSafari
+              ? CONFIG.PARALLEL_WORKERS_MOBILE
+              : (CONFIG.PARALLEL_WORKERS_DESKTOP || cpuCores);
+
+            console.log(`[Parallel Render] Starting with ${maxWorkers} workers (CPU cores: ${cpuCores}, iOS: ${isIOSSafari})`);
+
+            // Diagnostics tracking
+            const renderStats = {
+              totalPages: numPages,
+              rendered: 0,
+              skipped: 0,  // Already cached
+              failed: 0,
+              startTime: performance.now(),
+              activeWorkers: 0,
+              maxActiveWorkers: 0
+            };
+
+            // Store stats globally for diagnostics
+            window.__parallelRenderStats = renderStats;
+
+            // Get priority-sorted page list
+            const priorityPages = calculateViewportPriority(viewer, numPages, null);
+            const cacheKey = `_${resolution}`;
+
+            // Filter out already-cached pages
+            const pagesToRender = priorityPages.filter(pageNum => {
+              const cached = pageStreamer.lowResPageCache.has(`${pageNum}${cacheKey}`) ||
+                            pageStreamer.highResPageCache.has(`${pageNum}${cacheKey}`);
+              if (cached) renderStats.skipped++;
+              return !cached;
+            });
+
+            console.log(`[Parallel Render] Queue: ${pagesToRender.length} pages to render (${renderStats.skipped} already cached)`);
+
+            // Render pages in parallel batches
+            let index = 0;
+            while (index < pagesToRender.length) {
+              // Check if loading was cancelled
+              if (loadingCancelledRef.current) {
+                console.log('[Parallel Render] Cancelled by user');
+                return renderStats;
+              }
+
+              // Get next batch of pages
+              const batch = pagesToRender.slice(index, index + maxWorkers);
+              renderStats.activeWorkers = batch.length;
+              renderStats.maxActiveWorkers = Math.max(renderStats.maxActiveWorkers, batch.length);
+
+              // Render batch in parallel
+              const promises = batch.map(pageNum =>
+                pageStreamer.renderPage(pageNum, resolution)
+                  .then(() => {
+                    renderStats.rendered++;
+                    if (renderStats.rendered % 10 === 0) {
+                      const elapsed = ((performance.now() - renderStats.startTime) / 1000).toFixed(1);
+                      const rate = (renderStats.rendered / elapsed).toFixed(1);
+                      console.log(`[Parallel Render] Progress: ${renderStats.rendered}/${pagesToRender.length} (${rate} pages/sec, ${renderStats.activeWorkers} workers)`);
+                    }
+                  })
+                  .catch(err => {
+                    console.error(`[Parallel Render] Failed page ${pageNum}:`, err);
+                    renderStats.failed++;
+                  })
+              );
+
+              // Wait for batch to complete
+              await Promise.all(promises);
+
+              // Update diagnostics
+              renderStats.activeWorkers = 0;
+
+              // Yield to browser after each batch
+              await new Promise(resolve => setTimeout(resolve, 0));
+
+              index += maxWorkers;
+            }
+
+            const elapsed = ((performance.now() - renderStats.startTime) / 1000).toFixed(2);
+            const rate = (renderStats.rendered / elapsed).toFixed(1);
+            console.log(`[Parallel Render] Complete: ${renderStats.rendered} pages in ${elapsed}s (${rate} pages/sec, max ${renderStats.maxActiveWorkers} workers)`);
+
+            return renderStats;
           };
 
           /**
@@ -2744,6 +2891,26 @@
                 pageStreamer?.clear();
                 tileStreamer?.tileCache.cache.clear();
                 return 'Caches cleared';
+              },
+              getParallelRenderStats: () => {
+                const stats = window.__parallelRenderStats || null;
+                if (!stats) return null;
+
+                const elapsed = stats.startTime ? ((performance.now() - stats.startTime) / 1000).toFixed(2) : 0;
+                const rate = elapsed > 0 ? (stats.rendered / elapsed).toFixed(1) : 0;
+
+                return {
+                  enabled: CONFIG.PARALLEL_RENDERING_ENABLED,
+                  workers: CONFIG.PARALLEL_WORKERS_DESKTOP || navigator.hardwareConcurrency || 4,
+                  totalPages: stats.totalPages,
+                  rendered: stats.rendered,
+                  skipped: stats.skipped,
+                  failed: stats.failed,
+                  activeWorkers: stats.activeWorkers,
+                  maxActiveWorkers: stats.maxActiveWorkers,
+                  elapsedSeconds: parseFloat(elapsed),
+                  pagesPerSecond: parseFloat(rate)
+                };
               },
               // iOS-friendly diagnostic display
               showDebug: () => {
