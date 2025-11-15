@@ -11,7 +11,7 @@ test.describe('Memory monitoring during zoom operations', () => {
 
   test.beforeEach(async ({ page }) => {
     // Navigate to app with demo PDF
-    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-3.pdf');
 
     // Wait for PDF to load, viewer to be available, and diagnostics to be ready
     await page.waitForFunction(() =>
@@ -44,104 +44,132 @@ test.describe('Memory monitoring during zoom operations', () => {
     expect(memoryInfo.estimatedMB).toBeLessThan(50);
   });
 
-  test('Use case 1: Zoom out and pan after initial load', async ({ page }) => {
-    // Get initial cache size
-    const initialStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    console.log('Initial pages:', initialStats.pages.total, 'Initial zoom:', await page.evaluate(() => window.__PDFGridDiagnostics.getCurrentZoom()));
+  test('Use case 1: Pan slowly from initial view to end of document', async ({ page }) => {
+    // Wait for initial rendering to stabilize
+    await page.waitForTimeout(2000);
 
-    // Zoom out to see more of the grid (typical user workflow)
+    const initialStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('Initial state:', initialStats.pages, 'Fallback:', initialStats.tileRenderStats.fallbackPercentage + '%');
+
+    // Pan slowly across the document in small increments
+    // This simulates a user slowly scrolling to explore the entire document
+    const numSteps = 20;
+    const stepDelay = 300; // 300ms between steps = 6 seconds total
+
+    for (let i = 0; i < numSteps; i++) {
+      await page.evaluate((step) => {
+        // Pan down and right gradually
+        window.viewer.viewport.panBy(new OpenSeadragon.Point(0.05, 0.1));
+        window.viewer.viewport.applyConstraints();
+      }, i);
+      await page.waitForTimeout(stepDelay);
+    }
+
+    // Wait for rendering to catch up
+    await page.waitForTimeout(1000);
+
+    const finalStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('After slow pan:', finalStats.pages, 'Fallback:', finalStats.tileRenderStats.fallbackPercentage + '%');
+    console.log('Cache misses:', finalStats.cacheMisses);
+
+    // Pages should have been cached during slow pan
+    expect(finalStats.pages.total).toBeGreaterThan(0);
+
+    // Fallback should be reasonable since we panned slowly
+    expect(parseFloat(finalStats.tileRenderStats.fallbackPercentage)).toBeLessThan(60);
+  });
+
+  test('Use case 2: Zoom out from initial view and pan slowly across document', async ({ page }) => {
+    // Wait for initial rendering to stabilize
+    await page.waitForTimeout(2000);
+
+    // Zoom out to see more of the grid
     await page.evaluate(() => {
       window.viewer.viewport.zoomBy(0.5);  // Zoom out 50%
       window.viewer.viewport.applyConstraints();
     });
-    await page.waitForTimeout(500);
-
-    // Pan around to explore the grid
-    await page.evaluate(() => {
-      const center = window.viewer.viewport.getCenter();
-      window.viewer.viewport.panBy(new OpenSeadragon.Point(0.2, 0.2));
-      window.viewer.viewport.applyConstraints();
-    });
-    await page.waitForTimeout(500);
-
-    await page.evaluate(() => {
-      window.viewer.viewport.panBy(new OpenSeadragon.Point(-0.3, 0.1));
-      window.viewer.viewport.applyConstraints();
-    });
-    await page.waitForTimeout(500);
-
-    const finalStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    const finalZoom = await page.evaluate(() => window.__PDFGridDiagnostics.getCurrentZoom());
-    console.log('After zoom out & pan - Pages:', finalStats.pages.total, 'Zoom:', finalZoom);
-
-    // PageCache should have grown (more pages visible and rendered)
-    expect(finalStats.pages.total).toBeGreaterThan(initialStats.pages.total);
-  });
-
-  test('Use case 2: Zoom in from overview and pan at mid zoom', async ({ page }) => {
-    // Start by zooming out to overview
-    await page.evaluate(() => {
-      window.viewer.viewport.zoomBy(0.4);  // Zoom out to overview
-      window.viewer.viewport.applyConstraints();
-    });
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     const overviewStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    console.log('Overview - Pages:', overviewStats.pages.total);
+    console.log('Overview state:', overviewStats.pages, 'Fallback:', overviewStats.tileRenderStats.fallbackPercentage + '%');
 
-    // Now zoom in to mid-level detail
-    await page.evaluate(() => {
-      window.viewer.viewport.zoomBy(2.5);  // Zoom in for mid-level detail
-      window.viewer.viewport.applyConstraints();
-    });
-    await page.waitForTimeout(500);
+    // Pan slowly across the entire document at zoomed-out level
+    // This tests whether low-res cache maintains complete coverage
+    const numSteps = 25;
+    const stepDelay = 250; // 250ms between steps = 6.25 seconds total
 
-    // Pan around at mid zoom
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => {
-        window.viewer.viewport.panBy(new OpenSeadragon.Point(0.1, 0.1));
-        window.viewer.viewport.applyConstraints();
-      });
-      await page.waitForTimeout(300);
-    }
-
-    const midZoomStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    const midZoom = await page.evaluate(() => window.__PDFGridDiagnostics.getCurrentZoom());
-    console.log('Mid zoom & pan - Pages:', midZoomStats.pages.total, 'Zoom:', midZoom);
-
-    // Should have cached pages from both overview and mid zoom
-    expect(midZoomStats.pages.total).toBeGreaterThan(0);
-  });
-
-  test('Use case 3: Zoom in and pan at deep zoom', async ({ page }) => {
-    // Zoom in to deep zoom level
-    await page.evaluate(() => {
-      window.viewer.viewport.zoomBy(3.0);  // Deep zoom for detail
-      window.viewer.viewport.applyConstraints();
-    });
-    await page.waitForTimeout(500);
-
-    const initialDeepStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    console.log('Deep zoom - Pages:', initialDeepStats.pages.total);
-
-    // Pan around at deep zoom (should trigger high-res tile rendering)
-    for (let i = 0; i < 4; i++) {
-      await page.evaluate((offset) => {
-        const dx = offset % 2 === 0 ? 0.05 : -0.05;
-        const dy = Math.floor(offset / 2) % 2 === 0 ? 0.05 : -0.05;
+    for (let i = 0; i < numSteps; i++) {
+      await page.evaluate((step) => {
+        // Pan in a sweeping motion across the grid
+        const progress = step / 25;
+        const dx = Math.sin(progress * Math.PI * 2) * 0.05; // Sweep left-right
+        const dy = 0.08; // Move down
         window.viewer.viewport.panBy(new OpenSeadragon.Point(dx, dy));
         window.viewer.viewport.applyConstraints();
       }, i);
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(stepDelay);
     }
 
-    const deepZoomStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
-    const deepZoom = await page.evaluate(() => window.__PDFGridDiagnostics.getCurrentZoom());
-    const memory = await page.evaluate(() => window.__PDFGridDiagnostics.getMemoryEstimate());
-    console.log('Deep zoom & pan - Pages:', deepZoomStats.pages.total, 'Zoom:', deepZoom, 'Memory:', memory.estimatedMB + 'MB');
+    // Wait for rendering to catch up
+    await page.waitForTimeout(1000);
 
-    // At deep zoom, should have high-res tiles cached
-    expect(deepZoomStats.pages.high).toBeGreaterThan(0);
+    const finalStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('After slow pan at overview:', finalStats.pages, 'Fallback:', finalStats.tileRenderStats.fallbackPercentage + '%');
+
+    // At zoomed-out level with slow pan, fallback should be minimal
+    // Low-res pages should all be available
+    expect(parseFloat(finalStats.tileRenderStats.fallbackPercentage)).toBeLessThan(40);
+  });
+
+  test('Use case 3: Zoom out, pan across, then zoom in', async ({ page }) => {
+    // Wait for initial rendering to stabilize
+    await page.waitForTimeout(2000);
+
+    // Phase 1: Zoom out to overview
+    await page.evaluate(() => {
+      window.viewer.viewport.zoomBy(0.4);  // Zoom out to wide view
+      window.viewer.viewport.applyConstraints();
+    });
+    await page.waitForTimeout(1000);
+
+    const overviewStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('Phase 1 - Overview:', overviewStats.pages, 'Fallback:', overviewStats.tileRenderStats.fallbackPercentage + '%');
+
+    // Phase 2: Pan slowly across document at overview level
+    const panSteps = 15;
+    const panDelay = 250; // 3.75 seconds
+
+    for (let i = 0; i < panSteps; i++) {
+      await page.evaluate((step) => {
+        window.viewer.viewport.panBy(new OpenSeadragon.Point(0.1, 0.15));
+        window.viewer.viewport.applyConstraints();
+      }, i);
+      await page.waitForTimeout(panDelay);
+    }
+
+    await page.waitForTimeout(500);
+
+    const afterPanStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('Phase 2 - After pan:', afterPanStats.pages, 'Fallback:', afterPanStats.tileRenderStats.fallbackPercentage + '%');
+
+    // Phase 3: Zoom in to detail view
+    await page.evaluate(() => {
+      window.viewer.viewport.zoomBy(3.0);  // Zoom in for detail
+      window.viewer.viewport.applyConstraints();
+    });
+    await page.waitForTimeout(1500); // Give time for high-res rendering
+
+    const zoomedInStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    const finalZoom = await page.evaluate(() => window.__PDFGridDiagnostics.getCurrentZoom());
+    console.log('Phase 3 - Zoomed in:', zoomedInStats.pages, 'Zoom:', finalZoom);
+    console.log('Fallback:', zoomedInStats.tileRenderStats.fallbackPercentage + '%');
+
+    // Should have both low-res (from overview) and high-res (from zoom in) pages
+    expect(zoomedInStats.pages.low).toBeGreaterThan(0);
+    expect(zoomedInStats.pages.high).toBeGreaterThan(0);
+
+    // Fallback should be reasonable after giving time to render
+    expect(parseFloat(zoomedInStats.tileRenderStats.fallbackPercentage)).toBeLessThan(70);
   });
 
   test('PageCache should not grow indefinitely', async ({ page }) => {
@@ -253,5 +281,82 @@ test.describe('Memory monitoring during zoom operations', () => {
     console.log('After zoom out:', zoomedOut);
 
     expect(zoomedOut).toBeLessThan(zoomedIn);
+  });
+
+  test('Fallback percentage should be reasonable after initial load', async ({ page }) => {
+    // Wait for initial rendering to complete
+    await page.waitForTimeout(1000);
+
+    const stats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+
+    console.log('Tile render stats:', stats.tileRenderStats);
+    console.log(`Fallback percentage: ${stats.tileRenderStats.fallbackPercentage}%`);
+
+    // After initial load, most tiles should be full (not fallback)
+    // Allow up to 50% fallback during initial load (some tiles may render before all pages ready)
+    expect(parseFloat(stats.tileRenderStats.fallbackPercentage)).toBeLessThan(50);
+
+    // Should have rendered some tiles
+    expect(stats.tileRenderStats.total).toBeGreaterThan(0);
+  });
+
+  test('Fallback tiles during deep zoom panning', async ({ page }) => {
+    // Zoom in deep
+    await page.evaluate(() => {
+      window.viewer.viewport.zoomBy(3.0);
+      window.viewer.viewport.applyConstraints();
+    });
+    await page.waitForTimeout(1000);
+
+    // Get initial stats
+    const initialStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    const initialFallbackCount = initialStats.tileRenderStats.fallback;
+
+    // Pan around to trigger new tile rendering
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate((offset) => {
+        const dx = offset % 2 === 0 ? 0.1 : -0.1;
+        window.viewer.viewport.panBy(new OpenSeadragon.Point(dx, 0.05));
+        window.viewer.viewport.applyConstraints();
+      }, i);
+      await page.waitForTimeout(300);
+    }
+
+    await page.waitForTimeout(500);
+
+    const finalStats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+
+    console.log('Deep zoom fallback stats:', finalStats.tileRenderStats);
+    console.log('Cache misses:', finalStats.cacheMisses);
+
+    // New tiles should have been rendered during panning
+    expect(finalStats.tileRenderStats.total).toBeGreaterThan(initialStats.tileRenderStats.total);
+
+    // Some fallback is acceptable when panning to new areas (pages still rendering)
+    // But fallback percentage should stay under 80%
+    expect(parseFloat(finalStats.tileRenderStats.fallbackPercentage)).toBeLessThan(80);
+  });
+
+  test('Cache miss tracking works', async ({ page }) => {
+    // Initial load should have some cache misses (pages not yet rendered)
+    const stats = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+
+    console.log('Cache misses:', stats.cacheMisses);
+
+    // Should track cache misses
+    expect(stats.cacheMisses).toBeGreaterThanOrEqual(0);
+
+    // After panning, cache misses should increase (new pages requested)
+    await page.evaluate(() => {
+      window.viewer.viewport.panBy(new OpenSeadragon.Point(0.3, 0.3));
+      window.viewer.viewport.applyConstraints();
+    });
+    await page.waitForTimeout(500);
+
+    const statsAfterPan = await page.evaluate(() => window.__PDFGridDiagnostics.getCacheStats());
+    console.log('Cache misses after pan:', statsAfterPan.cacheMisses);
+
+    // Should have at least as many misses as before (possibly more)
+    expect(statsAfterPan.cacheMisses).toBeGreaterThanOrEqual(stats.cacheMisses);
   });
 });

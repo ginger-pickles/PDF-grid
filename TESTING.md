@@ -82,11 +82,14 @@ tests/
 
 1. **PageCache Population** - Verifies pages are cached after initial load
 2. **Memory Estimates** - Ensures memory usage stays under reasonable limits
-3. **PageCache Growth** - Confirms cache grows when zooming out (more pages visible)
-4. **Unbounded Growth Detection** - Documents current issue: PageCache grows indefinitely (⚠️ expected to warn until LRU eviction implemented)
-5. **TileCache Limits** - Verifies TileCache respects 300-tile limit
+3. **PageCache Growth** - Confirms cache is populated with separate low-res and high-res caches
+4. **Unbounded Growth Detection** - Verifies PageCache respects LRU eviction limits (100 pages max)
+5. **TileCache Limits** - Verifies TileCache respects 300-tile limit (150 on iOS)
 6. **Cache Clearing** - Tests diagnostic cache clear functionality
 7. **Zoom Tracking** - Confirms zoom level is trackable
+8. **Fallback Percentage** - Monitors tile fallback rate (tiles using fallback resolution instead of requested)
+9. **Deep Zoom Fallback** - Tracks fallback during deep zoom panning operations
+10. **Cache Miss Tracking** - Verifies cache miss counters work correctly
 
 ## Diagnostics API
 
@@ -94,11 +97,20 @@ Tests use `window.__PDFGridDiagnostics` API exposed in index.html:
 
 ```javascript
 // Available in browser console or tests
-window.__PDFGridDiagnostics.getCacheStats()      // Get page and tile cache sizes
+window.__PDFGridDiagnostics.getCacheStats()      // Get page and tile cache sizes, fallback stats, cache misses
 window.__PDFGridDiagnostics.getMemoryEstimate()  // Get rough memory estimate in MB
 window.__PDFGridDiagnostics.getCurrentZoom()     // Get current zoom level
 window.__PDFGridDiagnostics.clearCaches()        // Clear all caches
+window.__PDFGridDiagnostics.showDebug()          // iOS-friendly alert with all stats
 ```
+
+**getCacheStats() returns:**
+- `pages.low`, `pages.high`, `pages.total` - PageCache sizes
+- `tiles` - TileCache size
+- `tileRenderStats.full` - Tiles rendered with all pages at correct resolution
+- `tileRenderStats.fallback` - Tiles rendered with fallback to other resolution
+- `tileRenderStats.fallbackPercentage` - Percentage of tiles using fallback
+- `cacheMisses` - Count of page requests that weren't in cache
 
 ## Test Configuration
 

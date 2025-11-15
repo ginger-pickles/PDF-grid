@@ -83,6 +83,10 @@
           PDF_RENDER_SCALE: 4.0, // Power-of-2 scale for clean tile alignment at all zoom levels
           PDF_LOWRES_SCALE: 0.3, // Low-resolution scale for navigator/minimap
 
+          // Mobile-specific render scales (override above if on iOS)
+          MOBILE_PDF_RENDER_SCALE: 2.0, // Power-of-2 scale for iOS (4x less memory than desktop)
+          MOBILE_PDF_LOWRES_SCALE: 0.15, // Lower low-res scale for iOS (4x less memory than desktop)
+
           // Grid Layout
           GRID_SPACING_RATIO: 0.01, // Spacing as ratio of page width
 
@@ -103,11 +107,20 @@
 
           // Caching
           MAX_CACHE_SIZE: 300,           // Max tiles in TileCache (LRU eviction)
-          PAGE_CACHE_MAX_SIZE: 100,      // Max pages in PageCache (LRU eviction) - helps prevent iOS Safari crashes
+          PAGE_CACHE_MAX_SIZE_LOW: 100,  // Max low-res pages in PageCache (separate from high-res)
+          PAGE_CACHE_MAX_SIZE_HIGH: 100, // Max high-res pages in PageCache (separate from low-res)
+
+          // Mobile-specific limits (override above if on iOS)
+          MOBILE_MAX_CACHE_SIZE: 150,          // TileCache for iOS - enough for deep zoom + pyramid + pan buffer
+          MOBILE_PAGE_CACHE_MAX_SIZE_LOW: 200, // Large low-res PageCache for complete minimap coverage
+          MOBILE_PAGE_CACHE_MAX_SIZE_HIGH: 50, // High-res PageCache for deep zoom viewing (enough for visible pages)
 
           // Performance
           RENDER_BATCH_SIZE: 5, // Yield to browser every N pages
           TILE_REFRESH_INTERVAL: 3, // Refresh tiles every N pages during loading
+
+          // Mobile-specific performance (override above if on iOS)
+          MOBILE_RENDER_BATCH_SIZE: 1,   // Render one page at a time on iOS to minimize memory spikes
 
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
@@ -121,6 +134,28 @@
           // UI
           BACKGROUND_COLOR: '#1f2937'
         };
+
+        // Detect iOS and apply mobile-specific limits
+        // Note: iPadOS 13+ in desktop mode reports as Mac, so check for touch support
+        const isIOSSafari = (
+          (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream) ||
+          (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent))
+        );
+        if (isIOSSafari) {
+          console.log('iOS Safari detected - using aggressive limits to prevent crashes');
+          console.log(`  TileCache: ${CONFIG.MOBILE_MAX_CACHE_SIZE} tiles (vs ${CONFIG.MAX_CACHE_SIZE} on desktop)`);
+          console.log(`  PageCache Low-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_LOW} on desktop)`);
+          console.log(`  PageCache High-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_HIGH} on desktop)`);
+          console.log(`  Render batch: ${CONFIG.MOBILE_RENDER_BATCH_SIZE} page at a time (vs ${CONFIG.RENDER_BATCH_SIZE} on desktop)`);
+          console.log(`  Render scale: ${CONFIG.MOBILE_PDF_RENDER_SCALE}x (vs ${CONFIG.PDF_RENDER_SCALE}x on desktop) - 4x less memory per page`);
+          console.log(`  Low-res scale: ${CONFIG.MOBILE_PDF_LOWRES_SCALE}x (vs ${CONFIG.PDF_LOWRES_SCALE}x on desktop)`);
+          CONFIG.MAX_CACHE_SIZE = CONFIG.MOBILE_MAX_CACHE_SIZE;
+          CONFIG.PAGE_CACHE_MAX_SIZE_LOW = CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW;
+          CONFIG.PAGE_CACHE_MAX_SIZE_HIGH = CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH;
+          CONFIG.RENDER_BATCH_SIZE = CONFIG.MOBILE_RENDER_BATCH_SIZE;
+          CONFIG.PDF_RENDER_SCALE = CONFIG.MOBILE_PDF_RENDER_SCALE;
+          CONFIG.PDF_LOWRES_SCALE = CONFIG.MOBILE_PDF_LOWRES_SCALE;
+        }
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
         // ║                              ERROR CODES                                 ║
@@ -462,11 +497,15 @@
          * PageStreamer: Manages on-demand page rendering with LRU caching
          * Sits between PDF.js and TileStreamer
          * Handles parallel batch rendering and page-level caching
+         *
+         * Uses separate LRU caches for low-res and high-res to prevent eviction conflicts
          */
         class PageStreamer {
           constructor(pdfDoc) {
             this.pdfDoc = pdfDoc;
-            this.pageCache = new PageCache(); // LRU cache: "pageNum_resolution" → canvas
+            // Separate caches for low-res and high-res to prevent eviction conflicts
+            this.lowResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_LOW);
+            this.highResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH);
             this.renderingInProgress = new Map(); // Key: "pageNum_resolution" → Promise
           }
 
@@ -478,14 +517,22 @@
           }
 
           /**
+           * Get the appropriate PageCache for a given resolution
+           */
+          _getPageCache(resolution) {
+            return resolution === 'low' ? this.lowResPageCache : this.highResPageCache;
+          }
+
+          /**
            * Render a single page at specified resolution
            * Returns cached canvas if available, otherwise renders
            */
           async renderPage(pageNum, resolution) {
             const key = this._getCacheKey(pageNum, resolution);
+            const pageCache = this._getPageCache(resolution);
 
             // Check cache first
-            const cached = this.pageCache.get(key);
+            const cached = pageCache.get(key);
             if (cached) {
               return cached;
             }
@@ -501,7 +548,7 @@
             const renderPromise = (async () => {
               const page = await this.pdfDoc.getPage(pageNum);
               const canvas = await PDFUtils.renderPageToCanvas(page, scale);
-              this.pageCache.set(key, canvas);
+              pageCache.set(key, canvas);
               this.renderingInProgress.delete(key);
               if (CONFIG.DEBUG_TILES) {
                 console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
@@ -557,26 +604,26 @@
            */
           hasPage(pageNum, resolution) {
             const key = this._getCacheKey(pageNum, resolution);
-            return this.pageCache.has(key);
+            const pageCache = this._getPageCache(resolution);
+            return pageCache.has(key);
           }
 
           /**
            * Get cache statistics
            */
           getCacheStats() {
-            const stats = { low: 0, high: 0 };
-            for (const key of this.pageCache.keys()) {
-              if (key.endsWith('_low')) stats.low++;
-              if (key.endsWith('_high')) stats.high++;
-            }
-            return stats;
+            return {
+              low: this.lowResPageCache.size,
+              high: this.highResPageCache.size
+            };
           }
 
           /**
            * Clear cache (for cleanup)
            */
           clear() {
-            this.pageCache.clear();
+            this.lowResPageCache.clear();
+            this.highResPageCache.clear();
             this.renderingInProgress.clear();
           }
         }
@@ -859,18 +906,57 @@
             if (isUpdate) {
               this.cache.delete(key);
             } else if (this.cache.size >= this.maxSize) {
-              // Remove least recently used (first in Map)
-              const firstKey = this.cache.keys().next().value;
+              // Level-aware eviction: Prioritize keeping low-level (broad zoom) tiles
+              // Evict deep zoom tiles first to preserve minimap coverage
+              const evictKey = this._selectTileToEvict();
               if (CONFIG.DEBUG_TILES) {
-                console.log(`[TileCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
+                console.log(`[TileCache] EVICT: ${evictKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
-              this.cache.delete(firstKey);
+              this.cache.delete(evictKey);
             }
             this.cache.set(key, value);
             if (CONFIG.DEBUG_TILES) {
               const action = isUpdate ? 'UPDATE' : 'ADD';
               console.log(`[TileCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
             }
+          }
+
+          /**
+           * Select tile to evict using continuous scale-aware strategy
+           * Balances level priority (higher levels = more evictable) with recency (LRU)
+           * Uses exponential weighting so deep zoom tiles are evicted first,
+           * but recent deep tiles can survive longer than very old mid-level tiles
+           */
+          _selectTileToEvict() {
+            let maxScore = -1;
+            let candidateKey = null;
+            let position = 0;
+
+            for (const key of this.cache.keys()) {
+              const level = parseInt(key.split('_')[0]);
+
+              // Level weight: Exponential (2^level)
+              // Level 9 is 512x more evictable than level 0
+              // Level 5 is 32x more evictable than level 0
+              const levelWeight = Math.pow(2, level);
+
+              // Recency penalty: Linear from 1.0 (oldest) to 0.0 (newest)
+              const recencyPenalty = 1.0 - (position / this.cache.size);
+
+              // Combined score: 70% level, 30% recency
+              // High level + old = definitely evict
+              // High level + recent = maybe evict
+              // Low level + old = probably keep (unless all tiles are low level)
+              const score = levelWeight * (0.7 + recencyPenalty * 0.3);
+
+              if (score > maxScore) {
+                maxScore = score;
+                candidateKey = key;
+              }
+              position++;
+            }
+
+            return candidateKey || this.cache.keys().next().value;
           }
 
           has(key) {
@@ -1092,8 +1178,15 @@
             this.pattern = pattern;
             this.pageStreamer = pageStreamer;
             this.numPages = numPages;
-            this.cache = new TileCache();
+            this.tileCache = new TileCache();
             this.checkedCanvases = new Set(); // Track which pages we've already validated
+
+            // Diagnostics: Track fallback tiles vs full tiles
+            this.stats = {
+              tilesRenderedFull: 0,      // Tiles rendered with all pages at correct resolution
+              tilesRenderedFallback: 0,  // Tiles rendered with fallback to other resolution
+              cacheMisses: 0             // Pages requested but not in cache
+            };
 
             // Tile size = (page + spacing) / renderScale
             // At max zoom (4x render), each page+gutter spans 4×4 tiles
@@ -1361,7 +1454,7 @@
             }
 
             // Check tile cache first
-            const cached = this.cache.get(key);
+            const cached = this.tileCache.get(key);
             if (cached) {
               return cached;
             }
@@ -1401,12 +1494,38 @@
             // Render tile (will use fallback if needed) - pass extended boundaries for overlap
             const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, renderLeft, renderTop, renderRight, renderBottom);
 
-            // Cache the tile
-            this.cache.set(key, tileUrl);
+            // Only cache tiles that have all pages at correct resolution
+            // Don't cache fallback tiles - they'll be regenerated when proper pages are ready
+            if (allPagesCached) {
+              this.tileCache.set(key, tileUrl);
+              this.stats.tilesRenderedFull++;
+            } else {
+              this.stats.tilesRenderedFallback++;
+            }
 
             if (CONFIG.DEBUG_TILES) {
               const status = allPagesCached ? 'FULL' : 'FALLBACK';
-              console.log(`[TileStreamer] RENDER ${status}: ${key} (pages: ${neededPages.join(',')}, resolution: ${resolution})`);
+              const cacheStatus = allPagesCached ? 'cached' : 'not cached (will regenerate)';
+              console.log(`[TileStreamer] RENDER ${status}: ${key} (pages: ${neededPages.join(',')}, resolution: ${resolution}) - ${cacheStatus}`);
+
+              // On-screen diagnostic for iOS (show last 5 tile renders)
+              if (isIOSSafari) {
+                if (!window.__tileDebugLog) window.__tileDebugLog = [];
+                window.__tileDebugLog.push(`L${level} ${resolution} ${status} p${neededPages.join(',')}`);
+                if (window.__tileDebugLog.length > 5) window.__tileDebugLog.shift();
+
+                // Update on-screen display
+                let debugDiv = document.getElementById('ios-tile-debug');
+                if (!debugDiv) {
+                  debugDiv = document.createElement('div');
+                  debugDiv.id = 'ios-tile-debug';
+                  debugDiv.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.8);color:#0f0;padding:10px;font-family:monospace;font-size:10px;z-index:10000;max-width:300px;';
+                  document.body.appendChild(debugDiv);
+                }
+                debugDiv.innerHTML = `<div style="color:#ff0;margin-bottom:5px;">Tile Debug (last 5):</div>` +
+                  window.__tileDebugLog.map(log => `<div>${log}</div>`).join('') +
+                  `<div style="color:#0ff;margin-top:5px;">minimapMaxLvl: ${this.minimapMaxLevel}</div>`;
+              }
             }
 
             return tileUrl;
@@ -1478,18 +1597,75 @@
 
             this.pageStreamer.requestPages(pageNums, resolution).then(() => {
               this._pendingRequests.delete(key);
-              // Pages are now cached - trigger OSD to retry tiles
-              try {
-                if (window.osdViewerRef && window.osdViewerRef.world) {
-                  window.osdViewerRef.world.needsDraw();
+
+              // Invalidate tiles that used these pages (so they'll be regenerated with complete pages)
+              this._invalidateTilesUsingPages(pageNums, resolution);
+
+              // Pages are now cached - trigger OSD to redraw with fresh tiles
+              // Note: On iOS, we skip the aggressive reset to avoid memory spikes
+              if (!isIOSSafari) {
+                try {
+                  if (window.osdViewerRef && window.osdViewerRef.world) {
+                    // Force OSD to re-request tiles by resetting the tiled image
+                    const tiledImage = window.osdViewerRef.world.getItemAt(0);
+                    if (tiledImage) {
+                      tiledImage.reset();
+                    }
+                  }
+                } catch (err) {
+                  // Silently ignore if OSD not ready yet
                 }
-              } catch (err) {
-                // Silently ignore if OSD not ready yet
+              } else {
+                // On iOS: Just invalidate cache and rely on natural refresh
+                // This avoids memory spikes from forcing all tiles to re-render
+                try {
+                  if (window.osdViewerRef && window.osdViewerRef.world) {
+                    window.osdViewerRef.world.needsDraw();
+                  }
+                } catch (err) {
+                  // Silently ignore if OSD not ready yet
+                }
               }
             }).catch(err => {
               this._pendingRequests.delete(key);
               console.error('Error requesting pages:', err);
             });
+          }
+
+          /**
+           * Invalidate cached tiles that depend on specific pages
+           * This ensures tiles get regenerated after pages finish rendering
+           */
+          _invalidateTilesUsingPages(pageNums, resolution) {
+            const pageSet = new Set(pageNums);
+            let invalidated = 0;
+
+            // Iterate through cached tiles and remove ones that used these pages
+            for (const [key, value] of this.tileCache.cache.entries()) {
+              // Parse key to determine which pages it needs
+              // Key formats: "level_pX" or "level_pX-Y" or "level_pX_xN_yN" etc.
+              const pageMatch = key.match(/p(\d+)(?:-(\d+))?/);
+              if (pageMatch) {
+                const firstPage = parseInt(pageMatch[1]);
+                const lastPage = pageMatch[2] ? parseInt(pageMatch[2]) : firstPage;
+
+                // Check if this tile used any of the newly-rendered pages
+                for (let p = firstPage; p <= lastPage; p++) {
+                  if (pageSet.has(p)) {
+                    this.tileCache.cache.delete(key);
+                    invalidated++;
+                    if (CONFIG.DEBUG_TILES) {
+                      console.log(`[TileStreamer] INVALIDATE: ${key} (page ${p} now ready)`);
+                    }
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (invalidated > 0 && CONFIG.DEBUG_TILES) {
+              console.log(`[TileStreamer] Invalidated ${invalidated} tiles after rendering pages: ${pageNums.join(',')}`);
+            }
           }
 
           /**
@@ -1664,20 +1840,27 @@
             }
 
             // Get canvas from PageStreamer cache with conditional fallback
-            let pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_${resolution}`);
+            const pageCache = this.pageStreamer._getPageCache(resolution);
+            let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
 
-            // Debug: Disabled excessive per-page logging
+            // Track cache misses for diagnostics
+            if (!pageCanvas) {
+              this.stats.cacheMisses++;
+            }
 
-            // Debug: Log cache miss details in gen2+ (only after background completes)
-            // Commented out to reduce log noise - enable if needed
-            // if (!pageCanvas && CONFIG.DEBUG_MODE && this.cacheGeneration >= 2) {
-            //   console.warn(`[Cache] gen${this.cacheGeneration}: Page ${pageNum}_${resolution} NOT in cache. Cache size: ${this.pageStreamer.pageCache.size}`);
-            // }
+            // Debug: iOS diagnostic - show cache access details
+            if (isIOSSafari && CONFIG.DEBUG_MODE) {
+              const cacheStatus = pageCanvas ? 'HIT' : 'MISS';
+              const cacheSize = `L:${this.pageStreamer.lowResPageCache.size} H:${this.pageStreamer.highResPageCache.size}`;
+              if (!window.__tileCacheDebug) window.__tileCacheDebug = [];
+              window.__tileCacheDebug.push(`L${level} p${pageNum}_${resolution} ${cacheStatus} (${cacheSize})`);
+              if (window.__tileCacheDebug.length > 8) window.__tileCacheDebug.shift();
+            }
 
             // Fallback logic: prevent high-res from being downsampled excessively
             if (!pageCanvas && resolution === 'high') {
               // High-res requested but not available, use low-res (always safe)
-              pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_low`);
+              pageCanvas = this.pageStreamer.lowResPageCache.get(`${pageNum}_low`);
             } else if (!pageCanvas && resolution === 'low') {
               // Low-res requested but not available - check if high-res would be acceptable
               // Calculate sampling ratio: how much would we downsample high-res?
@@ -1685,7 +1868,7 @@
               // Only use high-res if sampling ratio >= 0.5 (no more than 2x downsampling)
               const minSafeScale = 0.5 * CONFIG.PDF_RENDER_SCALE; // 0.5 * 4.0 = 2.0
               if (scale >= minSafeScale) {
-                pageCanvas = this.pageStreamer.pageCache.get(`${pageNum}_high`);
+                pageCanvas = this.pageStreamer.highResPageCache.get(`${pageNum}_high`);
               }
             }
             // Note: At low scales, if low-res unavailable, we leave blank rather than
@@ -1712,6 +1895,11 @@
             // Calculate canvas scale factor
             // Grid dimensions are based on high-res, but canvas might be low-res
             const canvasScaleFactor = pageCanvas.width / pageWidth;
+
+            // Diagnostic: Warn if scale factor is unexpectedly small (indicates wrong resolution)
+            if (CONFIG.DEBUG_MODE && level > this.minimapMaxLevel && canvasScaleFactor < 0.5) {
+              console.warn(`[TileStreamer] L${level} page ${pageNum}: canvasScaleFactor=${canvasScaleFactor.toFixed(3)} unexpectedly low! Canvas: ${pageCanvas.width}px, Grid: ${pageWidth}px. Using ${resolution} resolution but should use high-res at this zoom level.`);
+            }
 
             // Source coordinates (within the page canvas, adjusted for resolution)
             const srcX = (intersectLeft - pageLeft) * canvasScaleFactor;
@@ -1822,6 +2010,7 @@
               id: 'openseadragon-viewer',
               prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
               tileSources: tileStreamer.getOSDConfig(),
+              debugMode: CONFIG.DEBUG_MODE, // Show tile borders and labels
               showNavigator: showNavigator, // Always show if not mobile
               navigatorPosition: 'TOP_RIGHT',
               showRotationControl: false, // Hide rotation buttons
@@ -2147,14 +2336,16 @@
               );
 
               // Get page dimensions from first rendered high-res page
-              const firstHighRes = pageStreamer.pageCache.get('1_high') || pageStreamer.pageCache.get(`${priorityPages[0]}_high`);
+              const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
               const pageWidth = firstHighRes.width;
               const pageHeight = firstHighRes.height;
 
               // Phase 2: Render low-res pages needed for initial viewport (calculated dynamically)
               // v1.8: Calculate which pages are visible/needed in initial view
+              // Note: Separate low/high-res caches prevent eviction conflicts
               setLoadingStatus('Rendering minimap...');
               const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
+
               console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
               const initialLowResCount = initialLowResPages.length;
               await pageStreamer.renderBatch(
@@ -2179,10 +2370,16 @@
               console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
               console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial viewport coverage, rest in background...)`);
               console.log(`  Navigator: shown immediately`);
-              console.log(`  Strategy: Render all pages in background, then recreate viewer for complete grid`);
 
-              // Phase 4: Background render remaining pages (sequential), then add navigator
-              renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount);
+              // Phase 4: Background render remaining pages (sequential)
+              // iOS: Lazy rendering with larger cache - prioritizes coverage over speed
+              if (!isIOSSafari) {
+                console.log(`  Strategy: Render all pages in background for complete grid`);
+                renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, false);
+              } else {
+                console.log(`  Strategy (iOS): Lazy background rendering for complete low-res coverage`);
+                renderLowResInBackground(pageStreamer, pdf.numPages, initialLowResCount, true);
+              }
 
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
@@ -2200,9 +2397,11 @@
            * Background rendering of remaining low-res pages for minimap
            * Non-blocking, yields to browser to keep UI responsive
            * Sequential rendering for simplicity
+           * @param {boolean} lazy - If true, render slowly with longer delays (iOS mode)
            */
-          const renderLowResInBackground = async (pageStreamer, numPages, startPage = 1) => {
-            console.log(`Starting background minimap rendering from page ${startPage + 1}...`);
+          const renderLowResInBackground = async (pageStreamer, numPages, startPage = 1, lazy = false) => {
+            const mode = lazy ? 'lazy' : 'normal';
+            console.log(`Starting background minimap rendering from page ${startPage + 1}... (${mode} mode)`);
 
             for (let pageNum = startPage + 1; pageNum <= numPages; pageNum++) {
 
@@ -2213,16 +2412,22 @@
               }
 
               // Check if already cached
-              if (pageStreamer.pageCache.has(`${pageNum}_low`)) {
+              if (pageStreamer.lowResPageCache.has(`${pageNum}_low`)) {
                 continue;
               }
 
               // Render low-res page
               await pageStreamer.renderPage(pageNum, 'low');
 
-              // Yield to browser every 5 pages to keep UI responsive
-              if (pageNum % 5 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
+              // Yield to browser - more frequently in lazy mode
+              if (lazy) {
+                // Lazy mode: Yield after EVERY page with longer delay (iOS)
+                await new Promise(resolve => setTimeout(resolve, 10));
+              } else {
+                // Normal mode: Yield every 5 pages with minimal delay (desktop)
+                if (pageNum % 5 === 0) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                }
               }
 
               // Log progress periodically
@@ -2252,7 +2457,7 @@
 
               // Debug: Check pages 7-10 for transparency (only log if blank)
               for (let pageNum = 7; pageNum <= 10; pageNum++) {
-                const canvas = pageStreamer.pageCache.get(`${pageNum}_low`);
+                const canvas = pageStreamer.lowResPageCache.get(`${pageNum}_low`);
                 if (canvas) {
                   const ctx = canvas.getContext('2d');
                   const centerX = Math.floor(canvas.width / 2);
@@ -2331,19 +2536,14 @@
             // Allow UI to update (show spinner) before heavy work starts
             await new Promise(resolve => setTimeout(resolve, 50));
 
-            // TEMPORARILY DISABLED: URL parameter management
-            // if (!skipHistory) {
-            //   if (url.startsWith('http://') || url.startsWith('https://')) {
-            //     await PDFStorage.clear();
-            //     URLManager.pushState('url', url);
-            //   } else {
-            //     URLManager.pushState('pdf', url);
-            //   }
-            // } else {
-            //   if (url.startsWith('http://') || url.startsWith('https://')) {
-            //     await PDFStorage.clear();
-            //   }
-            // }
+            // Update URL parameter to reflect loaded file
+            if (!skipHistory) {
+              if (url.startsWith('http://') || url.startsWith('https://')) {
+                URLManager.pushState('url', url);
+              } else {
+                URLManager.pushState('pdf', url);
+              }
+            }
 
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
@@ -2377,8 +2577,8 @@
             // Allow UI to update (show spinner) before heavy work starts
             await new Promise(resolve => setTimeout(resolve, 50));
 
-            // TEMPORARILY DISABLED: URL parameter management
-            // URLManager.pushState('pdf', file.name);
+            // Update URL parameter to reflect loaded file (adds to browser history)
+            URLManager.pushState('pdf', file.name);
 
             try {
               const pdf = await PDFUtils.loadPDFFromFile(file);
@@ -2502,17 +2702,30 @@
 
             // Expose diagnostics API for automated testing
             window.__PDFGridDiagnostics = {
-              getPageCacheSize: () => pageStreamer?.pageCache.size || 0,
-              getTileCacheSize: () => tileStreamer?.cache.cache.size || 0,
+              getPageCacheSize: () => (pageStreamer?.lowResPageCache.size || 0) + (pageStreamer?.highResPageCache.size || 0),
+              getTileCacheSize: () => tileStreamer?.tileCache.cache.size || 0,
               getCacheStats: () => {
                 const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
+                const tileStats = tileStreamer?.stats || { tilesRenderedFull: 0, tilesRenderedFallback: 0, cacheMisses: 0 };
                 return {
                   pages: {
                     low: pageStats.low,
                     high: pageStats.high,
                     total: pageStats.low + pageStats.high
                   },
-                  tiles: tileStreamer?.cache.cache.size || 0
+                  tiles: tileStreamer?.tileCache.cache.size || 0,
+                  tileRenderStats: {
+                    full: tileStats.tilesRenderedFull,
+                    fallback: tileStats.tilesRenderedFallback,
+                    total: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback,
+                    fallbackPercentage: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback > 0
+                      ? ((tileStats.tilesRenderedFallback / (tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback)) * 100).toFixed(1)
+                      : 0
+                  },
+                  cacheMisses: tileStats.cacheMisses,
+                  minimapMaxLevel: tileStreamer?.minimapMaxLevel,
+                  renderScale: CONFIG.PDF_RENDER_SCALE,
+                  lowResScale: CONFIG.PDF_LOWRES_SCALE
                 };
               },
               getCurrentZoom: () => viewer?.viewport?.getZoom() || 0,
@@ -2529,10 +2742,25 @@
               },
               clearCaches: () => {
                 pageStreamer?.clear();
-                tileStreamer?.cache.clear();
+                tileStreamer?.tileCache.cache.clear();
                 return 'Caches cleared';
+              },
+              // iOS-friendly diagnostic display
+              showDebug: () => {
+                const stats = window.__PDFGridDiagnostics.getCacheStats();
+                const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
+                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.DEBUG_TILES ? 'ON' : 'OFF'}${tileDebug}`);
               }
             };
+
+            // Add visible debug button for iOS
+            if (isIOSSafari || CONFIG.DEBUG_MODE) {
+              const debugBtn = document.createElement('button');
+              debugBtn.textContent = 'Debug Info';
+              debugBtn.style.cssText = 'position:fixed;top:60px;right:10px;z-index:10001;padding:8px 12px;background:#f00;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;';
+              debugBtn.onclick = () => window.__PDFGridDiagnostics.showDebug();
+              document.body.appendChild(debugBtn);
+            }
           };
 
           const initializeViewerWithNavigator = (numPages, pageWidth, pageHeight) => {
