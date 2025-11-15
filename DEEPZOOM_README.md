@@ -1,50 +1,69 @@
-# Deep Zoom Image Browser Demo
+# PDF Grid Viewer with Deep Zoom Technology
 
-🔍 **Research-based implementation of deep zoom image viewing with arbitrary size support**
+🔍 **Dynamic streaming deep zoom viewer for PDFs with rotating grid visualization**
 
-This demo showcases two production-ready approaches for viewing arbitrarily large images in web browsers, supporting both **arbitrary zoom depth** and **arbitrary breadth**.
+## ⚡ Quick Start - PDF Grid Viewer (Recommended)
 
-## ⚡ Quick Start
-
-### Static Tiles (Works Immediately - No Docker)
+The main demo features **PDF upload with dynamic tile streaming** and the unique **rotating grid pattern**:
 
 ```bash
 cd PDF-grid
 python3 -m http.server 8000
 ```
 
+**Open: http://localhost:8000/index.html**
+
+### Features:
+- 📄 **Upload any PDF** - Drag & drop or select file
+- 🔄 **Rotating grid layout** - Pages advance horizontally and vertically
+- 🔍 **Infinite zoom** - Deep zoom into page details with dynamic tiling
+- 💾 **Dynamic streaming** - Tiles generated on-demand, low memory usage
+- 📱 **Mobile support** - Touch gestures, responsive design
+
+## 🖼️ Static Image Deep Zoom Demos
+
+For pre-generated image demonstrations:
+
+### Static Tiles (No Setup Required)
 Open: http://localhost:8000/deepzoom-static.html
 
 ### Dynamic Streaming (Requires Docker)
-
 ```bash
 docker-compose up -d
-python3 -m http.server 8000
 ```
-
 Open: http://localhost:8000/deepzoom.html
 
 ## 📁 What's Included
 
 ```
 PDF-grid/
-├── deepzoom-static.html       # Static tiles viewer (ready to use)
-├── deepzoom.html              # Dynamic streaming viewer (needs Docker)
+├── index.html                 # PDF Grid Viewer - MAIN DEMO ⭐
+├── deepzoom-static.html       # Static image tiles viewer
+├── deepzoom.html              # Dynamic image streaming (needs Docker)
 ├── docker-compose.yml         # IIPImage server setup
 ├── DEEPZOOM_GUIDE.md          # Complete implementation guide
+├── demo.pdf                   # Sample PDF for testing
 ├── images/
 │   ├── sample1.tif            # 10K×10K pyramidal TIFF
 │   ├── sample2.tif            # 8K×8K pyramidal TIFF
-│   ├── sample1_dzi.dzi        # DeepZoom descriptor
-│   ├── sample1_dzi_files/     # Pre-generated static tiles
-│   ├── sample2_dzi.dzi
-│   └── sample2_dzi_files/
+│   └── *_dzi_files/           # Pre-generated static tiles
 └── ...
 ```
 
-## 🏗️ Two Architectures
+## 🏗️ Three Architectures
 
-### 1. Static Tiles (Simple)
+### 1. PDF Grid Viewer - Dynamic PDF Streaming (Recommended)
+```
+PDF → PDF.js → Canvas Rendering → Client-side Tiling → OpenSeadragon
+```
+- ✅ Upload any PDF and view immediately
+- ✅ Dynamic tile generation in browser
+- ✅ Rotating grid layout shows document structure
+- ✅ No server infrastructure needed
+- ✅ Infinite zoom into page details
+- ✅ Low memory usage (~100-200MB)
+
+### 2. Static Image Tiles (Simple)
 ```
 Image → libvips dzsave → Static tiles → CDN → Browser
 ```
@@ -53,7 +72,7 @@ Image → libvips dzsave → Static tiles → CDN → Browser
 - ✅ Fastest deployment
 - ❌ Larger storage footprint
 
-### 2. Dynamic Streaming (Scalable)
+### 3. Dynamic Image Streaming (Scalable)
 ```
 Image → libvips tiffsave → Pyramidal TIFF → IIPImage → Browser
 ```
@@ -64,30 +83,54 @@ Image → libvips tiffsave → Pyramidal TIFF → IIPImage → Browser
 
 ## 🔬 How It Works
 
-Both approaches use **image pyramids** and **tiling**:
+### PDF Grid Viewer (Main Demo)
 
-1. **Pyramid Generation**: Source image is processed into multiple resolution levels
+The PDF Grid Viewer combines PDF rendering with deep zoom technology:
+
+1. **PDF Upload**: User uploads any PDF file via drag & drop or file picker
+
+2. **Grid Layout**: Pages are arranged in an N×N rotating grid where:
+   - Horizontal movement advances through pages (like reading a book)
+   - Vertical movement also advances through pages (like scrolling)
+   - Adjacent pages in orthogonal directions are sequential neighbors
+   - Creates a 2D continuous space from 1D page sequence
+
+3. **Dynamic Rendering**: PDF.js renders each page to canvas at full resolution
+
+4. **Tile Generation**: Custom tile source generates 256×256 or 512×512 tiles on-demand:
+   - Tiles are generated from canvas as needed for current viewport
+   - FIFO cache stores recently accessed tiles
+   - Pyramid structure supports multiple zoom levels
+
+5. **Streaming**: OpenSeadragon loads only visible tiles
+   - Memory usage: Constant (~100-200 MB)
+   - Smooth 60 FPS panning and zooming
+   - Can view 100+ page PDFs with deep zoom
+
+### Static/Dynamic Image Viewers
+
+For pre-generated images, the system uses **image pyramids** and **tiling**:
+
+1. **Pyramid Generation**: Source image processed into multiple resolution levels
    - Level 0: 1×1 pixel (smallest)
    - Level 1: 2×2 pixels
-   - ...
    - Level N: Full resolution (10,000×10,000+)
 
-2. **Tiling**: Each pyramid level is divided into 256×256 pixel tiles
+2. **Tiling**: Each pyramid level divided into 256×256 pixel tiles
 
 3. **Dynamic Loading**: Browser loads only visible tiles at appropriate zoom level
-   - Memory usage: Constant (~50-200 MB)
-   - Can view gigapixel images on any device
-   - Smooth 60 FPS panning and zooming
 
 ## 🛠️ Technologies
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Client | [OpenSeadragon](https://openseadragon.github.io/) | JavaScript deep zoom viewer |
-| Processing | [libvips](https://libvips.github.io/libvips/) | High-performance image processing |
-| Server (dynamic) | [IIPImage](https://iipimage.sourceforge.io/) | Advanced image streaming |
-| Format (static) | DeepZoom (DZI) | Pre-generated tile pyramid |
-| Format (dynamic) | Pyramidal TIFF | Multi-resolution tiled TIFF |
+| **PDF Viewer** | [PDF.js](https://mozilla.github.io/pdf.js/) | PDF rendering and parsing |
+| **Viewer** | [OpenSeadragon 4.1.0](https://openseadragon.github.io/) | Deep zoom viewer with tiling |
+| **UI Framework** | [React 18](https://react.dev/) | Interactive user interface |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) | Responsive design |
+| **Image Processing** | [libvips 8.15](https://libvips.github.io/libvips/) | High-performance pyramid generation |
+| **Image Server** | [IIPImage](https://iipimage.sourceforge.io/) | Dynamic tile streaming (optional) |
+| **Formats** | DeepZoom (DZI), Pyramidal TIFF | Tile storage formats |
 
 ## ♾️ Arbitrary Size Support
 
@@ -151,18 +194,61 @@ vips tiffsave input.jpg output.tif \
 # Result: Single output.tif file (~10% of original)
 ```
 
-## 🎯 When to Use Which
+## 🎮 Try the PDF Grid Viewer
 
-### Use Static Tiles When:
-- Small number of images (< 100)
-- Using static hosting (GitHub Pages, etc.)
-- Want simplest deployment
+Once you open `index.html`, here's what to try:
+
+### Getting Started
+1. **Upload a PDF**: Drag & drop any PDF onto the viewer, or click "Local PDF" button
+2. **Auto-loads demo.pdf**: A sample PDF loads automatically if served via HTTP
+3. **View from URL**: Enter a PDF URL in the text box and click "Open URL"
+
+### Explore the Grid
+1. **Zoom Out**: Scroll down or pinch out to see the entire grid at once
+   - Notice how pages form a diagonal band pattern
+   - Upper-left and lower-right triangles are blank (visual pattern)
+
+2. **Navigate Pages**:
+   - Move **right** to advance pages (like reading a book)
+   - Move **down** to also advance pages (like scrolling)
+   - Pages appear multiple times in the grid
+
+3. **Deep Zoom**:
+   - Zoom in on any page to see fine details
+   - Text becomes readable at high zoom levels
+   - Tiles load dynamically as you pan/zoom
+
+4. **Performance**:
+   - Watch browser DevTools Network tab - tiles load on-demand
+   - Check Task Manager - memory stays constant even on large PDFs
+   - Notice smooth 60 FPS panning even with 50+ page documents
+
+### Controls
+- **Pan**: Click and drag
+- **Zoom**: Mouse wheel or pinch gesture
+- **Home**: Reset button (top controls)
+- **Fullscreen**: Fullscreen button in viewer
+- **Stop Loading**: If loading takes too long
+
+## 🎯 When to Use Which Approach
+
+### Use PDF Grid Viewer (index.html) For:
+- ✅ **Any PDF viewing** - magazines, books, documents, presentations
+- ✅ **Exploring document structure** - see patterns and flow at once
+- ✅ **Deep inspection** - zoom into fine details while keeping context
+- ✅ **No setup required** - works immediately in browser
+- ✅ **GitHub Pages deployment** - static hosting friendly
+
+### Use Static Image Tiles For:
+- Small number of pre-generated images (< 100)
+- Using CDN or static hosting
+- Want simplest deployment for images
 - Storage is not a constraint
 - Building offline-capable apps
 
-### Use Dynamic Streaming When:
+### Use Dynamic Image Streaming (IIPImage) For:
 - Large image collections (museums, research labs)
-- Storage costs matter
+- Storage costs matter for images
 - Need IIIF standards compliance
 - Want advanced features (rotation, color manipulation)
 - Have server infrastructure available

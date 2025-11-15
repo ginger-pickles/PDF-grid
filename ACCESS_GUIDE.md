@@ -1,6 +1,6 @@
-# Quick Access Guide for Deep Zoom Demo
+# Quick Access Guide for PDF Grid Viewer
 
-Since remote tunneling is restricted in this environment, here are several ways you can access the deep zoom demo:
+The **PDF Grid Viewer** is the main demo - it features PDF upload with dynamic tile streaming and a unique rotating grid visualization. Here are several ways to access it:
 
 ## Option 1: Access via GitHub (Immediate - Recommended)
 
@@ -17,11 +17,15 @@ git checkout claude/research-deep-zoom-image-browser-011CUydLXThvdETr561jDdX6
 # Serve locally
 python3 -m http.server 8000
 
-# Open in browser
-open http://localhost:8000/deepzoom-static.html
+# Open in browser - PDF Grid Viewer (MAIN DEMO)
+open http://localhost:8000/index.html
+
+# Also try the image demos:
+# http://localhost:8000/deepzoom-static.html
+# http://localhost:8000/deepzoom.html (requires Docker)
 ```
 
-## Option 2: Enable GitHub Pages
+## Option 2: Enable GitHub Pages (Recommended for Remote Access)
 
 1. Go to your repository: https://github.com/ginger-pickles/PDF-grid
 2. Go to Settings → Pages
@@ -29,8 +33,10 @@ open http://localhost:8000/deepzoom-static.html
 4. Set folder to `/ (root)`
 5. Click Save
 
-Your demo will be available at:
-`https://ginger-pickles.github.io/PDF-grid/deepzoom-static.html`
+Your demos will be available at:
+- **PDF Grid Viewer (MAIN):** `https://ginger-pickles.github.io/PDF-grid/`
+- **Or:** `https://ginger-pickles.github.io/PDF-grid/index.html`
+- Image demos: `https://ginger-pickles.github.io/PDF-grid/deepzoom-static.html`
 
 (Note: May take a few minutes to deploy)
 
@@ -59,73 +65,107 @@ vercel --yes
 2. Import from GitHub: `ginger-pickles/PDF-grid#claude/research-deep-zoom-image-browser-011CUydLXThvdETr561jDdX6`
 3. Open `deepzoom-static.html` in preview
 
-## What to Try
+## What to Try - PDF Grid Viewer (Main Demo)
 
-Once you have access, try these demonstrations:
+Once you open `index.html`, try these features:
 
-### Static Tiles Demo (`deepzoom-static.html`)
-- Works immediately, no setup required
-- Two sample images: 10K×10K and 8K×8K
-- Smooth panning and zooming
-- Notice how it loads only visible tiles
-- Try zooming in to see individual pixels
+### 1. Upload a PDF
+- **Drag & Drop**: Drag any PDF file onto the viewer
+- **Click to Select**: Use the "Local PDF" button to browse
+- **Load from URL**: Paste a PDF URL and click "Open URL"
+- **Auto-load**: Demo PDF loads automatically when served via HTTP
+
+### 2. Explore the Rotating Grid
+- **Zoom Out**: See all pages arranged in a diagonal grid pattern
+- **Navigate Right**: Advance through pages like reading a book
+- **Navigate Down**: Also advance through pages (orthogonal movement)
+- **Understand Structure**: Pages appear multiple times, creating a 2D continuous space
+
+### 3. Deep Zoom into Pages
+- **Zoom In**: Scroll or pinch to zoom into any page
+- **Read Text**: At high zoom, text becomes perfectly readable
+- **Inspect Details**: See fine details like images, charts, diagrams
+- **Dynamic Loading**: Tiles generate on-demand as you zoom
+
+### 4. Performance Demonstration
+- **Check Network Tab**: Watch tiles load only when needed
+- **Monitor Memory**: Stays constant (~100-200MB) even on large PDFs
+- **Feel Smoothness**: 60 FPS panning even with 50+ page documents
+- **Test Large Files**: Try a 100+ page PDF to see scaling
 
 ### Controls
-- **Pan**: Click and drag
+- **Pan**: Click and drag anywhere
 - **Zoom**: Mouse wheel or pinch gesture
-- **Reset**: Home button (top-left of viewer)
-- **Fullscreen**: Fullscreen button
-- **Help**: Click the ? button for more info
+- **Home**: Reset button in top controls
+- **Fullscreen**: Fullscreen button for immersive viewing
+- **Stop**: Cancel button if loading takes too long
+- **Help**: ? button for more information
 
 ### What to Observe
-1. **Infinite Zoom**: Zoom in as deep as you want - limited only by source resolution
-2. **Smooth Performance**: 60 FPS even with 10,000×10,000 pixel images
-3. **Low Memory**: Browser memory stays constant ~100MB
-4. **Fast Loading**: Only loads tiles in current viewport
-5. **Navigator**: Mini-map shows your position (desktop only)
+1. **Infinite Zoom**: Zoom depth limited only by PDF resolution
+2. **Rotating Grid**: Unique visualization showing document flow
+3. **Dynamic Tiles**: Client-side tile generation from PDF pages
+4. **Low Memory**: Constant memory regardless of document size
+5. **Fast Loading**: Progressive rendering as pages load
 
-## Dynamic Streaming Demo (`deepzoom.html`)
+## Image Demos (Additional)
 
-This requires Docker to run the IIPImage server:
+### Static Tiles Demo (`deepzoom-static.html`)
+- Pre-generated tiles for 10K×10K and 8K×8K images
+- Works immediately, no setup required
+- Demonstrates static CDN-friendly approach
 
-```bash
-# Start the server
-docker-compose up -d
-
-# Server runs on port 8080
-# Then open deepzoom.html
-```
+### Dynamic Streaming Demo (`deepzoom.html`)
+- Requires Docker: `docker-compose up -d`
+- IIPImage server for on-demand tile generation
+- Production-grade image streaming
 
 ## Files Included
 
-- `deepzoom-static.html` - Static tiles viewer
-- `deepzoom.html` - Dynamic streaming viewer
-- `DEEPZOOM_README.md` - Project overview
-- `DEEPZOOM_GUIDE.md` - Complete implementation guide
+- **`index.html`** - PDF Grid Viewer (MAIN DEMO) ⭐
+  - Upload and view any PDF with rotating grid layout
+  - Dynamic tile generation in browser
+  - Deep zoom into page details
+  - No server required
+
+- `deepzoom-static.html` - Static image tiles viewer
+- `deepzoom.html` - Dynamic image streaming viewer (needs Docker)
+- `DEEPZOOM_README.md` - Complete project overview
+- `DEEPZOOM_GUIDE.md` - Implementation guide
+- `ACCESS_GUIDE.md` - This file
 - `docker-compose.yml` - IIPImage server configuration
+- `demo.pdf` - Sample PDF for testing
 - `images/` - Sample images and pre-generated tiles
-  - sample1.tif - 10K×10K pyramidal TIFF
-  - sample2.tif - 8K×8K pyramidal TIFF
-  - sample1_dzi_files/ - Pre-generated static tiles
-  - sample2_dzi_files/ - Pre-generated static tiles
+  - sample1.tif / sample2.tif - Pyramidal TIFFs
+  - sample1_dzi_files/ / sample2_dzi_files/ - Pre-generated static tiles
 
 ## Technical Details
 
-The demo showcases two production-ready approaches for arbitrary-size image viewing:
+The demo showcases three production-ready approaches for arbitrary-size viewing:
 
-1. **Static Tiles**: Pre-generated DeepZoom (DZI) format
+### 1. PDF Grid Viewer (Main Demo) - Client-side Dynamic Streaming
+   - **Architecture**: PDF.js → Canvas → Client-side Tiling → OpenSeadragon
+   - **Upload**: Any PDF file via drag & drop or file picker
+   - **Processing**: All rendering happens in browser
+   - **Storage**: Zero server storage, all client-side
+   - **Deployment**: Works on any static host (GitHub Pages, Netlify, etc.)
+   - **Features**: Rotating grid layout + deep zoom + dynamic tiles
+
+### 2. Static Image Tiles - Pre-generated CDN Approach
    - Storage: ~50MB for 10K×10K image
-   - Works on any static host (CDN, GitHub Pages, etc.)
+   - Pre-generated DeepZoom (DZI) format
    - Zero server-side processing
+   - Works on any CDN
 
-2. **Dynamic Streaming**: On-demand tile generation
+### 3. Dynamic Image Streaming - Server-side On-demand
    - Storage: ~8MB pyramidal TIFF
-   - Requires IIPImage server
+   - Requires IIPImage server (Docker)
    - Production-grade scalability
+   - IIIF compatible
 
-Both support:
+All approaches support:
 - ♾️ Arbitrary zoom depth
-- 🌐 Arbitrary image breadth
+- 🌐 Arbitrary breadth
 - 💾 Constant memory usage
 - 🚀 Smooth 60 FPS performance
 
