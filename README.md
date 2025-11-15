@@ -108,8 +108,8 @@ PDF Upload → PDF.js Rendering → Canvas → Dynamic Tile Generation → OpenS
 ## Additional Demos
 
 See also:
-- `deepzoom-static.html` - Static pre-generated image tiles demo
-- `deepzoom.html` - Dynamic image streaming with IIPImage server
+- [**deepzoom-static.html**](https://ginger-pickles.github.io/PDF-grid/deepzoom-static.html) - Static pre-generated image tiles demo (10K×10K images)
+- [**deepzoom.html**](https://ginger-pickles.github.io/PDF-grid/deepzoom.html) - Dynamic image streaming with IIPImage server (requires Docker)
 - `DEEPZOOM_README.md` - Complete documentation on deep zoom technology
 - `DEEPZOOM_GUIDE.md` - Implementation guide for creating your own
 
