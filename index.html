@@ -137,6 +137,13 @@
           VELOCITY_LOOKAHEAD_MULTIPLIER: 8.0,  // How far ahead to predict (multiplier of velocity magnitude)
           VELOCITY_DIRECTION_WEIGHT: 2.5,      // Weight for directional prediction (higher = more aggressive ahead-of-motion rendering)
 
+          // Upfront Rendering (Phase 3)
+          UPFRONT_RENDERING_ENABLED: true,     // Render all pages before viewer initialization to prevent blank tiles
+
+          // Resolution Mode and Fallback
+          RESOLUTION_MODE: 'dual',             // 'high', 'low', or 'dual' (both resolutions)
+          FALLBACK_RENDERING_ENABLED: true,    // Allow fallback to low-res when high-res unavailable
+
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
@@ -2480,6 +2487,18 @@
             const stored = localStorage.getItem('pdfgrid_predictive_rendering');
             return stored !== null ? JSON.parse(stored) : CONFIG.PREDICTIVE_RENDERING_ENABLED;
           });
+          const [upfrontRendering, setUpfrontRendering] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_upfront_rendering');
+            return stored !== null ? JSON.parse(stored) : CONFIG.UPFRONT_RENDERING_ENABLED;
+          });
+          const [fallbackRendering, setFallbackRendering] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_fallback_rendering');
+            return stored !== null ? JSON.parse(stored) : CONFIG.FALLBACK_RENDERING_ENABLED;
+          });
+          const [resolutionMode, setResolutionMode] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_resolution_mode');
+            return stored !== null ? stored : CONFIG.RESOLUTION_MODE;
+          });
 
           // Cache size parameters - load from localStorage or use CONFIG defaults
           const [tileCacheSize, setTileCacheSize] = useState(() => {
@@ -2712,6 +2731,24 @@
             localStorage.setItem('pdfgrid_predictive_rendering', JSON.stringify(predictiveRendering));
             console.log(`[PerformanceToggle] Predictive rendering: ${predictiveRendering ? 'ON' : 'OFF'}`);
           }, [predictiveRendering]);
+
+          React.useEffect(() => {
+            CONFIG.UPFRONT_RENDERING_ENABLED = upfrontRendering;
+            localStorage.setItem('pdfgrid_upfront_rendering', JSON.stringify(upfrontRendering));
+            console.log(`[PerformanceToggle] Upfront rendering: ${upfrontRendering ? 'ON' : 'OFF'}`);
+          }, [upfrontRendering]);
+
+          React.useEffect(() => {
+            CONFIG.FALLBACK_RENDERING_ENABLED = fallbackRendering;
+            localStorage.setItem('pdfgrid_fallback_rendering', JSON.stringify(fallbackRendering));
+            console.log(`[PerformanceToggle] Fallback rendering: ${fallbackRendering ? 'ON' : 'OFF'}`);
+          }, [fallbackRendering]);
+
+          React.useEffect(() => {
+            CONFIG.RESOLUTION_MODE = resolutionMode;
+            localStorage.setItem('pdfgrid_resolution_mode', resolutionMode);
+            console.log(`[PerformanceToggle] Resolution mode: ${resolutionMode}`);
+          }, [resolutionMode]);
 
           // Sync CONFIG with cache size parameters and persist to localStorage
           React.useEffect(() => {
@@ -4231,6 +4268,71 @@
                           >
                             Predictive
                           </button>
+                          <button
+                            onClick={() => setUpfrontRendering(!upfrontRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              upfrontRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Render all pages before viewer starts (prevents blank tiles)"
+                          >
+                            Upfront
+                          </button>
+                          <button
+                            onClick={() => setFallbackRendering(!fallbackRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              fallbackRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Allow fallback to low-res when high-res unavailable"
+                          >
+                            Fallback
+                          </button>
+                        </div>
+                        <div className="mt-2">
+                          <div className="text-gray-400 text-[9px] sm:text-[10px] mb-1">Resolution Mode:</div>
+                          <div className="flex gap-1 sm:gap-2">
+                            <button
+                              onClick={() => setResolutionMode('high')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'high'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render high-resolution pages only"
+                            >
+                              High
+                            </button>
+                            <button
+                              onClick={() => setResolutionMode('low')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'low'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render low-resolution pages only"
+                            >
+                              Low
+                            </button>
+                            <button
+                              onClick={() => setResolutionMode('dual')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'dual'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render both high and low resolution pages"
+                            >
+                              Dual
+                            </button>
+                          </div>
                         </div>
                       </div>
 
