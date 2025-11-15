@@ -10,7 +10,7 @@ module.exports = defineConfig({
   testDir: './tests',
 
   // Maximum time one test can run
-  timeout: 30 * 1000,
+  timeout: 60 * 1000, // Increased for slower, more realistic panning tests
 
   expect: {
     // Maximum time for expect() assertions
