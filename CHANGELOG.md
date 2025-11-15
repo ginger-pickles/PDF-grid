@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Added
-- Performance toggle controls in debug panel (Parallel, On-Demand, Predictive rendering)
+- Performance toggle controls in debug panel (Parallel, On-Demand, Predictive, Upfront, Fallback rendering)
+- Resolution mode selector (High, Low, or Dual resolution rendering)
 - Cache size adjustment controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
 - Memory usage statistics in debug panel (total memory, cache weights, average tile/page sizes)
 - PDF file size display in debug panel memory statistics
@@ -32,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Debug button now accessible even when no PDF is loaded
 
 ### Technical
-- Three performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED
+- Five performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED, UPFRONT_RENDERING_ENABLED, FALLBACK_RENDERING_ENABLED
+- Resolution mode selector: RESOLUTION_MODE ('high', 'low', or 'dual')
 - Four cache size parameters: MAX_CACHE_SIZE, PAGE_CACHE_MAX_SIZE_LOW, PAGE_CACHE_MAX_SIZE_HIGH, VIEWPORT_PRIORITY_RADIUS
 - All settings save to localStorage and load on mount
 - useEffect hooks sync React state with CONFIG object
