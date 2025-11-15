@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Performance toggle controls in debug panel (Parallel, On-Demand, Predictive rendering)
 - Cache size adjustment controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
+- Memory usage statistics in debug panel (total memory, cache weights, average tile/page sizes)
 - localStorage persistence for all performance toggles and cache parameters (persists across page refresh)
 - Console logging for performance feature and cache parameter changes
+- Scrollable debug panel for better handling of expanded statistics
 
 ### Changed
 - Performance features can now be toggled on-the-fly for testing
@@ -29,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All settings save to localStorage and load on mount
 - useEffect hooks sync React state with CONFIG object
 - Number inputs with validation and step increments for cache parameters
+- getMemoryStats() calculates actual memory usage based on canvas dimensions (width × height × 4 bytes per pixel)
+- Memory statistics include total MB, per-cache MB, item counts, and average sizes
 
 ## [1.9.1] - 2025-11-15
 
