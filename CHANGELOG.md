@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache sizes can now be adjusted on-the-fly for testing
 - All settings sync with CONFIG in real-time
 - Re-enabled local PDF storage for faster page refresh (sessionStorage/IndexedDB hybrid)
+- Improved error messages to distinguish between storage failures and server fetch failures
 
 ### Technical
 - Three performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED

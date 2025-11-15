@@ -2557,7 +2557,11 @@
                 const pdfFilename = decodeURIComponent(pdfParam);
 
                 // First try loading from storage
+                let storageError = null;
+                let storageAttempted = false;
+
                 try {
+                  storageAttempted = true;
                   const stored = await PDFStorage.load();
                   if (stored && stored.filename === pdfFilename) {
                     console.log(`Loading local PDF from storage: ${pdfFilename}`);
@@ -2572,6 +2576,7 @@
                     return true; // Successfully handled
                   }
                 } catch (error) {
+                  storageError = error;
                   console.error(`Failed to load from storage:`, error);
                 }
 
@@ -2583,11 +2588,29 @@
                     return true; // Successfully handled
                   } catch (error) {
                     console.error(`Failed to fetch PDF from server: ${error.message}`);
-                    alert(`PDF "${pdfFilename}" not found in storage or on server.`);
+
+                    // Build context-aware error message
+                    let errorMsg = `PDF "${pdfFilename}" could not be loaded.\n\n`;
+                    if (storageError) {
+                      errorMsg += `Storage error: ${storageError.message}\n`;
+                    } else if (storageAttempted) {
+                      errorMsg += `Not found in storage.\n`;
+                    }
+                    errorMsg += `Server fetch failed: ${error.message}`;
+
+                    alert(errorMsg);
                     return true; // Handled (even though it failed)
                   }
                 } else {
-                  console.log(`PDF "${pdfFilename}" not in storage, and file:// protocol prevents server fetch`);
+                  // file:// protocol - can't fetch from server
+                  let errorMsg = `PDF "${pdfFilename}" not found in storage.\n\n`;
+                  if (storageError) {
+                    errorMsg += `Storage error: ${storageError.message}\n\n`;
+                  }
+                  errorMsg += `Cannot fetch from server (file:// protocol).`;
+
+                  console.log(errorMsg);
+                  alert(errorMsg);
                   return true; // Handled (even though it failed)
                 }
               }
