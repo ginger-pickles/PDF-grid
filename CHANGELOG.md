@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Toggle buttons for tile borders and labels in debug panel
 - Close button (X) for debug panel
 - Page counter display in debug panel
+- Example PDF links on home screen (magazine, book, academic publication)
 
 ### Changed
 - Moved DEBUG button from fixed position into help panel (next to DOWNLOAD button)
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Positioned debug overlay in bottom-left corner with frosted glass effect
 - Debug panel now auto-closes help panel when opened
 - Restored initial view to centered "page one" instead of full grid (DEBUG_INITIAL_VIEW_WHOLE_GRID = false)
+- Harmonized home screen text with help panel content
+- Home screen shows conditional messaging based on device type (mobile vs desktop)
+- Changed home screen heading to "Specify a PDF to get started"
 
 ### Technical
 - Sync CONFIG.DEBUG_MODE with debug panel toggle states
