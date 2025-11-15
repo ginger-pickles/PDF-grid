@@ -39,6 +39,28 @@ You can load PDFs from any URL in two ways:
 
 Query parameters take precedence over auto-load configuration.
 
+**URL Parameters:**
+
+The viewer supports several URL parameters that can be combined:
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `?url=<URL>` | Load PDF from external URL | `?url=https://example.com/file.pdf` |
+| `?pdf=<filename>` | Load PDF from same directory (when served) | `?pdf=demo.pdf` |
+| `?debug` | Open debug panel on page load | `?debug` or `?debug=1` |
+
+**Examples:**
+- Load local file with debug: `http://localhost:8000?pdf=demo.pdf&debug`
+- Load URL with debug: `http://localhost:8000?url=https://example.com/file.pdf&debug`
+- Disable debug explicitly: `?debug=0` or `?debug=false`
+
+**Debug Panel Features:**
+- Performance toggles (Parallel, On-Demand, Predictive rendering)
+- Cache size controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
+- Memory usage statistics (total memory, cache weights, average sizes)
+- Live rendering statistics (cache hits/misses, fallback rates)
+- All settings persist in localStorage across page refreshes
+
 **CORS Proxy:**
 
 Many PDF servers don't send CORS headers, blocking cross-origin requests. To load these PDFs, a CORS proxy is enabled by default (`CONFIG.CORS_PROXY` in index.html:34).
