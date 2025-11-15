@@ -3439,15 +3439,57 @@
                 };
               },
               getCurrentZoom: () => viewer?.viewport?.getZoom() || 0,
-              getMemoryEstimate: () => {
-                const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
-                const totalPages = pageStats.low + pageStats.high;
-                // Rough estimate: avg 500KB per low-res, 2MB per high-res canvas
-                const estimatedMB = (pageStats.low * 0.5 + pageStats.high * 2).toFixed(1);
+              getMemoryStats: () => {
+                let tileCacheMB = 0;
+                let tileCacheCount = 0;
+                let lowResPageCacheMB = 0;
+                let lowResPageCacheCount = 0;
+                let highResPageCacheMB = 0;
+                let highResPageCacheCount = 0;
+
+                // Calculate tile cache memory (actual canvas dimensions)
+                if (tileStreamer?.tileCache?.cache) {
+                  for (const canvas of tileStreamer.tileCache.cache.values()) {
+                    if (canvas && canvas.width && canvas.height) {
+                      tileCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                      tileCacheCount++;
+                    }
+                  }
+                }
+
+                // Calculate page cache memory (actual canvas dimensions)
+                if (pageStreamer) {
+                  if (pageStreamer.lowResPageCache) {
+                    for (const canvas of pageStreamer.lowResPageCache.values()) {
+                      if (canvas && canvas.width && canvas.height) {
+                        lowResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                        lowResPageCacheCount++;
+                      }
+                    }
+                  }
+                  if (pageStreamer.highResPageCache) {
+                    for (const canvas of pageStreamer.highResPageCache.values()) {
+                      if (canvas && canvas.width && canvas.height) {
+                        highResPageCacheMB += (canvas.width * canvas.height * 4) / (1024 * 1024);
+                        highResPageCacheCount++;
+                      }
+                    }
+                  }
+                }
+
+                const totalMB = tileCacheMB + lowResPageCacheMB + highResPageCacheMB;
+
                 return {
-                  pages: totalPages,
-                  estimatedMB: parseFloat(estimatedMB),
-                  warning: totalPages > 200 ? 'High memory usage' : null
+                  totalMB: parseFloat(totalMB.toFixed(2)),
+                  tileCacheMB: parseFloat(tileCacheMB.toFixed(2)),
+                  tileCacheCount,
+                  avgTileMB: tileCacheCount > 0 ? parseFloat((tileCacheMB / tileCacheCount).toFixed(3)) : 0,
+                  lowResPageCacheMB: parseFloat(lowResPageCacheMB.toFixed(2)),
+                  lowResPageCacheCount,
+                  avgLowResPageMB: lowResPageCacheCount > 0 ? parseFloat((lowResPageCacheMB / lowResPageCacheCount).toFixed(3)) : 0,
+                  highResPageCacheMB: parseFloat(highResPageCacheMB.toFixed(2)),
+                  highResPageCacheCount,
+                  avgHighResPageMB: highResPageCacheCount > 0 ? parseFloat((highResPageCacheMB / highResPageCacheCount).toFixed(3)) : 0
                 };
               },
               clearCaches: () => {
@@ -3958,6 +4000,7 @@
                   // Force re-render with debugUpdateCounter
                   const _ = debugUpdateCounter;
                   const stats = window.__PDFGridDiagnostics.getCacheStats();
+                  const memoryStats = window.__PDFGridDiagnostics.getMemoryStats ? window.__PDFGridDiagnostics.getMemoryStats() : null;
                   const onDemandStats = window.__PDFGridDiagnostics.getOnDemandStats ? window.__PDFGridDiagnostics.getOnDemandStats() : null;
                   const parallelStats = window.__parallelRenderStats || null;
 
@@ -3973,7 +4016,7 @@
 
                   return (
                     <div
-                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 p-2 sm:p-3 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md"
+                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 p-2 sm:p-3 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md max-h-[80vh] overflow-y-auto"
                       style={{
                         backgroundColor: 'rgba(17, 24, 39, 0.90)',
                         backdropFilter: 'blur(8px)'
@@ -4185,6 +4228,34 @@
                           </div>
                         </div>
                       </div>
+
+                      {/* Memory Statistics */}
+                      {memoryStats && (
+                        <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                          <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Memory Usage</div>
+                          <div className="space-y-0.5 text-[9px] sm:text-[10px]">
+                            <div>
+                              <span className="text-gray-400">Total:</span>{' '}
+                              <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
+                            </div>
+                            <div className="pl-2">
+                              <span className="text-gray-400">Tile Cache:</span>{' '}
+                              <span className="text-white">{memoryStats.tileCacheMB} MB</span>
+                              <span className="text-gray-500"> ({memoryStats.tileCacheCount} tiles, avg {memoryStats.avgTileMB} MB)</span>
+                            </div>
+                            <div className="pl-2">
+                              <span className="text-gray-400">LowRes Pages:</span>{' '}
+                              <span className="text-white">{memoryStats.lowResPageCacheMB} MB</span>
+                              <span className="text-gray-500"> ({memoryStats.lowResPageCacheCount} pages, avg {memoryStats.avgLowResPageMB} MB)</span>
+                            </div>
+                            <div className="pl-2">
+                              <span className="text-gray-400">HighRes Pages:</span>{' '}
+                              <span className="text-white">{memoryStats.highResPageCacheMB} MB</span>
+                              <span className="text-gray-500"> ({memoryStats.highResPageCacheCount} pages, avg {memoryStats.avgHighResPageMB} MB)</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Statistics */}
                       <div className="space-y-1">
