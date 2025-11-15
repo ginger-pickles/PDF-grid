@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance toggle controls in debug panel (Parallel, On-Demand, Predictive rendering)
 - Cache size adjustment controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
 - Memory usage statistics in debug panel (total memory, cache weights, average tile/page sizes)
+- PDF file size display in debug panel memory statistics
+- Storage usage display showing size of cached PDF in sessionStorage/IndexedDB
 - `?debug` URL parameter to automatically open debug panel on page load
 - localStorage persistence for all performance toggles and cache parameters (persists across page refresh)
 - Console logging for performance feature and cache parameter changes
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All settings sync with CONFIG in real-time
 - Re-enabled local PDF storage for faster page refresh (sessionStorage/IndexedDB hybrid)
 - Improved error messages to distinguish between storage failures and server fetch failures
+- Debug button now accessible even when no PDF is loaded
 
 ### Technical
 - Three performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED
