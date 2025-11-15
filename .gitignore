@@ -17,3 +17,7 @@ Thumbs.db
 
 # Node modules (if added in future)
 node_modules/
+
+# Deployment packages
+*.tar.gz
+*.zip
