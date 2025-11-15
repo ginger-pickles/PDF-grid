@@ -10,24 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Click-outside functionality to close help panel by tapping on OpenSeadragon viewer
 - Interactive debug panel with live statistics (updates every 500ms)
-- Toggle buttons for tile borders and labels in debug panel
+- Debug Tiles toggle button in debug panel (consolidated borders and labels)
+- Refresh button to manually trigger tile redraw
+- Recreate button to rebuild TiledImage with cache clearing
 - Close button (X) for debug panel
 - Page counter display in debug panel
 - Example PDF links on home screen (magazine, book, academic publication)
+- National Geographic 1969-05 PDF as local demo file
+- Automated test suite for debug panel controls (tests/debug-panel-recreate.spec.js)
 
 ### Changed
 - Moved DEBUG button from fixed position into help panel (next to DOWNLOAD button)
 - Moved debug display from help panel to transparent overlay on OpenSeadragon viewer
 - Positioned debug overlay in bottom-left corner with frosted glass effect
 - Debug panel now auto-closes help panel when opened
+- Made debug panel mobile-responsive (max-width 48vw on small screens, compact padding and fonts)
+- Help panel buttons (Download, Debug) now always visible but disabled when no PDF loaded
+- Updated magazine example link from Popular Mechanics to National Geographic (local)
+- Updated book example link to "The Tale of Ginger and Pickles"
 - Restored initial view to centered "page one" instead of full grid (DEBUG_INITIAL_VIEW_WHOLE_GRID = false)
 - Harmonized home screen text with help panel content
 - Home screen shows conditional messaging based on device type (mobile vs desktop)
 - Changed home screen heading to "Specify a PDF to get started"
+- Improved home screen text layout with max-width constraint for readability
 
 ### Technical
 - Sync CONFIG.DEBUG_MODE with debug panel toggle states
 - Live update mechanism for debug statistics
+- Fixed Recreate button bug (changed cache.clear() to tileCache.clear())
 
 ## [1.9.0] - 2025-11-15
 
