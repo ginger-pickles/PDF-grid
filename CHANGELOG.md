@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.9.1] - 2025-11-15
 
-### Changed
-- Moved DEBUG button from fixed position into help panel (next to DOWNLOAD button)
-- Changed debug display from browser alert to formatted inline panel
-- Debug info now shows within help tray with organized sections for cache stats, rendering stats, and settings
-
 ### Added
 - Click-outside functionality to close help panel by tapping on OpenSeadragon viewer
+- Interactive debug panel with live statistics (updates every 500ms)
+- Toggle buttons for tile borders and labels in debug panel
+- Close button (X) for debug panel
+- Page counter display in debug panel
+
+### Changed
+- Moved DEBUG button from fixed position into help panel (next to DOWNLOAD button)
+- Moved debug display from help panel to transparent overlay on OpenSeadragon viewer
+- Positioned debug overlay in bottom-left corner with frosted glass effect
+- Debug panel now auto-closes help panel when opened
+- Restored initial view to centered "page one" instead of full grid (DEBUG_INITIAL_VIEW_WHOLE_GRID = false)
+
+### Technical
+- Sync CONFIG.DEBUG_MODE with debug panel toggle states
+- Live update mechanism for debug statistics
 
 ## [1.9.0] - 2025-11-15
 
