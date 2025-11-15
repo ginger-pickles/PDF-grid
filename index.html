@@ -128,6 +128,9 @@
           PARALLEL_WORKERS_MOBILE: 2,        // Conservative for iOS (memory-limited)
           VIEWPORT_PRIORITY_RADIUS: 2,       // Pages within N pages of viewport = high priority
 
+          // On-Demand Rendering (cache miss handling)
+          ON_DEMAND_RENDERING_ENABLED: true, // Render immediately when tile requests missing page
+
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
@@ -1191,7 +1194,9 @@
             this.stats = {
               tilesRenderedFull: 0,      // Tiles rendered with all pages at correct resolution
               tilesRenderedFallback: 0,  // Tiles rendered with fallback to other resolution
-              cacheMisses: 0             // Pages requested but not in cache
+              cacheMisses: 0,            // Pages requested but not in cache
+              onDemandRenders: 0,        // Pages rendered on-demand (triggered by cache miss)
+              onDemandHits: 0            // On-demand renders that completed before tile re-render
             };
 
             // Tile size = (page + spacing) / renderScale
@@ -1849,9 +1854,26 @@
             const pageCache = this.pageStreamer._getPageCache(resolution);
             let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
 
-            // Track cache misses for diagnostics
+            // Track cache misses and trigger on-demand rendering
             if (!pageCanvas) {
               this.stats.cacheMisses++;
+
+              // On-demand rendering: Immediately start rendering the missing page
+              // This is fire-and-forget - we use fallback now, but the page will be ready soon
+              if (CONFIG.ON_DEMAND_RENDERING_ENABLED) {
+                this.stats.onDemandRenders++;
+                // Fire async render (don't await - use fallback for now)
+                this.pageStreamer.renderPage(pageNum, resolution)
+                  .then(() => {
+                    this.stats.onDemandHits++;
+                    if (CONFIG.DEBUG_TILES) {
+                      console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, tile will update on next OSD request`);
+                    }
+                  })
+                  .catch(err => {
+                    console.warn(`[On-Demand] Failed to render page ${pageNum} at ${resolution}:`, err);
+                  });
+              }
             }
 
             // Debug: iOS diagnostic - show cache access details
@@ -2490,17 +2512,29 @@
 
             console.log(`[Parallel Render] Queue: ${pagesToRender.length} pages to render (${renderStats.skipped} already cached)`);
 
-            // Render pages in parallel batches
-            let index = 0;
-            while (index < pagesToRender.length) {
+            // Render pages in parallel batches with continuous viewport-aware re-prioritization
+            let reprioritizeCounter = 0;
+            const REPRIORITIZE_INTERVAL = 1; // Re-prioritize every N batches (1 = every batch for responsive panning)
+
+            while (pagesToRender.length > 0) {
               // Check if loading was cancelled
               if (loadingCancelledRef.current) {
                 console.log('[Parallel Render] Cancelled by user');
                 return renderStats;
               }
 
-              // Get next batch of pages
-              const batch = pagesToRender.slice(index, index + maxWorkers);
+              // Re-prioritize queue based on current viewport every N batches
+              if (reprioritizeCounter % REPRIORITIZE_INTERVAL === 0 && reprioritizeCounter > 0) {
+                const freshPriority = calculateViewportPriority(viewer, numPages, null);
+                // Keep only unrendered pages, sorted by current viewport distance
+                const unrenderedSet = new Set(pagesToRender);
+                pagesToRender = freshPriority.filter(p => unrenderedSet.has(p));
+                console.log(`[Parallel Render] Re-prioritized queue based on current viewport (${pagesToRender.length} pages remaining)`);
+              }
+              reprioritizeCounter++;
+
+              // Get next batch of pages (closest to current viewport)
+              const batch = pagesToRender.splice(0, Math.min(maxWorkers, pagesToRender.length));
               renderStats.activeWorkers = batch.length;
               renderStats.maxActiveWorkers = Math.max(renderStats.maxActiveWorkers, batch.length);
 
@@ -2512,7 +2546,7 @@
                     if (renderStats.rendered % 10 === 0) {
                       const elapsed = ((performance.now() - renderStats.startTime) / 1000).toFixed(1);
                       const rate = (renderStats.rendered / elapsed).toFixed(1);
-                      console.log(`[Parallel Render] Progress: ${renderStats.rendered}/${pagesToRender.length} (${rate} pages/sec, ${renderStats.activeWorkers} workers)`);
+                      console.log(`[Parallel Render] Progress: ${renderStats.rendered}/${renderStats.totalPages} (${rate} pages/sec, ${renderStats.activeWorkers} workers)`);
                     }
                   })
                   .catch(err => {
@@ -2529,8 +2563,6 @@
 
               // Yield to browser after each batch
               await new Promise(resolve => setTimeout(resolve, 0));
-
-              index += maxWorkers;
             }
 
             const elapsed = ((performance.now() - renderStats.startTime) / 1000).toFixed(2);
@@ -2853,7 +2885,13 @@
               getTileCacheSize: () => tileStreamer?.tileCache.cache.size || 0,
               getCacheStats: () => {
                 const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
-                const tileStats = tileStreamer?.stats || { tilesRenderedFull: 0, tilesRenderedFallback: 0, cacheMisses: 0 };
+                const tileStats = tileStreamer?.stats || {
+                  tilesRenderedFull: 0,
+                  tilesRenderedFallback: 0,
+                  cacheMisses: 0,
+                  onDemandRenders: 0,
+                  onDemandHits: 0
+                };
                 return {
                   pages: {
                     low: pageStats.low,
@@ -2870,6 +2908,8 @@
                       : 0
                   },
                   cacheMisses: tileStats.cacheMisses,
+                  onDemandRenders: tileStats.onDemandRenders,
+                  onDemandHits: tileStats.onDemandHits,
                   minimapMaxLevel: tileStreamer?.minimapMaxLevel,
                   renderScale: CONFIG.PDF_RENDER_SCALE,
                   lowResScale: CONFIG.PDF_LOWRES_SCALE
