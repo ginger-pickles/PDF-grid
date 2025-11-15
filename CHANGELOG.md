@@ -13,8 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Added
+- Performance toggle controls in debug panel (Parallel, On-Demand, Predictive rendering)
+- localStorage persistence for performance toggle states (persists across page refresh)
+- Console logging for performance feature state changes
 
 ### Changed
+- Performance features can now be toggled on-the-fly for testing
+- Toggle states sync with CONFIG in real-time
+
+### Technical
+- Three performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED
+- Each toggle saves to localStorage and loads on mount
+- useEffect hooks sync React state with CONFIG object
 
 ## [1.9.1] - 2025-11-15
 

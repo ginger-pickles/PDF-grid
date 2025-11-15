@@ -2460,6 +2460,20 @@
           const [debugTiles, setDebugTiles] = useState(false);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
+
+          // Performance toggles - load from localStorage or use CONFIG defaults
+          const [parallelRendering, setParallelRendering] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_parallel_rendering');
+            return stored !== null ? JSON.parse(stored) : CONFIG.PARALLEL_RENDERING_ENABLED;
+          });
+          const [onDemandRendering, setOnDemandRendering] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_ondemand_rendering');
+            return stored !== null ? JSON.parse(stored) : CONFIG.ON_DEMAND_RENDERING_ENABLED;
+          });
+          const [predictiveRendering, setPredictiveRendering] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_predictive_rendering');
+            return stored !== null ? JSON.parse(stored) : CONFIG.PREDICTIVE_RENDERING_ENABLED;
+          });
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
           const pageCanvasesRef = useRef([]); // Legacy: kept for backward compatibility
@@ -2630,6 +2644,25 @@
               tileStreamerRef.current.debugMode = CONFIG.DEBUG_MODE;
             }
           }, [debugTiles]);
+
+          // Sync CONFIG with performance toggles and persist to localStorage
+          React.useEffect(() => {
+            CONFIG.PARALLEL_RENDERING_ENABLED = parallelRendering;
+            localStorage.setItem('pdfgrid_parallel_rendering', JSON.stringify(parallelRendering));
+            console.log(`[PerformanceToggle] Parallel rendering: ${parallelRendering ? 'ON' : 'OFF'}`);
+          }, [parallelRendering]);
+
+          React.useEffect(() => {
+            CONFIG.ON_DEMAND_RENDERING_ENABLED = onDemandRendering;
+            localStorage.setItem('pdfgrid_ondemand_rendering', JSON.stringify(onDemandRendering));
+            console.log(`[PerformanceToggle] On-demand rendering: ${onDemandRendering ? 'ON' : 'OFF'}`);
+          }, [onDemandRendering]);
+
+          React.useEffect(() => {
+            CONFIG.PREDICTIVE_RENDERING_ENABLED = predictiveRendering;
+            localStorage.setItem('pdfgrid_predictive_rendering', JSON.stringify(predictiveRendering));
+            console.log(`[PerformanceToggle] Predictive rendering: ${predictiveRendering ? 'ON' : 'OFF'}`);
+          }, [predictiveRendering]);
 
           // Live update debug stats every 500ms when debug panel is shown
           React.useEffect(() => {
@@ -4005,6 +4038,49 @@
                         >
                           Recreate
                         </button>
+                      </div>
+
+                      {/* Performance Toggles */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Performance Features</div>
+                        <div className="flex flex-wrap gap-1 sm:gap-2">
+                          <button
+                            onClick={() => setParallelRendering(!parallelRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              parallelRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Parallel viewport-aware rendering"
+                          >
+                            Parallel
+                          </button>
+                          <button
+                            onClick={() => setOnDemandRendering(!onDemandRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              onDemandRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Render pages on-demand when tiles need them"
+                          >
+                            On-Demand
+                          </button>
+                          <button
+                            onClick={() => setPredictiveRendering(!predictiveRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              predictiveRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Velocity-based predictive page loading"
+                          >
+                            Predictive
+                          </button>
+                        </div>
                       </div>
 
                       {/* Statistics */}
