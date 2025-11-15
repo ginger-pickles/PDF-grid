@@ -2465,6 +2465,7 @@
           const [debugTiles, setDebugTiles] = useState(false);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
+          const [storageMB, setStorageMB] = useState(0); // Track storage usage
 
           // Performance toggles - load from localStorage or use CONFIG defaults
           const [parallelRendering, setParallelRendering] = useState(() => {
@@ -2506,6 +2507,7 @@
           const pdfDocRef = useRef(null);
           const tileStreamerRef = useRef(null);
           const loadingCancelledRef = useRef(false);
+          const pdfFileSizeRef = useRef(0); // Track PDF file size in bytes
 
           // Detect touch device using OSDManager
           const isTouchDevice = React.useMemo(() => OSDManager.isTouchDevice(), []);
@@ -2744,6 +2746,23 @@
             }, 500);
             return () => clearInterval(interval);
           }, [showDebug]);
+
+          // Update storage usage when PDF is loaded or debug panel shown
+          React.useEffect(() => {
+            const updateStorageSize = async () => {
+              try {
+                const stored = await PDFStorage.load();
+                if (stored && stored.pdfData) {
+                  setStorageMB(parseFloat((stored.pdfData.byteLength / (1024 * 1024)).toFixed(2)));
+                } else {
+                  setStorageMB(0);
+                }
+              } catch (e) {
+                setStorageMB(0);
+              }
+            };
+            updateStorageSize();
+          }, [pdfFile, showDebug]);
 
           // TEMPORARILY DISABLED: Handle browser back/forward navigation
           // React.useEffect(() => {
@@ -3316,6 +3335,7 @@
 
               // Save to storage for faster refresh
               const fileData = await file.arrayBuffer();
+              pdfFileSizeRef.current = fileData.byteLength; // Track PDF file size
               await PDFStorage.save(fileData, file.name);
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
@@ -3508,6 +3528,9 @@
 
                   const totalMB = tileCacheMB + lowResPageCacheMB + highResPageCacheMB;
 
+                  // Get PDF file size from ref
+                  const pdfFileSizeMB = parseFloat((pdfFileSizeRef.current / (1024 * 1024)).toFixed(2));
+
                   return {
                     totalMB: parseFloat(totalMB.toFixed(2)),
                     tileCacheMB: parseFloat(tileCacheMB.toFixed(2)),
@@ -3518,7 +3541,8 @@
                     avgLowResPageMB: lowResPageCacheCount > 0 ? parseFloat((lowResPageCacheMB / lowResPageCacheCount).toFixed(3)) : 0,
                     highResPageCacheMB: parseFloat(highResPageCacheMB.toFixed(2)),
                     highResPageCacheCount,
-                    avgHighResPageMB: highResPageCacheCount > 0 ? parseFloat((highResPageCacheMB / highResPageCacheCount).toFixed(3)) : 0
+                    avgHighResPageMB: highResPageCacheCount > 0 ? parseFloat((highResPageCacheMB / highResPageCacheCount).toFixed(3)) : 0,
+                    pdfFileSizeMB
                   };
                 } catch (error) {
                   console.error('[getMemoryStats] Error calculating memory:', error);
@@ -3532,7 +3556,8 @@
                     avgLowResPageMB: 0,
                     highResPageCacheMB: 0,
                     highResPageCacheCount: 0,
-                    avgHighResPageMB: 0
+                    avgHighResPageMB: 0,
+                    pdfFileSizeMB: 0
                   };
                 }
               },
@@ -3956,12 +3981,7 @@
                               setShowDebug(!showDebug);
                               setShowHelp(false);
                             }}
-                            disabled={!pdfFile}
-                            className={`px-3 py-1.5 text-white text-sm rounded transition-colors font-bold ${
-                              pdfFile
-                                ? 'bg-red-600 hover:bg-red-700 cursor-pointer'
-                                : 'bg-gray-600 cursor-not-allowed opacity-50'
-                            }`}
+                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors font-bold cursor-pointer"
                           >
                             {showDebug ? 'Hide Debug' : 'Show Debug'}
                           </button>
@@ -4296,6 +4316,14 @@
                               <span className="text-gray-400">HighRes Pages:</span>{' '}
                               <span className="text-white">{memoryStats.highResPageCacheMB} MB</span>
                               <span className="text-gray-500"> ({memoryStats.highResPageCacheCount} pages, avg {memoryStats.avgHighResPageMB} MB)</span>
+                            </div>
+                            <div className="pl-2 pt-1 border-t border-gray-700 mt-1">
+                              <span className="text-gray-400">PDF File Size:</span>{' '}
+                              <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
+                            </div>
+                            <div className="pl-2">
+                              <span className="text-gray-400">Storage Used:</span>{' '}
+                              <span className="text-white">{storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
                             </div>
                           </div>
                         </div>
