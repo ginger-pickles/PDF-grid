@@ -69,7 +69,7 @@
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
           DEBUG_TILES: false,  // Enable tile cache diagnostics logging
-          DEBUG_INITIAL_VIEW_WHOLE_GRID: true, // Show entire grid on load (true) or center on page 1 (false)
+          DEBUG_INITIAL_VIEW_WHOLE_GRID: false, // Show entire grid on load (true) or center on page 1 (false)
 
           // Auto-load
           AUTO_LOAD_PDF: 'demo-1.pdf', // Set to null to disable auto-load, or filename to try loading
@@ -2426,6 +2426,20 @@
               }
             });
 
+            // Track when initial tiles are fully loaded (for automated testing)
+            // Use fully-loaded-change event to detect when all initial tiles finish loading
+            let initialTilesLoaded = false;
+            viewer.addHandler('fully-loaded-change', function(event) {
+              if (event.fullyLoaded && !initialTilesLoaded) {
+                initialTilesLoaded = true;
+                // Give OSD a moment to finish drawing to canvas before signaling ready
+                setTimeout(() => {
+                  window.tilesFullyLoaded = true;
+                  console.log('[OSD] Initial tiles fully loaded and rendered');
+                }, 100);
+              }
+            });
+
             return viewer;
           }
         };
@@ -2443,6 +2457,9 @@
           const [urlInput, setUrlInput] = useState('');
           const [showHelp, setShowHelp] = useState(false);
           const [showDebug, setShowDebug] = useState(false);
+          const [debugTileBorders, setDebugTileBorders] = useState(false);
+          const [debugTileLabels, setDebugTileLabels] = useState(false);
+          const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
@@ -2603,6 +2620,23 @@
               await autoLoadDemo();
             })();
           }, []);
+
+          // Sync CONFIG.DEBUG_MODE with debug tile borders/labels state
+          React.useEffect(() => {
+            CONFIG.DEBUG_MODE = debugTileBorders || debugTileLabels;
+            if (tileStreamerRef.current) {
+              tileStreamerRef.current.debugMode = CONFIG.DEBUG_MODE;
+            }
+          }, [debugTileBorders, debugTileLabels]);
+
+          // Live update debug stats every 500ms when debug panel is shown
+          React.useEffect(() => {
+            if (!showDebug) return;
+            const interval = setInterval(() => {
+              setDebugUpdateCounter(c => c + 1);
+            }, 500);
+            return () => clearInterval(interval);
+          }, [showDebug]);
 
           // TEMPORARILY DISABLED: Handle browser back/forward navigation
           // React.useEffect(() => {
@@ -3749,7 +3783,10 @@
                               Download PDF
                             </button>
                             <button
-                              onClick={() => setShowDebug(!showDebug)}
+                              onClick={() => {
+                                setShowDebug(!showDebug);
+                                setShowHelp(false);
+                              }}
                               className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors font-bold"
                             >
                               {showDebug ? 'Hide Debug' : 'Show Debug'}
@@ -3757,44 +3794,6 @@
                           </div>
                         )}
 
-                        {showDebug && pdfFile && window.__PDFGridDiagnostics && (() => {
-                          const stats = window.__PDFGridDiagnostics.getCacheStats();
-                          const onDemandStats = window.__PDFGridDiagnostics.getOnDemandStats ? window.__PDFGridDiagnostics.getOnDemandStats() : null;
-                          const parallelStats = window.__parallelRenderStats || null;
-                          return (
-                            <div className="mt-2 p-3 bg-gray-900 rounded text-xs font-mono text-gray-300 border border-gray-700">
-                              <div className="font-bold text-white mb-2">Debug Information</div>
-                              <div className="space-y-1">
-                                <div><span className="text-gray-400">Page Cache:</span> {stats.pages.low} low-res, {stats.pages.high} high-res</div>
-                                <div><span className="text-gray-400">Tile Cache:</span> {stats.tiles} tiles</div>
-                                <div className="pt-1 border-t border-gray-800">
-                                  <span className="text-gray-400">Tiles Rendered:</span>
-                                  <div className="pl-2">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</div>
-                                </div>
-                                <div><span className="text-gray-400">Cache Misses:</span> {stats.cacheMisses}</div>
-                                {onDemandStats && (
-                                  <div className="pt-1 border-t border-gray-800">
-                                    <span className="text-gray-400">On-Demand:</span>
-                                    <div className="pl-2">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
-                                  </div>
-                                )}
-                                {parallelStats && (
-                                  <div className="pt-1 border-t border-gray-800">
-                                    <span className="text-gray-400">Parallel Rendering:</span>
-                                    <div className="pl-2">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pages/sec</div>
-                                  </div>
-                                )}
-                                <div className="pt-1 border-t border-gray-800">
-                                  <span className="text-gray-400">Settings:</span>
-                                  <div className="pl-2">
-                                    Minimap Max Lvl: {stats.minimapMaxLevel}, Render: {stats.renderScale}x, LowRes: {stats.lowResScale}x
-                                  </div>
-                                  <div className="pl-2">iOS: {isIOSSafari ? 'YES' : 'NO'}, Debug: {CONFIG.DEBUG_TILES ? 'ON' : 'OFF'}</div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()}
 
                         <div>
 
@@ -3855,6 +3854,108 @@
                   className="w-full h-full"
                   style={{ display: pdfFile ? 'block' : 'none' }}
                 />
+
+                {/* Debug overlay on top of OpenSeadragon viewer */}
+                {showDebug && pdfFile && window.__PDFGridDiagnostics && (() => {
+                  // Force re-render with debugUpdateCounter
+                  const _ = debugUpdateCounter;
+                  const stats = window.__PDFGridDiagnostics.getCacheStats();
+                  const onDemandStats = window.__PDFGridDiagnostics.getOnDemandStats ? window.__PDFGridDiagnostics.getOnDemandStats() : null;
+                  const parallelStats = window.__parallelRenderStats || null;
+
+                  // Get current page from viewer
+                  const viewer = osdViewerRef.current;
+                  let currentPage = 'N/A';
+                  if (viewer && pdfDocRef.current) {
+                    const center = viewer.viewport.getCenter();
+                    const totalPages = pdfDocRef.current.numPages;
+                    // Simple approximation - you can make this more sophisticated
+                    currentPage = `1-${totalPages}`;
+                  }
+
+                  return (
+                    <div
+                      className="absolute bottom-4 left-4 p-3 rounded-lg text-xs font-mono text-white shadow-2xl z-50 max-w-md"
+                      style={{
+                        backgroundColor: 'rgba(17, 24, 39, 0.90)',
+                        backdropFilter: 'blur(8px)'
+                      }}
+                    >
+                      {/* Header with close button */}
+                      <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-700">
+                        <div className="font-bold text-yellow-400 text-sm">Debug Panel</div>
+                        <button
+                          onClick={() => setShowDebug(false)}
+                          className="text-gray-400 hover:text-white transition-colors text-lg font-bold leading-none"
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      {/* Page counter */}
+                      <div className="mb-2 pb-2 border-b border-gray-700">
+                        <span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span>
+                      </div>
+
+                      {/* Control buttons */}
+                      <div className="flex gap-2 mb-3 pb-2 border-b border-gray-700">
+                        <button
+                          onClick={() => setDebugTileBorders(!debugTileBorders)}
+                          className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
+                            debugTileBorders
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                          }`}
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          Borders
+                        </button>
+                        <button
+                          onClick={() => setDebugTileLabels(!debugTileLabels)}
+                          className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
+                            debugTileLabels
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                          }`}
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          Labels
+                        </button>
+                      </div>
+
+                      {/* Statistics */}
+                      <div className="space-y-1">
+                        <div><span className="text-gray-400">Page Cache:</span> <span className="text-white">{stats.pages.low} low-res, {stats.pages.high} high-res</span></div>
+                        <div><span className="text-gray-400">Tile Cache:</span> <span className="text-white">{stats.tiles} tiles</span></div>
+                        <div className="pt-1 border-t border-gray-700">
+                          <span className="text-gray-400">Tiles Rendered:</span>
+                          <div className="pl-2 text-white text-xs">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</div>
+                        </div>
+                        <div><span className="text-gray-400">Cache Misses:</span> <span className="text-white">{stats.cacheMisses}</span></div>
+                        {onDemandStats && (
+                          <div className="pt-1 border-t border-gray-700">
+                            <span className="text-gray-400">On-Demand:</span>
+                            <div className="pl-2 text-white text-xs">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
+                          </div>
+                        )}
+                        {parallelStats && (
+                          <div className="pt-1 border-t border-gray-700">
+                            <span className="text-gray-400">Parallel:</span>
+                            <div className="pl-2 text-white text-xs">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pg/s</div>
+                          </div>
+                        )}
+                        <div className="pt-1 border-t border-gray-700">
+                          <span className="text-gray-400">Settings:</span>
+                          <div className="pl-2 text-white text-xs">
+                            Minimap: L{stats.minimapMaxLevel}, Render: {stats.renderScale}x, LowRes: {stats.lowResScale}x
+                          </div>
+                          <div className="pl-2 text-white text-xs">iOS: {isIOSSafari ? 'YES' : 'NO'}, Debug: {CONFIG.DEBUG_MODE ? 'ON' : 'OFF'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
             </div>
