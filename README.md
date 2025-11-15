@@ -51,15 +51,19 @@ The viewer supports several URL parameters that can be combined for flexible deb
 
 **URL Parameter Examples:**
 
-Basic usage:
-- Enable debug panel: `http://localhost:8000?debug`
-- Enable debug panel (explicit): `http://localhost:8000?debug=1` or `?debug=true`
-- Disable debug panel: `http://localhost:8000?debug=0` or `?debug=false`
+Enable debug panel on load:
+- `http://localhost:8000?debug`
+- `http://localhost:8000?debug=1`
+- `http://localhost:8000?debug=true`
 
-Combined with PDF loading:
-- Load local file with debug: `http://localhost:8000?pdf=demo.pdf&debug`
-- Load local file, debug off: `http://localhost:8000?pdf=demo.pdf&debug=0`
-- Load from URL with debug: `http://localhost:8000?url=https://example.com/file.pdf&debug`
+Combine with other parameters:
+- `http://localhost:8000?pdf=demo-3.pdf&debug`
+- `http://localhost:8000?pdf=natgeo-1969-05.pdf&debug=1`
+- `http://localhost:8000?url=https://example.com/file.pdf&debug`
+
+Explicitly disable (default behavior):
+- `http://localhost:8000?debug=0`
+- `http://localhost:8000?debug=false`
 
 **Debug Panel Features:**
 
