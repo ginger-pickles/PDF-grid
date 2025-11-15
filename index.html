@@ -2474,6 +2474,25 @@
             const stored = localStorage.getItem('pdfgrid_predictive_rendering');
             return stored !== null ? JSON.parse(stored) : CONFIG.PREDICTIVE_RENDERING_ENABLED;
           });
+
+          // Cache size parameters - load from localStorage or use CONFIG defaults
+          const [tileCacheSize, setTileCacheSize] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_tile_cache_size');
+            return stored !== null ? parseInt(stored) : CONFIG.MAX_CACHE_SIZE;
+          });
+          const [lowResPageCacheSize, setLowResPageCacheSize] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_lowres_cache_size');
+            return stored !== null ? parseInt(stored) : CONFIG.PAGE_CACHE_MAX_SIZE_LOW;
+          });
+          const [highResPageCacheSize, setHighResPageCacheSize] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_highres_cache_size');
+            return stored !== null ? parseInt(stored) : CONFIG.PAGE_CACHE_MAX_SIZE_HIGH;
+          });
+          const [viewportRadius, setViewportRadius] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_viewport_radius');
+            return stored !== null ? parseInt(stored) : CONFIG.VIEWPORT_PRIORITY_RADIUS;
+          });
+
           const viewerRef = useRef(null);
           const osdViewerRef = useRef(null);
           const pageCanvasesRef = useRef([]); // Legacy: kept for backward compatibility
@@ -2663,6 +2682,31 @@
             localStorage.setItem('pdfgrid_predictive_rendering', JSON.stringify(predictiveRendering));
             console.log(`[PerformanceToggle] Predictive rendering: ${predictiveRendering ? 'ON' : 'OFF'}`);
           }, [predictiveRendering]);
+
+          // Sync CONFIG with cache size parameters and persist to localStorage
+          React.useEffect(() => {
+            CONFIG.MAX_CACHE_SIZE = tileCacheSize;
+            localStorage.setItem('pdfgrid_tile_cache_size', tileCacheSize.toString());
+            console.log(`[CacheTuning] Tile cache size: ${tileCacheSize}`);
+          }, [tileCacheSize]);
+
+          React.useEffect(() => {
+            CONFIG.PAGE_CACHE_MAX_SIZE_LOW = lowResPageCacheSize;
+            localStorage.setItem('pdfgrid_lowres_cache_size', lowResPageCacheSize.toString());
+            console.log(`[CacheTuning] Low-res page cache size: ${lowResPageCacheSize}`);
+          }, [lowResPageCacheSize]);
+
+          React.useEffect(() => {
+            CONFIG.PAGE_CACHE_MAX_SIZE_HIGH = highResPageCacheSize;
+            localStorage.setItem('pdfgrid_highres_cache_size', highResPageCacheSize.toString());
+            console.log(`[CacheTuning] High-res page cache size: ${highResPageCacheSize}`);
+          }, [highResPageCacheSize]);
+
+          React.useEffect(() => {
+            CONFIG.VIEWPORT_PRIORITY_RADIUS = viewportRadius;
+            localStorage.setItem('pdfgrid_viewport_radius', viewportRadius.toString());
+            console.log(`[CacheTuning] Viewport priority radius: ${viewportRadius}`);
+          }, [viewportRadius]);
 
           // Live update debug stats every 500ms when debug panel is shown
           React.useEffect(() => {
@@ -4080,6 +4124,65 @@
                           >
                             Predictive
                           </button>
+                        </div>
+                      </div>
+
+                      {/* Cache Parameters */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance Parameters</div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
+                            <input
+                              type="number"
+                              value={tileCacheSize}
+                              onChange={(e) => setTileCacheSize(parseInt(e.target.value) || 0)}
+                              min="10"
+                              max="1000"
+                              step="10"
+                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                              style={{ pointerEvents: 'auto' }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Low-res page cache for minimap">LowRes Pages:</label>
+                            <input
+                              type="number"
+                              value={lowResPageCacheSize}
+                              onChange={(e) => setLowResPageCacheSize(parseInt(e.target.value) || 0)}
+                              min="10"
+                              max="500"
+                              step="10"
+                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                              style={{ pointerEvents: 'auto' }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="High-res page cache for deep zoom">HighRes Pages:</label>
+                            <input
+                              type="number"
+                              value={highResPageCacheSize}
+                              onChange={(e) => setHighResPageCacheSize(parseInt(e.target.value) || 0)}
+                              min="10"
+                              max="500"
+                              step="10"
+                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                              style={{ pointerEvents: 'auto' }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
+                            <input
+                              type="number"
+                              value={viewportRadius}
+                              onChange={(e) => setViewportRadius(parseInt(e.target.value) || 0)}
+                              min="1"
+                              max="10"
+                              step="1"
+                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                              style={{ pointerEvents: 'auto' }}
+                            />
+                          </div>
                         </div>
                       </div>
 
