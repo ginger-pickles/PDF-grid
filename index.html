@@ -2457,8 +2457,7 @@
           const [urlInput, setUrlInput] = useState('');
           const [showHelp, setShowHelp] = useState(false);
           const [showDebug, setShowDebug] = useState(false);
-          const [debugTileBorders, setDebugTileBorders] = useState(false);
-          const [debugTileLabels, setDebugTileLabels] = useState(false);
+          const [debugTiles, setDebugTiles] = useState(false);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
           const viewerRef = useRef(null);
@@ -2469,6 +2468,9 @@
           const pdfDocRef = useRef(null);
           const tileStreamerRef = useRef(null);
           const loadingCancelledRef = useRef(false);
+
+          // Detect touch device using OSDManager
+          const isTouchDevice = React.useMemo(() => OSDManager.isTouchDevice(), []);
 
           // Initialize PDF.js worker on mount
           React.useEffect(() => {
@@ -2621,13 +2623,13 @@
             })();
           }, []);
 
-          // Sync CONFIG.DEBUG_MODE with debug tile borders/labels state
+          // Sync CONFIG.DEBUG_MODE with debug tiles state
           React.useEffect(() => {
-            CONFIG.DEBUG_MODE = debugTileBorders || debugTileLabels;
+            CONFIG.DEBUG_MODE = debugTiles;
             if (tileStreamerRef.current) {
               tileStreamerRef.current.debugMode = CONFIG.DEBUG_MODE;
             }
-          }, [debugTileBorders, debugTileLabels]);
+          }, [debugTiles]);
 
           // Live update debug stats every 500ms when debug panel is shown
           React.useEffect(() => {
@@ -3753,7 +3755,7 @@
 
                         <div>
                           <h3 className="font-semibold text-white mb-2">Loading Data</h3>
-                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn790003.ca.archive.org/0/items/the-unwritten-laws-of-engineering/The%20Unwritten%20Laws%20of%20Engineering.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
+                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?pdf=natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn720003.ca.archive.org/0/items/taleofgingerpick0000pott/taleofgingerpick0000pott.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
                             <li><strong>Remote Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
@@ -3774,26 +3776,33 @@
                           </ul>
                         </div>
 
-                        {pdfFile && (
-                          <div className="pt-2 border-t border-gray-700 flex gap-2">
-                            <button
-                              onClick={handleDownload}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors"
-                            >
-                              Download PDF
-                            </button>
-                            <button
-                              onClick={() => {
-                                setShowDebug(!showDebug);
-                                setShowHelp(false);
-                              }}
-                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors font-bold"
-                            >
-                              {showDebug ? 'Hide Debug' : 'Show Debug'}
-                            </button>
-                          </div>
-                        )}
-
+                        <div className="pt-2 border-t border-gray-700 flex gap-2">
+                          <button
+                            onClick={handleDownload}
+                            disabled={!pdfFile}
+                            className={`px-3 py-1.5 text-white text-sm rounded transition-colors ${
+                              pdfFile
+                                ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
+                                : 'bg-gray-600 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            Download PDF
+                          </button>
+                          <button
+                            onClick={() => {
+                              setShowDebug(!showDebug);
+                              setShowHelp(false);
+                            }}
+                            disabled={!pdfFile}
+                            className={`px-3 py-1.5 text-white text-sm rounded transition-colors font-bold ${
+                              pdfFile
+                                ? 'bg-red-600 hover:bg-red-700 cursor-pointer'
+                                : 'bg-gray-600 cursor-not-allowed opacity-50'
+                            }`}
+                          >
+                            {showDebug ? 'Hide Debug' : 'Show Debug'}
+                          </button>
+                        </div>
 
                         <div>
 
@@ -3821,24 +3830,23 @@
 
                 {!pdfFile ? (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center text-gray-400">
+                    <div className="text-center text-gray-400 max-w-2xl px-4">
                       <svg className="w-24 h-24 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                       </svg>
                       <p className="text-lg">Specify a PDF to get started</p>
                       <p className="text-sm mt-2">Pages will appear in a rotating grid pattern; zoom out to see the whole at once.</p>
                       {isTouchDevice ? (
-                        <p className="text-sm mt-2">Load a URL or open a local file.</p>
+                        <p className="text-sm mt-2">Load a URL or open a local file. Local files remain local and are not uploaded to a server. View source verify.</p>
                       ) : (
-                        <p className="text-sm mt-2">Drag & drop a file or load a URL.</p>
+                        <p className="text-sm mt-2">Drag & drop a file or load a URL. Local files are stored locally and not uploaded to any server. View page source code to verify.</p>
                       )}
-                      <p className="text-sm mt-2">Local files are stored locally and not uploaded to any server. View page source code to verify.</p>
                       <p className="text-sm mt-2">This app is a single HTML file. Save it to your device and open to run "offline." <i>Serve</i> it from your device for improved functionality, such as auto-loading files with ?pdf parameter.</p>
                       <p className="text-sm mt-4">
                         <span className="text-gray-500">Try an example: </span>
-                        <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline">magazine</a>
+                        <a href="?pdf=natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline">magazine</a>
                         {', '}
-                        <a href="?url=https://dn790003.ca.archive.org/0/items/the-unwritten-laws-of-engineering/The%20Unwritten%20Laws%20of%20Engineering.pdf" className="text-blue-400 hover:text-blue-300 underline">book</a>
+                        <a href="?url=https://dn720003.ca.archive.org/0/items/taleofgingerpick0000pott/taleofgingerpick0000pott.pdf" className="text-blue-400 hover:text-blue-300 underline">book</a>
                         {', or '}
                         <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline">academic publication</a>
                       </p>
@@ -3888,7 +3896,7 @@
 
                   return (
                     <div
-                      className="absolute bottom-4 left-4 p-3 rounded-lg text-xs font-mono text-white shadow-2xl z-50 max-w-md"
+                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 p-2 sm:p-3 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md"
                       style={{
                         backgroundColor: 'rgba(17, 24, 39, 0.90)',
                         backdropFilter: 'blur(8px)'
@@ -3896,7 +3904,7 @@
                     >
                       {/* Header with close button */}
                       <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-700">
-                        <div className="font-bold text-yellow-400 text-sm">Debug Panel</div>
+                        <div className="font-bold text-yellow-400 text-xs sm:text-sm">Debug Panel</div>
                         <button
                           onClick={() => setShowDebug(false)}
                           className="text-gray-400 hover:text-white transition-colors text-lg font-bold leading-none"
@@ -3912,28 +3920,90 @@
                       </div>
 
                       {/* Control buttons */}
-                      <div className="flex gap-2 mb-3 pb-2 border-b border-gray-700">
+                      <div className="flex flex-wrap gap-1 sm:gap-2 mb-2 sm:mb-3 pb-2 border-b border-gray-700">
                         <button
-                          onClick={() => setDebugTileBorders(!debugTileBorders)}
-                          className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
-                            debugTileBorders
+                          onClick={() => setDebugTiles(!debugTiles)}
+                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                            debugTiles
                               ? 'bg-green-600 hover:bg-green-700 text-white'
                               : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                           }`}
                           style={{ pointerEvents: 'auto' }}
                         >
-                          Borders
+                          Debug Tiles
                         </button>
                         <button
-                          onClick={() => setDebugTileLabels(!debugTileLabels)}
-                          className={`px-2 py-1 rounded text-xs font-bold transition-colors ${
-                            debugTileLabels
-                              ? 'bg-green-600 hover:bg-green-700 text-white'
-                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          }`}
+                          onClick={() => {
+                            if (window.viewer) {
+                              console.log('[Debug] Forcing tile redraw...');
+                              window.viewer.forceRedraw();
+                            }
+                          }}
+                          className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-blue-600 hover:bg-blue-700 text-white"
                           style={{ pointerEvents: 'auto' }}
                         >
-                          Labels
+                          Refresh
+                        </button>
+                        <button
+                          onClick={async () => {
+                            console.log('[Debug] Recreate button clicked!');
+                            console.log('[Debug] window.osdViewerRef:', window.osdViewerRef);
+                            console.log('[Debug] window.tileStreamerRef:', window.tileStreamerRef);
+
+                            if (!window.osdViewerRef) {
+                              console.error('[Debug] No viewer reference!');
+                              return;
+                            }
+                            if (!window.tileStreamerRef) {
+                              console.error('[Debug] No tileStreamer reference!');
+                              return;
+                            }
+
+                            try {
+                              console.log('[Debug] Starting TiledImage recreation...');
+                              const viewer = window.osdViewerRef;
+                              const currentZoom = viewer.viewport.getZoom();
+                              const currentCenter = viewer.viewport.getCenter();
+                              console.log('[Debug] Current zoom:', currentZoom, 'center:', currentCenter);
+
+                              // Clear tile cache
+                              window.tileStreamerRef.tileCache.clear();
+                              console.log('[Debug] Tile cache cleared');
+
+                              // Remove old TiledImage
+                              const oldTiledImage = viewer.world.getItemAt(0);
+                              console.log('[Debug] Old TiledImage:', oldTiledImage);
+                              if (oldTiledImage) {
+                                viewer.world.removeItem(oldTiledImage);
+                                console.log('[Debug] Old TiledImage removed');
+                              }
+
+                              // Wait for cleanup
+                              console.log('[Debug] Waiting for cleanup...');
+                              await new Promise(resolve => setTimeout(resolve, 50));
+
+                              // Add fresh TiledImage
+                              console.log('[Debug] Adding fresh TiledImage...');
+                              viewer.addTiledImage({
+                                tileSource: window.tileStreamerRef.getOSDConfig(),
+                                success: () => {
+                                  console.log('[Debug] TiledImage added, restoring viewport...');
+                                  viewer.viewport.zoomTo(currentZoom, null, true);
+                                  viewer.viewport.panTo(currentCenter, true);
+                                  console.log('[Debug] TiledImage recreation complete!');
+                                },
+                                error: (event) => {
+                                  console.error('[Debug] Error adding TiledImage:', event);
+                                }
+                              });
+                            } catch (error) {
+                              console.error('[Debug] Error during recreation:', error);
+                            }
+                          }}
+                          className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white"
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          Recreate
                         </button>
                       </div>
 
