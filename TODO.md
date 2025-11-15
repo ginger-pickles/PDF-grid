@@ -1,6 +1,11 @@
 # TODO
 
 
+## TESTING
+
+**Fix failing visual test for missing pages detection** - Test `tests/visual/missing-pages-grid.spec.js` times out waiting for `window.tilesFullyLoaded` flag. Investigation revealed: (1) Added `fully-loaded-change` event handler to set flag when OSD finishes loading tiles (index.html:2432), (2) Updated test to wait for this flag instead of fixed 3-second timeout, (3) However, test now times out suggesting the event may not be firing correctly or flag isn't being set. The `fully-loaded-change` event might not fire in all cases, or there may be an issue with the event handler logic. Need to: investigate why event doesn't fire, consider alternative approaches (e.g., tile-loaded event, checking drawer state, or using a more robust completion signal), verify the flag is actually being set in browser console during manual testing. Note: All 53 pages ARE rendering successfully before viewer opens (confirmed by diagnostics), so this is purely a timing/synchronization issue with the automated test, not a rendering problem.
+
+
 ## INTERFACE
 
 Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)

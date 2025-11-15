@@ -3825,10 +3825,23 @@
                       <svg className="w-24 h-24 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                       </svg>
-                      <p className="text-lg">Drag & drop a PDF to get started</p>
+                      <p className="text-lg">Specify a PDF to get started</p>
                       <p className="text-sm mt-2">Pages will appear in a rotating grid pattern; zoom out to see the whole at once.</p>
+                      {isTouchDevice ? (
+                        <p className="text-sm mt-2">Load a URL or open a local file.</p>
+                      ) : (
+                        <p className="text-sm mt-2">Drag & drop a file or load a URL.</p>
+                      )}
                       <p className="text-sm mt-2">Local files are stored locally and not uploaded to any server. View page source code to verify.</p>
                       <p className="text-sm mt-2">This app is a single HTML file. Save it to your device and open to run "offline." <i>Serve</i> it from your device for improved functionality, such as auto-loading files with ?pdf parameter.</p>
+                      <p className="text-sm mt-4">
+                        <span className="text-gray-500">Try an example: </span>
+                        <a href="?url=https://ia800503.us.archive.org/22/items/PopularMechanics1950/Popular_Mechanics_10_1950.pdf" className="text-blue-400 hover:text-blue-300 underline">magazine</a>
+                        {', '}
+                        <a href="?url=https://dn790003.ca.archive.org/0/items/the-unwritten-laws-of-engineering/The%20Unwritten%20Laws%20of%20Engineering.pdf" className="text-blue-400 hover:text-blue-300 underline">book</a>
+                        {', or '}
+                        <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline">academic publication</a>
+                      </p>
                       </div>
                   </div>
                 ) : null}
