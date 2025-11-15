@@ -926,13 +926,14 @@
         const URLManager = {
           /**
            * Parse current URL parameters
-           * @returns {{url: string|null, pdf: string|null}}
+           * @returns {{url: string|null, pdf: string|null, debug: boolean}}
            */
           getParams() {
             const params = new URLSearchParams(window.location.search);
             return {
               url: params.get('url'),
-              pdf: params.get('pdf') ? decodeURIComponent(params.get('pdf')) : null
+              pdf: params.get('pdf') ? decodeURIComponent(params.get('pdf')) : null,
+              debug: params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0'
             };
           },
 
@@ -2456,7 +2457,11 @@
           const [pagesLoaded, setPagesLoaded] = useState(0);
           const [urlInput, setUrlInput] = useState('');
           const [showHelp, setShowHelp] = useState(false);
-          const [showDebug, setShowDebug] = useState(false);
+          const [showDebug, setShowDebug] = useState(() => {
+            // Check for ?debug URL parameter
+            const params = new URLSearchParams(window.location.search);
+            return params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
+          });
           const [debugTiles, setDebugTiles] = useState(false);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
