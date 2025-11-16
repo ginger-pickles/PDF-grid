@@ -2683,8 +2683,14 @@
               return false; // No URL parameters present
             };
 
-            // Restore stored PDF from previous session - ALWAYS runs if no URL params
+            // Restore stored PDF from previous session - only when opened locally (file://)
             const restoreStoredPDF = async () => {
+              // Only auto-restore when using file:// protocol (local file usage)
+              // When served (http://), start with clean home screen
+              if (window.location.protocol !== 'file:') {
+                return false;
+              }
+
               try {
                 const stored = await PDFStorage.load();
                 if (stored) {
