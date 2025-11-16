@@ -2731,62 +2731,52 @@
           React.useEffect(() => {
             CONFIG.PARALLEL_RENDERING_ENABLED = parallelRendering;
             localStorage.setItem('pdfgrid_parallel_rendering', JSON.stringify(parallelRendering));
-            console.log(`[PerformanceToggle] Parallel rendering: ${parallelRendering ? 'ON' : 'OFF'}`);
           }, [parallelRendering]);
 
           React.useEffect(() => {
             CONFIG.ON_DEMAND_RENDERING_ENABLED = onDemandRendering;
             localStorage.setItem('pdfgrid_ondemand_rendering', JSON.stringify(onDemandRendering));
-            console.log(`[PerformanceToggle] On-demand rendering: ${onDemandRendering ? 'ON' : 'OFF'}`);
           }, [onDemandRendering]);
 
           React.useEffect(() => {
             CONFIG.PREDICTIVE_RENDERING_ENABLED = predictiveRendering;
             localStorage.setItem('pdfgrid_predictive_rendering', JSON.stringify(predictiveRendering));
-            console.log(`[PerformanceToggle] Predictive rendering: ${predictiveRendering ? 'ON' : 'OFF'}`);
           }, [predictiveRendering]);
 
           React.useEffect(() => {
             CONFIG.UPFRONT_RENDERING_ENABLED = upfrontRendering;
             localStorage.setItem('pdfgrid_upfront_rendering', JSON.stringify(upfrontRendering));
-            console.log(`[PerformanceToggle] Upfront rendering: ${upfrontRendering ? 'ON' : 'OFF'}`);
           }, [upfrontRendering]);
 
           React.useEffect(() => {
             CONFIG.FALLBACK_RENDERING_ENABLED = fallbackRendering;
             localStorage.setItem('pdfgrid_fallback_rendering', JSON.stringify(fallbackRendering));
-            console.log(`[PerformanceToggle] Fallback rendering: ${fallbackRendering ? 'ON' : 'OFF'}`);
           }, [fallbackRendering]);
 
           React.useEffect(() => {
             CONFIG.RESOLUTION_MODE = resolutionMode;
             localStorage.setItem('pdfgrid_resolution_mode', resolutionMode);
-            console.log(`[PerformanceToggle] Resolution mode: ${resolutionMode}`);
           }, [resolutionMode]);
 
           // Sync CONFIG with cache size parameters and persist to localStorage
           React.useEffect(() => {
             CONFIG.MAX_CACHE_SIZE = tileCacheSize;
             localStorage.setItem('pdfgrid_tile_cache_size', tileCacheSize.toString());
-            console.log(`[CacheTuning] Tile cache size: ${tileCacheSize}`);
           }, [tileCacheSize]);
 
           React.useEffect(() => {
             CONFIG.PAGE_CACHE_MAX_SIZE_LOW = lowResPageCacheSize;
             localStorage.setItem('pdfgrid_lowres_cache_size', lowResPageCacheSize.toString());
-            console.log(`[CacheTuning] Low-res page cache size: ${lowResPageCacheSize}`);
           }, [lowResPageCacheSize]);
 
           React.useEffect(() => {
             CONFIG.PAGE_CACHE_MAX_SIZE_HIGH = highResPageCacheSize;
             localStorage.setItem('pdfgrid_highres_cache_size', highResPageCacheSize.toString());
-            console.log(`[CacheTuning] High-res page cache size: ${highResPageCacheSize}`);
           }, [highResPageCacheSize]);
 
           React.useEffect(() => {
             CONFIG.VIEWPORT_PRIORITY_RADIUS = viewportRadius;
             localStorage.setItem('pdfgrid_viewport_radius', viewportRadius.toString());
-            console.log(`[CacheTuning] Viewport priority radius: ${viewportRadius}`);
           }, [viewportRadius]);
 
           // Live update debug stats every 500ms when debug panel is shown
@@ -2919,14 +2909,18 @@
               // Update cache sizes based on PDF page count
               pageStreamer.updateCacheSizes(pdf.numPages, isIOSSafari);
 
-              console.log(`[Resolution Mode] Configured for: ${CONFIG.RESOLUTION_MODE}`);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Resolution Mode] Configured for: ${CONFIG.RESOLUTION_MODE}`);
+              }
 
               // Phase 1: Render priority high-res pages FIRST
               let pageWidth, pageHeight;
               let priorityPages = [];
               if (CONFIG.RESOLUTION_MODE === 'high' || CONFIG.RESOLUTION_MODE === 'dual') {
                 priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
-                console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
+                }
                 setLoadingStatus('Rendering initial view...');
                 await pageStreamer.renderBatch(
                   priorityPages,
@@ -2943,7 +2937,9 @@
                 pageWidth = firstHighRes.width;
                 pageHeight = firstHighRes.height;
               } else {
-                console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+                }
               }
 
               // Phase 2: Render low-res pages needed for initial viewport (calculated dynamically)
@@ -2953,7 +2949,9 @@
               if (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual') {
                 // If we skipped Phase 1, we need to render at least one low-res page to get dimensions
                 if (!pageWidth) {
-                  console.log(`Rendering page 1 (low-res) to get dimensions...`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`Rendering page 1 (low-res) to get dimensions...`);
+                  }
                   await pageStreamer.renderPage(1, 'low');
                   const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
                   pageWidth = firstLowRes.width;
@@ -2963,7 +2961,9 @@
                 setLoadingStatus('Rendering minimap...');
                 const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
 
-                console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
+                }
                 initialLowResCount = initialLowResPages.length;
                 await pageStreamer.renderBatch(
                   initialLowResPages,
@@ -2975,14 +2975,18 @@
                   }
                 );
               } else {
-                console.log(`[Resolution Mode] Skipping Phase 2 (low-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Resolution Mode] Skipping Phase 2 (low-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+                }
               }
 
               // Phase 3: Render ALL remaining pages BEFORE viewer initialization
               // Complete all page rendering NOW to avoid L0 tile issues
               // Use same fast batch approach as initial rendering
               if (CONFIG.UPFRONT_RENDERING_ENABLED && (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual')) {
-                console.log(`[Upfront Rendering] ENABLED - Rendering all remaining low-res pages before viewer starts`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Upfront Rendering] ENABLED - Rendering all remaining low-res pages before viewer starts`);
+                }
                 const remainingPages = [];
                 for (let i = 1; i <= pdf.numPages; i++) {
                   if (!pageStreamer.hasPage(i, 'low')) {
@@ -2992,7 +2996,9 @@
 
                 if (remainingPages.length > 0) {
                   setLoadingStatus(`Rendering remaining ${remainingPages.length} pages...`);
-                  console.log(`  Rendering remaining ${remainingPages.length} low-res pages with fast batching...`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`  Rendering remaining ${remainingPages.length} low-res pages with fast batching...`);
+                  }
                   await pageStreamer.renderBatch(
                     remainingPages,
                     'low',
@@ -3001,12 +3007,18 @@
                       setLoadingStatus(`Rendering minimap (${initialLowResCount + current}/${pdf.numPages})...`);
                     }
                   );
-                  console.log(`  All pages rendered!`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`  All pages rendered!`);
+                  }
                 }
               } else if (!CONFIG.UPFRONT_RENDERING_ENABLED) {
-                console.log(`[Upfront Rendering] DISABLED - Skipping Phase 3 (remaining pages will render on-demand)`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Upfront Rendering] DISABLED - Skipping Phase 3 (remaining pages will render on-demand)`);
+                }
               } else {
-                console.log(`[Upfront Rendering] Skipping Phase 3 - resolution mode is '${CONFIG.RESOLUTION_MODE}' (low-res not needed)`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Upfront Rendering] Skipping Phase 3 - resolution mode is '${CONFIG.RESOLUTION_MODE}' (low-res not needed)`);
+                }
               }
 
               // Phase 4: Initialize viewer (user can interact, all pages ready!)
@@ -3017,11 +3029,13 @@
               setLoadingStatus('');
               setIsLoading(false);
 
-              const cacheStats = pageStreamer.getCacheStats();
-              console.log(`Initial rendering complete:`);
-              console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
-              console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL pages rendered!)`);
-              console.log(`  Navigator: shown with complete grid`)
+              if (CONFIG.VERBOSE_LOGGING) {
+                const cacheStats = pageStreamer.getCacheStats();
+                console.log(`Initial rendering complete:`);
+                console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
+                console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL pages rendered!)`);
+                console.log(`  Navigator: shown with complete grid`);
+              }
 
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
