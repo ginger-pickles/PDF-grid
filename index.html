@@ -4215,12 +4215,12 @@
                 />
 
                 {/* Debug overlay on top of OpenSeadragon viewer */}
-                {showDebug && pdfFile && window.__PDFGridDiagnostics && (() => {
+                {showDebug && window.__PDFGridDiagnostics && (() => {
                   // Force re-render with debugUpdateCounter
                   const _ = debugUpdateCounter;
-                  const stats = window.__PDFGridDiagnostics.getCacheStats();
-                  const memoryStats = window.__PDFGridDiagnostics.getMemoryStats ? window.__PDFGridDiagnostics.getMemoryStats() : null;
-                  const onDemandStats = window.__PDFGridDiagnostics.getOnDemandStats ? window.__PDFGridDiagnostics.getOnDemandStats() : null;
+                  const stats = window.__PDFGridDiagnostics ? window.__PDFGridDiagnostics.getCacheStats() : { tiles: 0, lowRes: 0, highRes: 0 };
+                  const memoryStats = window.__PDFGridDiagnostics && window.__PDFGridDiagnostics.getMemoryStats ? window.__PDFGridDiagnostics.getMemoryStats() : null;
+                  const onDemandStats = window.__PDFGridDiagnostics && window.__PDFGridDiagnostics.getOnDemandStats ? window.__PDFGridDiagnostics.getOnDemandStats() : null;
                   const parallelStats = window.__parallelRenderStats || null;
 
                   // Get current page from viewer
