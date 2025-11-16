@@ -2138,25 +2138,28 @@
             }
 
             // Fallback logic: prevent excessive downsampling in either direction
-            if (!pageCanvas && resolution === 'high') {
-              // High-res requested but not available - try low-res fallback
-              // canvasScaleFactor with low-res = PDF_LOW_RES_SCALE / PDF_RENDER_SCALE
-              // = 0.3 / 4.0 = 0.075
-              // Show downsampled content rather than empty tiles
-              pageCanvas = this.pageStreamer.lowResPageCache.get(`${pageNum}_low`);
-              // On-demand rendering will eventually replace with high-res
-            } else if (!pageCanvas && resolution === 'low') {
-              // Low-res requested but not available - check if high-res would be acceptable
-              // Calculate sampling ratio: how much would we downsample high-res?
-              // Sampling ratio = scale / PDF_RENDER_SCALE
-              // Only use high-res if sampling ratio >= 0.5 (no more than 2x downsampling)
-              const minSafeScale = 0.5 * CONFIG.PDF_RENDER_SCALE; // 0.5 * 4.0 = 2.0
-              if (scale >= minSafeScale) {
-                pageCanvas = this.pageStreamer.highResPageCache.get(`${pageNum}_high`);
+            if (CONFIG.FALLBACK_RENDERING_ENABLED) {
+              if (!pageCanvas && resolution === 'high') {
+                // High-res requested but not available - try low-res fallback
+                // canvasScaleFactor with low-res = PDF_LOW_RES_SCALE / PDF_RENDER_SCALE
+                // = 0.3 / 4.0 = 0.075
+                // Show downsampled content rather than empty tiles
+                pageCanvas = this.pageStreamer.lowResPageCache.get(`${pageNum}_low`);
+                // On-demand rendering will eventually replace with high-res
+              } else if (!pageCanvas && resolution === 'low') {
+                // Low-res requested but not available - check if high-res would be acceptable
+                // Calculate sampling ratio: how much would we downsample high-res?
+                // Sampling ratio = scale / PDF_RENDER_SCALE
+                // Only use high-res if sampling ratio >= 0.5 (no more than 2x downsampling)
+                const minSafeScale = 0.5 * CONFIG.PDF_RENDER_SCALE; // 0.5 * 4.0 = 2.0
+                if (scale >= minSafeScale) {
+                  pageCanvas = this.pageStreamer.highResPageCache.get(`${pageNum}_high`);
+                }
               }
+              // Note: If fallback would require excessive downsampling, we leave blank
+              // rather than show extremely blurry content. On-demand rendering will fill it in.
             }
-            // Note: If fallback would require excessive downsampling, we leave blank
-            // rather than show extremely blurry content. On-demand rendering will fill it in.
+            // Note: If fallback is disabled, tiles will remain blank until correct resolution is rendered
 
             if (!pageCanvas) {
               // Track why drawing failed for diagnostics
@@ -2916,65 +2919,94 @@
               // Update cache sizes based on PDF page count
               pageStreamer.updateCacheSizes(pdf.numPages, isIOSSafari);
 
-              // Phase 1: Render priority high-res pages FIRST
-              const priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
-              console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
-              setLoadingStatus('Rendering initial view...');
-              await pageStreamer.renderBatch(
-                priorityPages,
-                'high',
-                5,
-                (current, total) => {
-                  setPagesLoaded(current);
-                  setLoadingStatus(`Rendering initial view (${current}/${priorityPages.length})...`);
-                }
-              );
+              console.log(`[Resolution Mode] Configured for: ${CONFIG.RESOLUTION_MODE}`);
 
-              // Get page dimensions from first rendered high-res page
-              const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
-              const pageWidth = firstHighRes.width;
-              const pageHeight = firstHighRes.height;
+              // Phase 1: Render priority high-res pages FIRST
+              let pageWidth, pageHeight;
+              let priorityPages = [];
+              if (CONFIG.RESOLUTION_MODE === 'high' || CONFIG.RESOLUTION_MODE === 'dual') {
+                priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
+                console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
+                setLoadingStatus('Rendering initial view...');
+                await pageStreamer.renderBatch(
+                  priorityPages,
+                  'high',
+                  5,
+                  (current, total) => {
+                    setPagesLoaded(current);
+                    setLoadingStatus(`Rendering initial view (${current}/${priorityPages.length})...`);
+                  }
+                );
+
+                // Get page dimensions from first rendered high-res page
+                const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
+                pageWidth = firstHighRes.width;
+                pageHeight = firstHighRes.height;
+              } else {
+                console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+              }
 
               // Phase 2: Render low-res pages needed for initial viewport (calculated dynamically)
               // v1.8: Calculate which pages are visible/needed in initial view
               // Note: Separate low/high-res caches prevent eviction conflicts
-              setLoadingStatus('Rendering minimap...');
-              const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
-
-              console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
-              const initialLowResCount = initialLowResPages.length;
-              await pageStreamer.renderBatch(
-                initialLowResPages,
-                'low',
-                20,
-                (current, total) => {
-                  setPagesLoaded(current);
-                  setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
+              let initialLowResCount = 0;
+              if (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual') {
+                // If we skipped Phase 1, we need to render at least one low-res page to get dimensions
+                if (!pageWidth) {
+                  console.log(`Rendering page 1 (low-res) to get dimensions...`);
+                  await pageStreamer.renderPage(1, 'low');
+                  const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
+                  pageWidth = firstLowRes.width;
+                  pageHeight = firstLowRes.height;
                 }
-              );
+
+                setLoadingStatus('Rendering minimap...');
+                const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
+
+                console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
+                initialLowResCount = initialLowResPages.length;
+                await pageStreamer.renderBatch(
+                  initialLowResPages,
+                  'low',
+                  20,
+                  (current, total) => {
+                    setPagesLoaded(current);
+                    setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
+                  }
+                );
+              } else {
+                console.log(`[Resolution Mode] Skipping Phase 2 (low-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
+              }
 
               // Phase 3: Render ALL remaining pages BEFORE viewer initialization
               // Complete all page rendering NOW to avoid L0 tile issues
               // Use same fast batch approach as initial rendering
-              const remainingPages = [];
-              for (let i = 1; i <= pdf.numPages; i++) {
-                if (!pageStreamer.hasPage(i, 'low')) {
-                  remainingPages.push(i);
-                }
-              }
-
-              if (remainingPages.length > 0) {
-                setLoadingStatus(`Rendering remaining ${remainingPages.length} pages...`);
-                console.log(`  Rendering remaining ${remainingPages.length} pages with fast batching...`);
-                await pageStreamer.renderBatch(
-                  remainingPages,
-                  'low',
-                  20,  // Same batch size as initial rendering (fast!)
-                  (current, total) => {
-                    setLoadingStatus(`Rendering minimap (${initialLowResCount + current}/${pdf.numPages})...`);
+              if (CONFIG.UPFRONT_RENDERING_ENABLED && (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual')) {
+                console.log(`[Upfront Rendering] ENABLED - Rendering all remaining low-res pages before viewer starts`);
+                const remainingPages = [];
+                for (let i = 1; i <= pdf.numPages; i++) {
+                  if (!pageStreamer.hasPage(i, 'low')) {
+                    remainingPages.push(i);
                   }
-                );
-                console.log(`  All pages rendered!`);
+                }
+
+                if (remainingPages.length > 0) {
+                  setLoadingStatus(`Rendering remaining ${remainingPages.length} pages...`);
+                  console.log(`  Rendering remaining ${remainingPages.length} low-res pages with fast batching...`);
+                  await pageStreamer.renderBatch(
+                    remainingPages,
+                    'low',
+                    20,  // Same batch size as initial rendering (fast!)
+                    (current, total) => {
+                      setLoadingStatus(`Rendering minimap (${initialLowResCount + current}/${pdf.numPages})...`);
+                    }
+                  );
+                  console.log(`  All pages rendered!`);
+                }
+              } else if (!CONFIG.UPFRONT_RENDERING_ENABLED) {
+                console.log(`[Upfront Rendering] DISABLED - Skipping Phase 3 (remaining pages will render on-demand)`);
+              } else {
+                console.log(`[Upfront Rendering] Skipping Phase 3 - resolution mode is '${CONFIG.RESOLUTION_MODE}' (low-res not needed)`);
               }
 
               // Phase 4: Initialize viewer (user can interact, all pages ready!)
