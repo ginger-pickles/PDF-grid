@@ -4272,8 +4272,14 @@
                       </div>
 
                       {/* Page counter */}
-                      <div className="mb-2 pb-2 border-b border-gray-700">
-                        <span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span>
+                      <div className="mb-2 pb-2 border-b border-gray-700 text-[9px] sm:text-[10px]">
+                        <div><span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span></div>
+                        {memoryStats && (
+                          <div className="text-gray-400 mt-0.5">
+                            PDF: <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
+                            <span className="text-gray-500"> • Storage: {storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Debug Visualization */}
@@ -4506,8 +4512,16 @@
                       <div className="space-y-1 text-[9px] sm:text-[10px]">
                         <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance</div>
 
+                        {/* Total Memory */}
+                        {memoryStats && (
+                          <div className="mb-2">
+                            <span className="text-gray-400">Total Memory:</span>{' '}
+                            <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
+                          </div>
+                        )}
+
                         {/* Tile Cache */}
-                        <div className="space-y-0.5">
+                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
                           <div className="flex items-center justify-between">
                             <label className="text-gray-400" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
                             <input
@@ -4524,6 +4538,12 @@
                           <div className="pl-2 text-gray-400">
                             <span className="text-white">{stats.tiles}</span> tiles cached
                             {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
+                          </div>
+                          <div className="pl-2 text-gray-400">
+                            Rendered: <span className="text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</span>
+                          </div>
+                          <div className="pl-2 text-gray-400">
+                            Cache Misses: <span className="text-white">{stats.cacheMisses}</span>
                           </div>
                         </div>
 
@@ -4585,28 +4605,6 @@
                             />
                           </div>
                         </div>
-
-                        {/* Total Memory */}
-                        {memoryStats && (
-                          <div className="pt-2 border-t border-gray-700">
-                            <div>
-                              <span className="text-gray-400">Total Memory:</span>{' '}
-                              <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
-                            </div>
-                            <div className="pl-2 text-gray-400">
-                              <span className="text-gray-400">PDF File Size:</span>{' '}
-                              <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
-                              <span className="text-gray-500"> • Storage: {storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Tile Statistics */}
-                        <div className="pt-2 border-t border-gray-700">
-                          <span className="text-gray-400">Tiles Rendered:</span>
-                          <div className="pl-2 text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</div>
-                        </div>
-                        <div><span className="text-gray-400">Cache Misses:</span> <span className="text-white">{stats.cacheMisses}</span></div>
 
                         {/* On-Demand Statistics */}
                         {onDemandStats && (
