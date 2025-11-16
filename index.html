@@ -4506,8 +4506,8 @@
                       <div className="space-y-1 text-[9px] sm:text-[10px]">
                         <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance</div>
 
-                        {/* Cache Controls */}
-                        <div className="space-y-1 mb-2">
+                        {/* Tile Cache */}
+                        <div className="space-y-0.5">
                           <div className="flex items-center justify-between">
                             <label className="text-gray-400" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
                             <input
@@ -4521,6 +4521,14 @@
                               style={{ pointerEvents: 'auto' }}
                             />
                           </div>
+                          <div className="pl-2 text-gray-400">
+                            <span className="text-white">{stats.tiles}</span> tiles cached
+                            {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
+                          </div>
+                        </div>
+
+                        {/* LowRes Pages */}
+                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
                           <div className="flex items-center justify-between">
                             <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
                             <input
@@ -4534,6 +4542,14 @@
                               style={{ pointerEvents: 'auto' }}
                             />
                           </div>
+                          <div className="pl-2 text-gray-400">
+                            <span className="text-white">{stats.pages.low}</span> pages cached
+                            {memoryStats && <span className="text-gray-500"> • {memoryStats.lowResPageCacheMB} MB (avg {memoryStats.avgLowResPageMB} MB)</span>}
+                          </div>
+                        </div>
+
+                        {/* HighRes Pages */}
+                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
                           <div className="flex items-center justify-between">
                             <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
                             <input
@@ -4547,6 +4563,14 @@
                               style={{ pointerEvents: 'auto' }}
                             />
                           </div>
+                          <div className="pl-2 text-gray-400">
+                            <span className="text-white">{stats.pages.high}</span> pages cached
+                            {memoryStats && <span className="text-gray-500"> • {memoryStats.highResPageCacheMB} MB (avg {memoryStats.avgHighResPageMB} MB)</span>}
+                          </div>
+                        </div>
+
+                        {/* Viewport Radius */}
+                        <div className="pt-2 border-t border-gray-700">
                           <div className="flex items-center justify-between">
                             <label className="text-gray-400" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
                             <input
@@ -4562,41 +4586,17 @@
                           </div>
                         </div>
 
-                        {/* Cache Statistics */}
-                        <div className="pt-2 border-t border-gray-700">
-                          <div><span className="text-gray-400">Page Cache:</span> <span className="text-white">{stats.pages.low} low-res, {stats.pages.high} high-res</span></div>
-                          <div><span className="text-gray-400">Tile Cache:</span> <span className="text-white">{stats.tiles} tiles</span></div>
-                        </div>
-
-                        {/* Memory Statistics */}
+                        {/* Total Memory */}
                         {memoryStats && (
                           <div className="pt-2 border-t border-gray-700">
                             <div>
                               <span className="text-gray-400">Total Memory:</span>{' '}
                               <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
                             </div>
-                            <div className="pl-2">
-                              <span className="text-gray-400">Tile Cache:</span>{' '}
-                              <span className="text-white">{memoryStats.tileCacheMB} MB</span>
-                              <span className="text-gray-500"> ({memoryStats.tileCacheCount} tiles, avg {memoryStats.avgTileMB} MB)</span>
-                            </div>
-                            <div className="pl-2">
-                              <span className="text-gray-400">LowRes Pages:</span>{' '}
-                              <span className="text-white">{memoryStats.lowResPageCacheMB} MB</span>
-                              <span className="text-gray-500"> ({memoryStats.lowResPageCacheCount} pages, avg {memoryStats.avgLowResPageMB} MB)</span>
-                            </div>
-                            <div className="pl-2">
-                              <span className="text-gray-400">HighRes Pages:</span>{' '}
-                              <span className="text-white">{memoryStats.highResPageCacheMB} MB</span>
-                              <span className="text-gray-500"> ({memoryStats.highResPageCacheCount} pages, avg {memoryStats.avgHighResPageMB} MB)</span>
-                            </div>
-                            <div className="pl-2 pt-1 border-t border-gray-700 mt-1">
+                            <div className="pl-2 text-gray-400">
                               <span className="text-gray-400">PDF File Size:</span>{' '}
                               <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
-                            </div>
-                            <div className="pl-2">
-                              <span className="text-gray-400">Storage Used:</span>{' '}
-                              <span className="text-white">{storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
+                              <span className="text-gray-500"> • Storage: {storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
                             </div>
                           </div>
                         )}
