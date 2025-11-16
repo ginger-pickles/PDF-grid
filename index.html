@@ -4276,7 +4276,7 @@
                         <div><span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span></div>
                         {memoryStats && (
                           <div className="text-gray-400 mt-0.5">
-                            PDF: <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
+                            PDF File Size: <span className="text-white">{memoryStats.pdfFileSizeMB > 0 ? `${memoryStats.pdfFileSizeMB} MB` : 'N/A'}</span>
                             <span className="text-gray-500"> • Storage: {storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
                           </div>
                         )}
@@ -4400,229 +4400,243 @@
                         </div>
                       </div>
 
-                      {/* Rendering Strategy */}
+                      {/* Page Rendering & Cache */}
                       <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <div className="flex flex-wrap gap-1 sm:gap-2">
-                          <button
-                            onClick={() => setUpfrontRendering(!upfrontRendering)}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              upfrontRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Render all pages before viewer starts (prevents blank tiles)"
-                          >
-                            Upfront
-                          </button>
-                          <button
-                            onClick={() => setParallelRendering(!parallelRendering)}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              parallelRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Parallel viewport-aware rendering"
-                          >
-                            Parallel
-                          </button>
-                          <button
-                            onClick={() => setOnDemandRendering(!onDemandRendering)}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              onDemandRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Render pages on-demand when tiles need them"
-                          >
-                            On-Demand
-                          </button>
-                          <button
-                            onClick={() => setPredictiveRendering(!predictiveRendering)}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              predictiveRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Velocity-based predictive page loading"
-                          >
-                            Predictive
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Resolution Controls */}
-                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <div className="flex flex-wrap gap-1 sm:gap-2">
-                          <button
-                            onClick={() => setResolutionMode('high')}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              resolutionMode === 'high'
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Render high-resolution pages only"
-                          >
-                            High
-                          </button>
-                          <button
-                            onClick={() => setResolutionMode('low')}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              resolutionMode === 'low'
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Render low-resolution pages only"
-                          >
-                            Low
-                          </button>
-                          <button
-                            onClick={() => setResolutionMode('dual')}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              resolutionMode === 'dual'
-                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Render both high and low resolution pages"
-                          >
-                            Dual
-                          </button>
-                          <button
-                            onClick={() => setFallbackRendering(!fallbackRendering)}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              fallbackRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
-                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                            }`}
-                            style={{ pointerEvents: 'auto' }}
-                            title="Allow fallback to low-res when high-res unavailable"
-                          >
-                            Fallback
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Cache & Statistics */}
-                      <div className="space-y-1 text-[9px] sm:text-[10px]">
-                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance</div>
+                        <div className="text-yellow-400 font-bold mb-2 text-[10px] sm:text-xs">Page Rendering & Cache</div>
 
                         {/* Total Memory */}
-                        {memoryStats && (
-                          <div className="mb-2">
-                            <span className="text-gray-400">Total Memory:</span>{' '}
-                            <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
-                          </div>
-                        )}
+                        <div className="text-[9px] sm:text-[10px] mb-2">
+                          {memoryStats && (
+                            <div>
+                              <span className="text-gray-400">Total Memory:</span>{' '}
+                              <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
+                            </div>
+                          )}
+                        </div>
 
-                        {/* Tile Cache */}
-                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
-                          <div className="flex items-center justify-between">
-                            <label className="text-gray-400" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
-                            <input
-                              type="number"
-                              value={tileCacheSize}
-                              onChange={(e) => setTileCacheSize(parseInt(e.target.value) || 0)}
-                              min="10"
-                              max="1000"
-                              step="10"
-                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                        {/* Rendering Strategy */}
+                        <div className="mb-2">
+                          <div className="flex flex-wrap gap-1 sm:gap-2">
+                            <button
+                              onClick={() => setUpfrontRendering(!upfrontRendering)}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                upfrontRendering
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
                               style={{ pointerEvents: 'auto' }}
-                            />
-                          </div>
-                          <div className="pl-2 text-gray-400">
-                            <span className="text-white">{stats.tiles}</span> tiles cached
-                            {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
-                          </div>
-                          <div className="pl-2 text-gray-400">
-                            Rendered: <span className="text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</span>
-                          </div>
-                          <div className="pl-2 text-gray-400">
-                            Cache Misses: <span className="text-white">{stats.cacheMisses}</span>
+                              title="Render all pages before viewer starts (prevents blank tiles)"
+                            >
+                              Upfront
+                            </button>
+                            <button
+                              onClick={() => setParallelRendering(!parallelRendering)}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                parallelRendering
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Parallel viewport-aware rendering"
+                            >
+                              Parallel
+                            </button>
+                            <button
+                              onClick={() => setOnDemandRendering(!onDemandRendering)}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                onDemandRendering
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render pages on-demand when tiles need them"
+                            >
+                              On-Demand
+                            </button>
+                            <button
+                              onClick={() => setPredictiveRendering(!predictiveRendering)}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                predictiveRendering
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Velocity-based predictive page loading"
+                            >
+                              Predictive
+                            </button>
                           </div>
                         </div>
 
-                        {/* LowRes Pages */}
-                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
-                          <div className="flex items-center justify-between">
-                            <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
-                            <input
-                              type="number"
-                              value={lowResPageCacheSize}
-                              onChange={(e) => setLowResPageCacheSize(parseInt(e.target.value) || 0)}
-                              min="10"
-                              max="500"
-                              step="10"
-                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                        {/* Resolution Controls */}
+                        <div className="mb-2">
+                          <div className="flex flex-wrap gap-1 sm:gap-2">
+                            <button
+                              onClick={() => setResolutionMode('high')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'high'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
                               style={{ pointerEvents: 'auto' }}
-                            />
-                          </div>
-                          <div className="pl-2 text-gray-400">
-                            <span className="text-white">{stats.pages.low}</span> pages cached
-                            {memoryStats && <span className="text-gray-500"> • {memoryStats.lowResPageCacheMB} MB (avg {memoryStats.avgLowResPageMB} MB)</span>}
+                              title="Render high-resolution pages only"
+                            >
+                              High
+                            </button>
+                            <button
+                              onClick={() => setResolutionMode('low')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'low'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render low-resolution pages only"
+                            >
+                              Low
+                            </button>
+                            <button
+                              onClick={() => setResolutionMode('dual')}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                resolutionMode === 'dual'
+                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Render both high and low resolution pages"
+                            >
+                              Dual
+                            </button>
+                            <button
+                              onClick={() => setFallbackRendering(!fallbackRendering)}
+                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                                fallbackRendering
+                                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                              }`}
+                              style={{ pointerEvents: 'auto' }}
+                              title="Allow fallback to low-res when high-res unavailable"
+                            >
+                              Fallback
+                            </button>
                           </div>
                         </div>
 
-                        {/* HighRes Pages */}
-                        <div className="space-y-0.5 pt-2 border-t border-gray-700">
-                          <div className="flex items-center justify-between">
-                            <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
-                            <input
-                              type="number"
-                              value={highResPageCacheSize}
-                              onChange={(e) => setHighResPageCacheSize(parseInt(e.target.value) || 0)}
-                              min="10"
-                              max="500"
-                              step="10"
-                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
-                              style={{ pointerEvents: 'auto' }}
-                            />
+                        {/* Page Cache Controls & Stats */}
+                        <div className="space-y-1 text-[9px] sm:text-[10px]">
+                          {/* LowRes Pages */}
+                          <div className="space-y-0.5 pt-2 border-t border-gray-700">
+                            <div className="flex items-center justify-between">
+                              <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
+                              <input
+                                type="number"
+                                value={lowResPageCacheSize}
+                                onChange={(e) => setLowResPageCacheSize(parseInt(e.target.value) || 0)}
+                                min="10"
+                                max="500"
+                                step="10"
+                                className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                                style={{ pointerEvents: 'auto' }}
+                              />
+                            </div>
+                            <div className="pl-2 text-gray-400">
+                              <span className="text-white">{stats.pages.low}</span> pages cached
+                              {memoryStats && <span className="text-gray-500"> • {memoryStats.lowResPageCacheMB} MB (avg {memoryStats.avgLowResPageMB} MB)</span>}
+                            </div>
                           </div>
-                          <div className="pl-2 text-gray-400">
-                            <span className="text-white">{stats.pages.high}</span> pages cached
-                            {memoryStats && <span className="text-gray-500"> • {memoryStats.highResPageCacheMB} MB (avg {memoryStats.avgHighResPageMB} MB)</span>}
-                          </div>
-                        </div>
 
-                        {/* Viewport Radius */}
-                        <div className="pt-2 border-t border-gray-700">
-                          <div className="flex items-center justify-between">
-                            <label className="text-gray-400" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
-                            <input
-                              type="number"
-                              value={viewportRadius}
-                              onChange={(e) => setViewportRadius(parseInt(e.target.value) || 0)}
-                              min="1"
-                              max="10"
-                              step="1"
-                              className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
-                              style={{ pointerEvents: 'auto' }}
-                            />
+                          {/* HighRes Pages */}
+                          <div className="space-y-0.5 pt-2 border-t border-gray-700">
+                            <div className="flex items-center justify-between">
+                              <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
+                              <input
+                                type="number"
+                                value={highResPageCacheSize}
+                                onChange={(e) => setHighResPageCacheSize(parseInt(e.target.value) || 0)}
+                                min="10"
+                                max="500"
+                                step="10"
+                                className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                                style={{ pointerEvents: 'auto' }}
+                              />
+                            </div>
+                            <div className="pl-2 text-gray-400">
+                              <span className="text-white">{stats.pages.high}</span> pages cached
+                              {memoryStats && <span className="text-gray-500"> • {memoryStats.highResPageCacheMB} MB (avg {memoryStats.avgHighResPageMB} MB)</span>}
+                            </div>
                           </div>
-                        </div>
 
-                        {/* On-Demand Statistics */}
-                        {onDemandStats && (
+                          {/* Viewport Radius */}
                           <div className="pt-2 border-t border-gray-700">
-                            <span className="text-gray-400">On-Demand:</span>
-                            <div className="pl-2 text-white">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
+                            <div className="flex items-center justify-between">
+                              <label className="text-gray-400" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
+                              <input
+                                type="number"
+                                value={viewportRadius}
+                                onChange={(e) => setViewportRadius(parseInt(e.target.value) || 0)}
+                                min="1"
+                                max="10"
+                                step="1"
+                                className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                                style={{ pointerEvents: 'auto' }}
+                              />
+                            </div>
                           </div>
-                        )}
 
-                        {/* Parallel Statistics */}
-                        {parallelStats && (
-                          <div className="pt-2 border-t border-gray-700">
-                            <span className="text-gray-400">Parallel:</span>
-                            <div className="pl-2 text-white">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pg/s</div>
+                          {/* On-Demand Statistics */}
+                          {onDemandStats && (
+                            <div className="pt-2 border-t border-gray-700">
+                              <span className="text-gray-400">On-Demand:</span>
+                              <div className="pl-2 text-white">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
+                            </div>
+                          )}
+
+                          {/* Parallel Statistics */}
+                          {parallelStats && (
+                            <div className="pt-2 border-t border-gray-700">
+                              <span className="text-gray-400">Parallel:</span>
+                              <div className="pl-2 text-white">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pg/s</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Tile Streaming & Cache */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="text-yellow-400 font-bold mb-2 text-[10px] sm:text-xs">Tile Streaming & Cache</div>
+
+                        <div className="space-y-1 text-[9px] sm:text-[10px]">
+                          {/* Tile Cache */}
+                          <div className="space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-gray-400" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
+                              <input
+                                type="number"
+                                value={tileCacheSize}
+                                onChange={(e) => setTileCacheSize(parseInt(e.target.value) || 0)}
+                                min="10"
+                                max="1000"
+                                step="10"
+                                className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
+                                style={{ pointerEvents: 'auto' }}
+                              />
+                            </div>
+                            <div className="pl-2 text-gray-400">
+                              <span className="text-white">{stats.tiles}</span> tiles cached
+                              {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
+                            </div>
+                            <div className="pl-2 text-gray-400">
+                              Rendered: <span className="text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</span>
+                            </div>
+                            <div className="pl-2 text-gray-400">
+                              Cache Misses: <span className="text-white">{stats.cacheMisses}</span>
+                            </div>
                           </div>
-                        )}
+                        </div>
+                      </div>
 
-                        {/* Settings */}
+                      {/* Settings */}
+                      <div className="space-y-1 text-[9px] sm:text-[10px]">
                         <div className="pt-2 border-t border-gray-700">
                           <span className="text-gray-400">Settings:</span>
                           <div className="pl-2 text-white">
