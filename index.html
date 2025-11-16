@@ -64,7 +64,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.4',
+          VERSION: '1.9.5',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -81,8 +81,8 @@
           CORS_PROXY: 'https://corsproxy.io/?',
 
           // PDF Rendering
-          PDF_RENDER_SCALE: 4.0, // Power-of-2 scale for clean tile alignment at all zoom levels
-          PDF_LOWRES_SCALE: 0.3, // Low-resolution scale for navigator/minimap
+          PDF_RENDER_SCALE: 3.0, // OPTIMIZED: Reduced from 4.0 to 3.0 for better memory usage (still sharp)
+          PDF_LOWRES_SCALE: 0.25, // Low-resolution scale for navigator/minimap
 
           // Mobile-specific render scales (override above if on iOS)
           MOBILE_PDF_RENDER_SCALE: 2.0, // Power-of-2 scale for iOS (4x less memory than desktop)
@@ -107,9 +107,9 @@
           IMAGE_SMOOTHING_THRESHOLD_LEVEL: 4,  // Level at which to switch from smooth to crisp
 
           // Caching
-          MAX_CACHE_SIZE: 300,           // Max tiles in TileCache (LRU eviction)
-          PAGE_CACHE_MAX_SIZE_LOW: 100,  // Max low-res pages in PageCache (separate from high-res)
-          PAGE_CACHE_MAX_SIZE_HIGH: 100, // Max high-res pages in PageCache (separate from low-res)
+          MAX_CACHE_SIZE: 200,           // OPTIMIZED: Reduced from 300 to 200 for better memory management
+          PAGE_CACHE_MAX_SIZE_LOW: 150,  // Increased for better minimap coverage (low-res is small)
+          PAGE_CACHE_MAX_SIZE_HIGH: 50,  // OPTIMIZED: Reduced from 100 to 50 (high-res is memory-intensive)
 
           // Mobile-specific limits (override above if on iOS)
           MOBILE_MAX_CACHE_SIZE: 150,          // TileCache for iOS - enough for deep zoom + pyramid + pan buffer
@@ -140,6 +140,7 @@
 
           // Upfront Rendering (Phase 3)
           UPFRONT_RENDERING_ENABLED: true,     // Render all pages before viewer initialization to prevent blank tiles
+          UPFRONT_RENDERING_PAGE_THRESHOLD: 100, // Skip Phase 3 if PDF has more than N pages (performance optimization)
 
           // Resolution Mode and Fallback
           RESOLUTION_MODE: 'dual',             // 'high', 'low', or 'dual' (both resolutions)
@@ -3014,7 +3015,10 @@
               // Phase 3: Render ALL remaining pages BEFORE viewer initialization
               // Complete all page rendering NOW to avoid L0 tile issues
               // Use same fast batch approach as initial rendering
-              if (CONFIG.UPFRONT_RENDERING_ENABLED && (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual')) {
+              // PERFORMANCE: Skip for large PDFs (>100 pages) to avoid blocking viewer initialization
+              const shouldSkipPhase3 = pdf.numPages > CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD;
+
+              if (CONFIG.UPFRONT_RENDERING_ENABLED && !shouldSkipPhase3 && (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual')) {
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[Upfront Rendering] ENABLED - Rendering all remaining low-res pages before viewer starts`);
                 }
@@ -3042,6 +3046,10 @@
                     console.log(`  All pages rendered!`);
                   }
                 }
+              } else if (shouldSkipPhase3) {
+                console.log(`[Upfront Rendering] SKIPPED - PDF has ${pdf.numPages} pages (threshold: ${CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD})`);
+                console.log(`  Viewer will open immediately. Minimap pages will render on-demand as you pan/zoom.`);
+                console.log(`  This prevents ${pdf.numPages - initialLowResCount} pages from blocking initialization (~${((pdf.numPages - initialLowResCount) * 10 / 1000).toFixed(1)}s saved!)`);
               } else if (!CONFIG.UPFRONT_RENDERING_ENABLED) {
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[Upfront Rendering] DISABLED - Skipping Phase 3 (remaining pages will render on-demand)`);
