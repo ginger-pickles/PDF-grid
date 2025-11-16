@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Eliminate empty/blank tile issues once and for all
 
 ### Fixed
+- Variable scope issues in backend integration (initialLowResCount and priorityPages undefined errors)
+- Console spam when using `?debug` parameter (separated verbose logging from visual debugging)
 
 ### Added
+- Separate debug visualization controls (Verbose Logs, Tile Labels, Tile Borders toggles)
+- RESET button in debug panel to restore all settings to defaults
 - Performance toggle controls in debug panel (Parallel, On-Demand, Predictive, Upfront, Fallback rendering)
 - Resolution mode selector (High, Low, or Dual resolution rendering)
 - Cache size adjustment controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
@@ -41,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Number inputs with validation and step increments for cache parameters
 - getMemoryStats() calculates actual memory usage based on canvas dimensions (width × height × 4 bytes per pixel)
 - Memory statistics include total MB, per-cache MB, item counts, and average sizes
+- Backend integration: Resolution mode controls Phase 1 (high-res), Phase 2 (low-res), and Phase 3 (upfront) rendering
+- Backend integration: Upfront toggle controls Phase 3 rendering (all remaining pages before viewer starts)
+- Backend integration: Fallback toggle controls whether tiles can use alternate resolution when requested resolution unavailable
+- Resolution mode 'high': Skips low-res rendering, renders only high-resolution pages
+- Resolution mode 'low': Skips high-res rendering, renders only low-resolution pages
+- Resolution mode 'dual': Renders both high-res and low-res (default behavior)
+- Fallback rendering enabled: Tiles use low-res when high-res unavailable, and vice versa (with quality constraints)
+- Fallback rendering disabled: Tiles show blank when requested resolution unavailable (on-demand rendering fills them in)
 
 ## [1.9.1] - 2025-11-15
 
