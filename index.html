@@ -753,10 +753,12 @@
             this.lowResPageCache.setCapacity(sizes.lowResSize);
             this.highResPageCache.setCapacity(sizes.highResSize);
 
-            console.log(`[Cache Sizing] Optimized for ${numPages}-page PDF:`);
-            console.log(`  Low-res cache: ${sizes.lowResSize} pages (for complete minimap coverage)`);
-            console.log(`  High-res cache: ${sizes.highResSize} pages (viewport + predictive buffer)`);
-            console.log(`  Device memory: ${navigator.deviceMemory || 'unknown'} GB`);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[Cache Sizing] Optimized for ${numPages}-page PDF:`);
+              console.log(`  Low-res cache: ${sizes.lowResSize} pages (for complete minimap coverage)`);
+              console.log(`  High-res cache: ${sizes.highResSize} pages (viewport + predictive buffer)`);
+              console.log(`  Device memory: ${navigator.deviceMemory || 'unknown'} GB`);
+            }
           }
         }
 
@@ -1178,7 +1180,6 @@
             try {
               const data = await this._loadFromIndexedDB();
               if (data && this._isValid(data, expiryMs)) {
-                console.log('Loaded PDF from IndexedDB:', data.filename);
                 return {
                   pdfData: new Uint8Array(data.pdfData).buffer,
                   filename: data.filename
@@ -1353,11 +1354,13 @@
             this.tileCanvas.height = Math.round(this.tileHeight + 2 * this.tileOverlap);
             this.tileCtx = this.tileCanvas.getContext('2d', { alpha: false });
 
-            console.log(`Tile size: ${this.tileWidth.toFixed(1)}×${this.tileHeight.toFixed(1)} (grid coords)`);
-            console.log(`Tile canvas: ${this.tileCanvas.width}×${this.tileCanvas.height}px`);
-            console.log(`Grid cell: ${cellWidth.toFixed(0)}×${cellHeight.toFixed(0)} (page ${pageWidth}×${pageHeight} + ${spacing}px spacing)`);
-            console.log(`Max level: ${this.maxLevel}, At max zoom: each page+gutter = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
-            console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`Tile size: ${this.tileWidth.toFixed(1)}×${this.tileHeight.toFixed(1)} (grid coords)`);
+              console.log(`Tile canvas: ${this.tileCanvas.width}×${this.tileCanvas.height}px`);
+              console.log(`Grid cell: ${cellWidth.toFixed(0)}×${cellHeight.toFixed(0)} (page ${pageWidth}×${pageHeight} + ${spacing}px spacing)`);
+              console.log(`Max level: ${this.maxLevel}, At max zoom: each page+gutter = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
+              console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
+            }
           }
 
           /**
@@ -2346,9 +2349,11 @@
             // This ensures same zoom depth regardless of screen pixel density
             const devicePixelRatio = window.devicePixelRatio || 1;
 
-            console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-            console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'enabled' : 'hidden (mobile)'}`);
-            console.log(`Device pixel ratio: ${devicePixelRatio}`);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
+              console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'enabled' : 'hidden (mobile)'}`);
+              console.log(`Device pixel ratio: ${devicePixelRatio}`);
+            }
 
             const viewerConfig = {
               id: 'openseadragon-viewer',
@@ -2626,7 +2631,6 @@
                 // If not in storage, try fetching from server (only works when served via HTTP)
                 if (window.location.protocol !== 'file:') {
                   try {
-                    console.log(`PDF not in storage, attempting to fetch from server: ${pdfFilename}`);
                     await loadPDFFromURL(pdfFilename, true); // Load relative path, skipHistory=true
                     return true; // Successfully handled
                   } catch (error) {
@@ -2896,8 +2900,6 @@
                 ? decodeURIComponent(filename.split('/').pop() || 'PDF')
                 : filename;
               document.title = `${displayName} - PDF Grid Viewer`;
-
-              console.log(`[v${CONFIG.VERSION}] Loaded ${filename} with ${pdf.numPages} pages`);
 
               // Allow UI to update (show spinner) before heavy rendering starts
               await new Promise(resolve => setTimeout(resolve, 100));
@@ -3561,8 +3563,6 @@
             const pattern = GridPattern.generate(numPages, numPages);
             const gridDims = GridPattern.calculateDimensions(numPages, pageWidth, pageHeight, pattern);
 
-            console.log(`Grid: ${gridDims.gridRows}×${gridDims.gridCols} pages, ${pageWidth}x${pageHeight}px each, Total: ${gridDims.totalWidth}x${gridDims.totalHeight}px`);
-
             // Create tile streamer with PageStreamer
             const pageStreamer = window.pageStreamerRef;
             const tileStreamer = new TileStreamer(
@@ -3576,7 +3576,6 @@
 
             // Expose periodicity analysis function globally
             window.analyzePeriodicityPatterns = () => tileStreamer.analyzePeriodicityPatterns();
-            console.log('Tip: Call analyzePeriodicityPatterns() from console to see tile deduplication opportunities');
 
             // Store grid dimensions globally for viewer recreation
             window.gridPageWidth = pageWidth;
