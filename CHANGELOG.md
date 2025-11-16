@@ -5,6 +5,38 @@ All notable changes to PDF Grid Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.3] - 2025-11-15
+
+### Goal
+- Improve debug panel organization and usability
+
+### Added
+- Demo PDF organization: Created `demo/` directory for example PDFs
+- Debug panel URL sync: `?debug` parameter syncs with panel open/close state
+- Debug panel accessibility: Can now be opened even when no PDF is loaded
+- Interleaved statistics: Cache statistics now displayed directly below corresponding controls
+
+### Changed
+- **Debug panel reorganization**: Complete restructuring into logical sections
+  - **Pages section**: Page count, PDF File Size, Storage info grouped together
+  - **Debug Visualization**: Verbose Logs, Tile Labels, Tile Borders (row 1)
+  - **Manual Controls**: Refresh, Recreate buttons (row 2)
+  - **Page Rendering & Cache**: Total memory, rendering strategy buttons (Upfront, Parallel, On-Demand, Predictive), page cache controls with statistics, viewport radius
+  - **Tile Streaming & Cache**: Resolution controls (High, Low, Dual, Fallback), tile cache controls with statistics
+  - **Settings**: RESET button at bottom
+- Statistics now interleaved with controls for immediate feedback (count, memory usage, average sizes)
+- Resolution controls (High/Low/Dual/Fallback) moved to Tile Streaming & Cache section for better logical grouping
+- PDF storage behavior: Only saves to sessionStorage/IndexedDB when using file:// protocol
+- PDF auto-restore: Only restores cached PDF when opened locally (file:// protocol)
+- All test files updated to use `demo/` directory structure
+
+### Technical
+- Debug panel state synchronized with URL via `window.history.replaceState`
+- Conditional storage based on `window.location.protocol === 'file:'`
+- Test paths updated via regex replacement: `pdf=demo-*.pdf` → `pdf=demo/demo-*.pdf`
+- Statistics display shows: cache size, memory usage (MB), average item size
+- Each cache control section displays its statistics inline for better UX
+
 ## [1.9.2] - 2025-11-15
 
 ### Goal
