@@ -10,7 +10,7 @@
 
 Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
 
-Close help pane by clicking outside (on OSD viewer)
+
 
 On mobile, increase pan inertia (flickMomentum)
 
@@ -55,7 +55,7 @@ Optimize or add distinct caches for distinct tasks, as improves performance.
 
 **Investigate tile-to-tile construction instead of on-demand page rendering** - Instead of rendering PDF pages on-demand when cache misses occur, explore constructing missing tiles by resampling existing tiles at different zoom levels, exploiting grid periodicity. For example: (1) Downsample L4 tile to create L3 tile (2x reduction), (2) Upsample L2 tile to create L3 tile (2x expansion with interpolation), (3) Use spatial periodicity to find equivalent tiles (x % period, y % period) and scale them. Benefits: Instant tile availability (no async PDF.js rendering), reduced CPU load, potentially smoother panning at intermediate zoom levels. Challenges: (1) Quality degradation from multiple resampling stages, (2) Need source tiles at appropriate levels, (3) Determine when resampling is acceptable vs waiting for proper page render, (4) Handle edge cases where no suitable source tile exists. Compare performance and visual quality against current on-demand rendering approach. May work best as fallback when both high-res and low-res page caches miss.
 
-**Investigate rectangular tiles instead of square tiles** - Current implementation uses square tiles sized to max(pageWidth, pageHeight). OpenSeadragon supports rectangular tiles via getTileWidth()/getTileHeight(). Investigate: (1) Measure current tile utilization (% of tile canvas with content vs blank space), (2) Calculate typical page aspect ratios in target PDFs (US Letter ~1:1.3, A4 ~1:1.4), (3) Prototype rectangular tiles matching page proportions, (4) Measure tile count and memory usage vs square tiles, (5) Determine if rectangular tiles align better with grid periodicity. Only implement if gains are significant (>20% improvement). Could potentially compound benefits with periodic caching at overview scales. Analysis phase: 1-2 hours, Prototype: 3-4 hours. See notes.md "Rectangular Tiles" for detailed trade-offs and implementation approach.
+
 
 Optimize page refresh performance; consider storing cache or canvas. (Currently re-renders all pages on every refresh; see notes.md for canvas storage vs progressive rendering options.)
 
@@ -65,25 +65,39 @@ Investigate Canvas API interpolation methods (imageSmoothingEnabled, imageSmooth
 
 **Consider viewport-aware region rendering (Phase 2 - Future)** - For extreme zoom (>10x), render only page regions needed for tiles instead of full pages. Reduces memory footprint at deep zoom and enables arbitrarily deep inspection of high-DPI content. Defer until Phase 1 complete and users report needing deeper zoom. See architecture.md "Phase 2: Viewport-Aware Region Rendering" for conceptual design.
 
-Incorporate external libraries somehow rather than pulling from whereever they come from now
+Incorporate external libraries somehow rather than pulling from wherever they come from now
 
 
 
 ## FUNCTIONALITY
 
-**Improve grid layout for even-numbered page counts** - Current staggered diagonal pattern creates aesthetically unbalanced layouts for even-page PDFs, especially with small page counts. Example: 4-page PDF has heavy blank space in upper-left and ends with partial row containing trailing blank. Consider: (1) Add extra row at bottom to balance the layout, (2) Shift entire pattern one row up to reduce top blanks, (3) Use different pattern formula for even N vs odd N, (4) Special cases for common sizes (2-page already handled in v1.8.8, consider 4-page, 6-page, 8-page). Goal: More visually balanced grid that doesn't feel "incomplete" or top-heavy. Not critical but affects polish and user experience with shorter documents.
+**Improve grid layout for even-numbered page counts** 
+For an even-number of pages, an extra row and column as follows:
+0 0 1 2 3
+0 1 2 3 4
+1 2 3 4 0
+2 3 4 0 0
 
-Support annotating PDFs (long horizon)
+For an odd-number of pages, NxN grid layout as follows:
+0 0 1 2 3
+0 1 2 3 4
+1 2 3 4 5
+2 3 4 5 0
+3 4 5 0 0
 
-Add support to switch between different page layouts: Staggered rotating grid (default), conventional wrapped grid,  vertical and horizontal scroll, Two-up, Infinite(?), etc. Fractal layout? Space-filling curve?
+
+
+Add the ability to export the transformed tile canvas as an image; with approriate resolution options.
 
 Elegantly handle odd-sized pages; including odd first pages. On PDF load, sample pages to determine the modal page dimensions. Big pages should be reduced. As a stretch goal, resolution should not be sacrificed. Generalizing, that means some regions of the map have greater resolution than others.
 
-Add the ability to export the transformed tile canvas as an image; with approriate resolution options.
+Add support to switch between different page layouts: Staggered rotating grid (default), conventional wrapped grid,  vertical and horizontal scroll, Two-up, Infinite(?), etc. Fractal layout? Space-filling curve?
 
 Add the ability to switch, with buttons, between PDFs residing in the local directory from which index.html is served
 
 Add browser history support for back/forward navigation between local PDFs (see notes.md for implementation details)
+
+Support annotating PDFs (long horizon)
 
 
 ## DOCUMENTATION
