@@ -4502,12 +4502,14 @@
                         </div>
                       </div>
 
-                      {/* Cache Parameters */}
-                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance Parameters</div>
-                        <div className="space-y-1">
+                      {/* Cache & Statistics */}
+                      <div className="space-y-1 text-[9px] sm:text-[10px]">
+                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Cache & Performance</div>
+
+                        {/* Cache Controls */}
+                        <div className="space-y-1 mb-2">
                           <div className="flex items-center justify-between">
-                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
+                            <label className="text-gray-400" title="Maximum tiles in TileCache (LRU eviction)">Tile Cache:</label>
                             <input
                               type="number"
                               value={tileCacheSize}
@@ -4520,7 +4522,7 @@
                             />
                           </div>
                           <div className="flex items-center justify-between">
-                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Low-res page cache for minimap">LowRes Pages:</label>
+                            <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
                             <input
                               type="number"
                               value={lowResPageCacheSize}
@@ -4533,7 +4535,7 @@
                             />
                           </div>
                           <div className="flex items-center justify-between">
-                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="High-res page cache for deep zoom">HighRes Pages:</label>
+                            <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
                             <input
                               type="number"
                               value={highResPageCacheSize}
@@ -4546,7 +4548,7 @@
                             />
                           </div>
                           <div className="flex items-center justify-between">
-                            <label className="text-gray-400 text-[9px] sm:text-[10px]" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
+                            <label className="text-gray-400" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
                             <input
                               type="number"
                               value={viewportRadius}
@@ -4559,15 +4561,18 @@
                             />
                           </div>
                         </div>
-                      </div>
 
-                      {/* Memory Statistics */}
-                      {memoryStats && (
-                        <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                          <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Memory Usage</div>
-                          <div className="space-y-0.5 text-[9px] sm:text-[10px]">
+                        {/* Cache Statistics */}
+                        <div className="pt-2 border-t border-gray-700">
+                          <div><span className="text-gray-400">Page Cache:</span> <span className="text-white">{stats.pages.low} low-res, {stats.pages.high} high-res</span></div>
+                          <div><span className="text-gray-400">Tile Cache:</span> <span className="text-white">{stats.tiles} tiles</span></div>
+                        </div>
+
+                        {/* Memory Statistics */}
+                        {memoryStats && (
+                          <div className="pt-2 border-t border-gray-700">
                             <div>
-                              <span className="text-gray-400">Total:</span>{' '}
+                              <span className="text-gray-400">Total Memory:</span>{' '}
                               <span className="text-white font-bold">{memoryStats.totalMB} MB</span>
                             </div>
                             <div className="pl-2">
@@ -4594,36 +4599,38 @@
                               <span className="text-white">{storageMB > 0 ? `${storageMB} MB` : 'None'}</span>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {/* Statistics */}
-                      <div className="space-y-1">
-                        <div><span className="text-gray-400">Page Cache:</span> <span className="text-white">{stats.pages.low} low-res, {stats.pages.high} high-res</span></div>
-                        <div><span className="text-gray-400">Tile Cache:</span> <span className="text-white">{stats.tiles} tiles</span></div>
-                        <div className="pt-1 border-t border-gray-700">
+                        {/* Tile Statistics */}
+                        <div className="pt-2 border-t border-gray-700">
                           <span className="text-gray-400">Tiles Rendered:</span>
-                          <div className="pl-2 text-white text-xs">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</div>
+                          <div className="pl-2 text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</div>
                         </div>
                         <div><span className="text-gray-400">Cache Misses:</span> <span className="text-white">{stats.cacheMisses}</span></div>
+
+                        {/* On-Demand Statistics */}
                         {onDemandStats && (
-                          <div className="pt-1 border-t border-gray-700">
+                          <div className="pt-2 border-t border-gray-700">
                             <span className="text-gray-400">On-Demand:</span>
-                            <div className="pl-2 text-white text-xs">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
+                            <div className="pl-2 text-white">Triggered: {onDemandStats.triggered}, Completed: {onDemandStats.completed}, Failed: {onDemandStats.failed}</div>
                           </div>
                         )}
+
+                        {/* Parallel Statistics */}
                         {parallelStats && (
-                          <div className="pt-1 border-t border-gray-700">
+                          <div className="pt-2 border-t border-gray-700">
                             <span className="text-gray-400">Parallel:</span>
-                            <div className="pl-2 text-white text-xs">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pg/s</div>
+                            <div className="pl-2 text-white">Rendered: {parallelStats.rendered}/{parallelStats.totalPages}, Rate: {((parallelStats.rendered / ((Date.now() - parallelStats.startTime) / 1000)) || 0).toFixed(1)} pg/s</div>
                           </div>
                         )}
-                        <div className="pt-1 border-t border-gray-700">
+
+                        {/* Settings */}
+                        <div className="pt-2 border-t border-gray-700">
                           <span className="text-gray-400">Settings:</span>
-                          <div className="pl-2 text-white text-xs">
+                          <div className="pl-2 text-white">
                             Minimap: L{stats.minimapMaxLevel}, Render: {stats.renderScale}x, LowRes: {stats.lowResScale}x
                           </div>
-                          <div className="pl-2 text-white text-xs">iOS: {isIOSSafari ? 'YES' : 'NO'}, Debug: {CONFIG.DEBUG_MODE ? 'ON' : 'OFF'}</div>
+                          <div className="pl-2 text-white">iOS: {isIOSSafari ? 'YES' : 'NO'}, Debug: {CONFIG.DEBUG_MODE ? 'ON' : 'OFF'}</div>
                         </div>
                       </div>
                     </div>
