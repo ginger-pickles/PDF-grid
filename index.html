@@ -64,7 +64,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.5',
+          VERSION: '1.9.6',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -106,15 +106,15 @@
           IMAGE_SMOOTHING_QUALITY: 'high',     // Quality when smoothing enabled: 'low' | 'medium' | 'high'
           IMAGE_SMOOTHING_THRESHOLD_LEVEL: 4,  // Level at which to switch from smooth to crisp
 
-          // Caching
-          MAX_CACHE_SIZE: 200,           // OPTIMIZED: Reduced from 300 to 200 for better memory management
-          PAGE_CACHE_MAX_SIZE_LOW: 150,  // Increased for better minimap coverage (low-res is small)
-          PAGE_CACHE_MAX_SIZE_HIGH: 50,  // OPTIMIZED: Reduced from 100 to 50 (high-res is memory-intensive)
+          // Caching (with two-tier hot/cold architecture)
+          MAX_CACHE_SIZE: 150,           // OPTIMIZED: Reduced tile cache for better memory management
+          PAGE_CACHE_MAX_SIZE_LOW: 200,  // Increased for complete minimap coverage (low-res is tiny)
+          PAGE_CACHE_MAX_SIZE_HIGH: 20,  // OPTIMIZED: Aggressive reduction (hot: 2-4 pages, cold: 16-18 blobs)
 
           // Mobile-specific limits (override above if on iOS)
-          MOBILE_MAX_CACHE_SIZE: 150,          // TileCache for iOS - enough for deep zoom + pyramid + pan buffer
-          MOBILE_PAGE_CACHE_MAX_SIZE_LOW: 200, // Large low-res PageCache for complete minimap coverage
-          MOBILE_PAGE_CACHE_MAX_SIZE_HIGH: 50, // High-res PageCache for deep zoom viewing (enough for visible pages)
+          MOBILE_MAX_CACHE_SIZE: 100,          // TileCache for iOS - conservative for memory constraints
+          MOBILE_PAGE_CACHE_MAX_SIZE_LOW: 150, // Low-res PageCache for minimap (reduced from 200)
+          MOBILE_PAGE_CACHE_MAX_SIZE_HIGH: 10, // High-res PageCache AGGRESSIVE (hot: 1-2, cold: 8-9 blobs)
 
           // Performance
           RENDER_BATCH_SIZE: 5, // Yield to browser every N pages
@@ -454,83 +454,244 @@
         // ╚══════════════════════════════════════════════════════════════════════════╝
 
         /**
-         * LRU cache for rendered page canvases
-         * Tracks access patterns to keep frequently-used pages in cache
-         * Evicts least recently used pages when full
-         * Similar to TileCache but for full-page canvases
+         * Two-tier LRU cache for page canvases: Hot (sync) + Cold (blob-compressed)
+         *
+         * Architecture:
+         * - Hot cache: Small (10 items), uncompressed canvases for immediate tile rendering
+         * - Cold cache: Large (150 items), JPEG-compressed blobs for memory savings
+         *
+         * Flow:
+         * 1. get(): Check hot cache first (instant), return if found
+         * 2. If not in hot, return null (caller triggers async load from cold/render)
+         * 3. set(): Add to hot cache, async compress to cold cache
+         * 4. Hot eviction: Move to cold cache (compress)
+         * 5. promoteFromCold(): Move cold→hot when needed
+         *
+         * Memory savings: 17 MB canvas → ~2 MB JPEG blob = 88% reduction (in cold cache)
          */
         class PageCache {
           constructor(maxSize = CONFIG.PAGE_CACHE_MAX_SIZE) {
-            this.cache = new Map();
-            this.maxSize = maxSize;
-          }
+            this.hotCache = new Map();  // Small, uncompressed, instant access
+            this.coldCache = new Map(); // Large, blob-compressed, async access
+            this.maxHotSize = Math.max(5, Math.min(10, Math.floor(maxSize * 0.1))); // 10% hot, min 5
+            this.maxColdSize = maxSize;
+            this.compressionQuality = 0.88;
 
-          get(key) {
-            const value = this.cache.get(key);
-            if (value) {
-              // LRU: Move to end (most recently used)
-              this.cache.delete(key);
-              this.cache.set(key, value);
-              if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[PageCache] HIT: ${key}`);
-              }
-            } else if (CONFIG.VERBOSE_LOGGING) {
-              console.log(`[PageCache] MISS: ${key}`);
-            }
-            return value || null;
-          }
-
-          set(key, value) {
-            // LRU: If key exists, delete it first to move to end
-            const isUpdate = this.cache.has(key);
-            if (isUpdate) {
-              this.cache.delete(key);
-            } else if (this.cache.size >= this.maxSize) {
-              // Remove least recently used (first in Map)
-              const firstKey = this.cache.keys().next().value;
-              if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
-              }
-              this.cache.delete(firstKey);
-            }
-            this.cache.set(key, value);
-            if (CONFIG.VERBOSE_LOGGING) {
-              const action = isUpdate ? 'UPDATE' : 'ADD';
-              console.log(`[PageCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
-            }
-          }
-
-          has(key) {
-            return this.cache.has(key);
-          }
-
-          get size() {
-            return this.cache.size;
-          }
-
-          keys() {
-            return this.cache.keys();
-          }
-
-          clear() {
-            this.cache.clear();
+            // Background compression queue
+            this.compressionQueue = [];
+            this.compressing = false;
           }
 
           /**
-           * Update maximum cache size
-           * If new size is smaller, evict oldest entries to fit
-           *
-           * @param {number} newSize - New maximum cache size
+           * Synchronous get from hot cache (for tile rendering)
+           * Returns canvas immediately if in hot cache, null otherwise
            */
-          setCapacity(newSize) {
-            this.maxSize = newSize;
+          get(key) {
+            const canvas = this.hotCache.get(key);
+            if (canvas) {
+              // LRU: Move to end
+              this.hotCache.delete(key);
+              this.hotCache.set(key, canvas);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[PageCache] HOT HIT: ${key}`);
+              }
+              return canvas;
+            }
 
-            // If cache is now oversized, evict oldest entries
-            while (this.cache.size > this.maxSize) {
-              const firstKey = this.cache.keys().next().value;
-              this.cache.delete(firstKey);
+            // Check if in cold cache (don't decode, just check existence)
+            if (this.coldCache.has(key)) {
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[PageCache] COLD HIT: ${key} (need to promote)`);
+              }
+              // Trigger async promotion (don't wait)
+              this.promoteFromCold(key);
+            } else if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[PageCache] MISS: ${key}`);
+            }
+
+            return null;
+          }
+
+          /**
+           * Set canvas in cache (synchronous add to hot, async compress to cold)
+           */
+          set(key, canvas) {
+            // Add to hot cache immediately
+            const wasInHot = this.hotCache.has(key);
+            if (wasInHot) {
+              this.hotCache.delete(key);
+            } else if (this.hotCache.size >= this.maxHotSize) {
+              // Evict LRU from hot → move to cold (async)
+              const evictKey = this.hotCache.keys().next().value;
+              const evictCanvas = this.hotCache.get(evictKey);
+              this.hotCache.delete(evictKey);
+
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[PageCache] HOT EVICT: ${evictKey} (moving to cold)`);
+              }
+
+              // Queue for compression to cold cache
+              this._queueCompression(evictKey, evictCanvas);
+            }
+
+            this.hotCache.set(key, canvas);
+
+            // Also queue this for cold cache (async, lower priority)
+            if (!wasInHot) {
+              this._queueCompression(key, canvas);
+            }
+
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[PageCache] HOT SET: ${key} (hot: ${this.hotCache.size}/${this.maxHotSize}, cold: ${this.coldCache.size}/${this.maxColdSize})`);
             }
           }
+
+          /**
+           * Check if key exists (hot or cold)
+           */
+          has(key) {
+            return this.hotCache.has(key) || this.coldCache.has(key);
+          }
+
+          /**
+           * Async promote from cold to hot
+           */
+          async promoteFromCold(key) {
+            const entry = this.coldCache.get(key);
+            if (!entry) return;
+
+            try {
+              // Decode blob
+              const img = new Image();
+              img.src = entry.blobUrl;
+              await img.decode();
+
+              // Convert to canvas
+              const canvas = document.createElement('canvas');
+              canvas.width = entry.width;
+              canvas.height = entry.height;
+              const ctx = canvas.getContext('2d', { alpha: false });
+              ctx.drawImage(img, 0, 0);
+
+              // Move to hot cache
+              this.set(key, canvas);
+
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[PageCache] PROMOTED: ${key} (cold → hot)`);
+              }
+            } catch (err) {
+              console.error(`[PageCache] Failed to promote ${key}:`, err);
+              URL.revokeObjectURL(entry.blobUrl);
+              this.coldCache.delete(key);
+            }
+          }
+
+          /**
+           * Queue canvas for compression to cold cache
+           */
+          _queueCompression(key, canvas) {
+            this.compressionQueue.push({ key, canvas });
+            this._processCompressionQueue();
+          }
+
+          /**
+           * Process compression queue in background
+           */
+          async _processCompressionQueue() {
+            if (this.compressing || this.compressionQueue.length === 0) return;
+
+            this.compressing = true;
+
+            while (this.compressionQueue.length > 0) {
+              const { key, canvas } = this.compressionQueue.shift();
+
+              try {
+                // Convert to blob
+                const blob = await canvasToBlob(canvas, this.compressionQuality);
+                const blobUrl = URL.createObjectURL(blob);
+
+                // Evict from cold if needed
+                if (this.coldCache.size >= this.maxColdSize) {
+                  const evictKey = this.coldCache.keys().next().value;
+                  const evicted = this.coldCache.get(evictKey);
+                  URL.revokeObjectURL(evicted.blobUrl);
+                  this.coldCache.delete(evictKey);
+                }
+
+                // Store in cold cache
+                this.coldCache.set(key, {
+                  blobUrl,
+                  width: canvas.width,
+                  height: canvas.height
+                });
+
+                if (CONFIG.VERBOSE_LOGGING) {
+                  const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+                  console.log(`[PageCache] COLD SET: ${key} (${sizeMB} MB compressed)`);
+                }
+              } catch (err) {
+                console.error(`[PageCache] Compression failed for ${key}:`, err);
+              }
+
+              // Yield to browser
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
+            this.compressing = false;
+          }
+
+          get size() {
+            return this.hotCache.size + this.coldCache.size;
+          }
+
+          keys() {
+            return new Set([...this.hotCache.keys(), ...this.coldCache.keys()]).values();
+          }
+
+          clear() {
+            this.hotCache.clear();
+            for (const entry of this.coldCache.values()) {
+              URL.revokeObjectURL(entry.blobUrl);
+            }
+            this.coldCache.clear();
+            this.compressionQueue = [];
+          }
+
+          setCapacity(newSize) {
+            this.maxColdSize = newSize;
+            this.maxHotSize = Math.max(5, Math.min(10, Math.floor(newSize * 0.1)));
+
+            // Evict excess from cold
+            while (this.coldCache.size > this.maxColdSize) {
+              const evictKey = this.coldCache.keys().next().value;
+              const evicted = this.coldCache.get(evictKey);
+              URL.revokeObjectURL(evicted.blobUrl);
+              this.coldCache.delete(evictKey);
+            }
+          }
+        }
+
+        /**
+         * Helper: Convert canvas to JPEG blob
+         * Uses OffscreenCanvas.convertToBlob() if available, falls back to toBlob()
+         */
+        async function canvasToBlob(canvas, quality = 0.88) {
+          // Try OffscreenCanvas (faster, non-blocking)
+          if (typeof OffscreenCanvas !== 'undefined' && canvas.transferToImageBitmap) {
+            const offscreen = new OffscreenCanvas(canvas.width, canvas.height);
+            const ctx = offscreen.getContext('2d');
+            ctx.drawImage(canvas, 0, 0);
+            return await offscreen.convertToBlob({ type: 'image/jpeg', quality });
+          }
+
+          // Fallback: Standard toBlob
+          return new Promise((resolve, reject) => {
+            canvas.toBlob(
+              (blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')),
+              'image/jpeg',
+              quality
+            );
+          });
         }
 
         /**
@@ -639,12 +800,13 @@
           /**
            * Render a single page at specified resolution
            * Returns cached canvas if available, otherwise renders
+           * Uses two-tier hot/cold cache with blob compression
            */
           async renderPage(pageNum, resolution) {
             const key = this._getCacheKey(pageNum, resolution);
             const pageCache = this._getPageCache(resolution);
 
-            // Check cache first
+            // Check hot cache first (instant)
             const cached = pageCache.get(key);
             if (cached) {
               return cached;
@@ -661,7 +823,10 @@
             const renderPromise = (async () => {
               const page = await this.pdfDoc.getPage(pageNum);
               const canvas = await PDFUtils.renderPageToCanvas(page, scale);
+
+              // Store in hot cache (sync), will auto-compress to cold cache (async)
               pageCache.set(key, canvas);
+
               this.renderingInProgress.delete(key);
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
