@@ -64,7 +64,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.3',
+          VERSION: '1.9.4',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -1366,7 +1366,8 @@
           /**
            * Schedule a debounced tile redraw
            * Batches multiple on-demand page renders to avoid excessive forceRedraw() calls
-           * Uses 100ms debounce to batch renders that complete in quick succession
+           * Uses 30ms debounce to batch renders that complete in quick succession
+           * OPTIMIZED: Reduced from 100ms to 30ms for faster visual feedback
            */
           scheduleRedraw() {
             // Clear any pending redraw
@@ -1374,7 +1375,7 @@
               clearTimeout(this.redrawTimeout);
             }
 
-            // Schedule new redraw after 100ms of inactivity
+            // Schedule new redraw after 30ms of inactivity
             this.redrawTimeout = setTimeout(() => {
               if (window.viewer) {
                 if (CONFIG.VERBOSE_LOGGING) {
@@ -1383,7 +1384,7 @@
                 window.viewer.forceRedraw();
               }
               this.redrawTimeout = null;
-            }, 100);
+            }, 30);
           }
 
           /**
@@ -1860,7 +1861,8 @@
             // Iterate through cached tiles and remove ones that used these pages
             for (const [key, value] of this.tileCache.cache.entries()) {
               // Parse key to determine which pages it needs
-              // Key formats: "level_pX" or "level_pX-Y" or "level_pX_xN_yN" etc.
+              // Key formats: "level_pX" or "level_pX-Y" or "level_pX_xN_yN" or "level_edger_pX-Y" etc.
+              // FIXED: Regex now handles edge tiles (edger, edgeb, edgerb prefix)
               const pageMatch = key.match(/p(\d+)(?:-(\d+))?/);
               if (pageMatch) {
                 const firstPage = parseInt(pageMatch[1]);
@@ -1877,6 +1879,9 @@
                     break;
                   }
                 }
+              } else if (CONFIG.VERBOSE_LOGGING) {
+                // Log tiles that don't match expected pattern (potential bug indicator)
+                console.warn(`[TileStreamer] Cannot parse page numbers from key: ${key}`);
               }
             }
 
@@ -4634,6 +4639,50 @@
                           </div>
                         </div>
                       </div>
+
+                      {/* Tile Drawing Diagnostics */}
+                      {window.__drawPageDebug && window.__drawPageDebug.failures && window.__drawPageDebug.failures.length > 0 && (
+                        <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                          <div className="text-red-400 font-bold mb-2 text-[10px] sm:text-xs">⚠ Draw Failures</div>
+                          <div className="space-y-1 text-[9px] sm:text-[10px]">
+                            <div className="text-gray-400">
+                              Total: <span className="text-red-300 font-bold">{window.__drawPageDebug.failures.length}</span>
+                              {window.__drawPageDebug.successes && <span className="text-gray-500"> (vs {window.__drawPageDebug.successes.length} success)</span>}
+                            </div>
+                            {(() => {
+                              // Summarize failures by reason
+                              const reasonCounts = {};
+                              window.__drawPageDebug.failures.forEach(f => {
+                                reasonCounts[f.reason] = (reasonCounts[f.reason] || 0) + 1;
+                              });
+                              return Object.entries(reasonCounts).map(([reason, count]) => (
+                                <div key={reason} className="pl-2 text-gray-400">
+                                  {reason.replace(/_/g, ' ')}: <span className="text-white">{count}</span>
+                                </div>
+                              ));
+                            })()}
+                            {/* Show last 5 failures */}
+                            <div className="pt-1 border-t border-gray-800">
+                              <div className="text-gray-500 mb-1">Last 5:</div>
+                              {window.__drawPageDebug.failures.slice(-5).reverse().map((f, i) => (
+                                <div key={i} className="pl-2 text-[8px] sm:text-[9px] text-gray-400">
+                                  L{f.level} p{f.pageNum} {f.resolution}: {f.reason}
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => {
+                                window.__drawPageDebug = { failures: [], successes: [] };
+                                console.log('[Debug] Draw failures cleared');
+                              }}
+                              className="mt-2 px-2 py-0.5 rounded text-[10px] font-bold bg-red-600 hover:bg-red-700 text-white transition-colors"
+                              style={{ pointerEvents: 'auto' }}
+                            >
+                              Clear Failures
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Settings */}
                       <div className="space-y-1 text-[9px] sm:text-[10px]">

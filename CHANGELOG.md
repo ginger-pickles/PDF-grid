@@ -5,6 +5,46 @@ All notable changes to PDF Grid Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.4] - 2025-11-16
+
+### Goal
+- Fix persistent empty/incomplete tiles bugs
+- Improve performance and responsiveness
+- Add comprehensive diagnostics
+
+### Fixed
+- **Critical:** Cache invalidation regex now properly handles edge tiles (keys like `0_edger_pX-Y`, `0_edgeb_pX`)
+  - Previously, edge tiles were never invalidated when their pages finished rendering
+  - Led to persistent blank/incomplete edges that never updated
+  - Added warning log for unparseable tile keys to detect future issues
+- Reduced on-demand rendering debounce delay from 100ms to 30ms for faster visual feedback
+  - Tiles now update 3x faster when pages finish rendering
+  - Better perceived performance during progressive loading
+
+### Added
+- **Draw Failures diagnostic panel** in debug overlay
+  - Shows total failures vs successes
+  - Breakdown by failure reason (no_canvas, invalid_dimensions, source_out_of_bounds, draw_exception)
+  - Last 5 failures with level, page number, and resolution
+  - "Clear Failures" button for testing
+  - Only appears when failures are detected (red warning indicator)
+- **SCALABILITY.md** - Comprehensive analysis for large PDF support (1000+ pages)
+  - Current bottlenecks identified
+  - Short-term, medium-term, and long-term recommendations
+  - Performance targets and implementation roadmap
+  - Configuration guidance for different deployment sizes
+
+### Technical
+- Cache invalidation uses same regex but now with fallback logging (line 1856-1890)
+- Debounce timeout reduced from 100ms to 30ms (line 1366-1388)
+- Debug panel draw failures section (line 4643-4685)
+- Comprehensive empty tile diagnostics via `window.__drawPageDebug`
+
+### Notes
+- All changes are non-breaking - existing functionality preserved
+- Focus on bug fixes and diagnostics, not new features
+- Prepares groundwork for v1.9.5 scalability improvements
+
 ## [1.9.3] - 2025-11-15
 
 ### Goal
