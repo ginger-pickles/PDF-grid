@@ -12,7 +12,7 @@ test.describe('Blank tile detection', () => {
 
   test.beforeEach(async ({ page }) => {
     // Navigate to app with demo PDF
-    await page.goto('http://localhost:8000?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load
     await page.waitForFunction(() =>

@@ -26,7 +26,7 @@ test.describe('Smoke Test - demo-1.pdf', () => {
     });
 
     // Load demo-1.pdf
-    await page.goto('http://localhost:8000?pdf=demo/demo-1.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load
     await page.waitForFunction(() =>
@@ -60,7 +60,7 @@ test.describe('Smoke Test - demo-1.pdf', () => {
 
   test('Use Case 2: Basic viewer interactions work correctly', async ({ page }) => {
     // Load demo-1.pdf
-    await page.goto('http://localhost:8000?pdf=demo/demo-1.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for viewer to be ready
     await page.waitForFunction(() => window.viewerReady === true, { timeout: 30000 });
@@ -140,7 +140,7 @@ test.describe('Smoke Test - demo-1.pdf', () => {
 
   test('Use Case 3: Debug panel controls function correctly', async ({ page }) => {
     // Load demo-1.pdf with debug parameter
-    await page.goto('http://localhost:8000?pdf=demo/demo-1.pdf&debug');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf&debug');
 
     // Wait for viewer to be ready
     await page.waitForFunction(() => window.viewerReady === true, { timeout: 30000 });

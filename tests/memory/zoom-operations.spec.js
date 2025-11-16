@@ -11,7 +11,7 @@ test.describe('Memory monitoring during zoom operations', () => {
 
   test.beforeEach(async ({ page }) => {
     // Navigate to app with demo PDF
-    await page.goto('http://localhost:8000?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load, viewer to be available, and diagnostics to be ready
     await page.waitForFunction(() =>

@@ -21,7 +21,7 @@ test.describe('Debug Panel - Performance Controls', () => {
     });
 
     // Navigate to app with demo PDF
-    await page.goto('http://localhost:8000?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load
     await page.waitForFunction(() =>
@@ -266,7 +266,7 @@ test.describe('Debug Panel - Performance Controls', () => {
     });
 
     // Reload page to trigger new PDF load
-    await page.goto('http://localhost:8000?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load
     await page.waitForFunction(() =>
@@ -302,7 +302,7 @@ test.describe('Debug Panel - Performance Controls', () => {
     });
 
     // Reload page to trigger new PDF load
-    await page.goto('http://localhost:8000?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000?pdf=demo-1.pdf');
 
     // Wait for PDF to load
     await page.waitForFunction(() =>

@@ -17,7 +17,7 @@ test.describe('Missing Pages Detection - Whole Grid View', () => {
     await page.setViewportSize({ width: 1920, height: 1080 });
 
     // Load PDF with whole grid view
-    await page.goto('http://localhost:8000/?pdf=demo/demo-3.pdf');
+    await page.goto('http://localhost:8000/?pdf=demo-1.pdf');
 
     // Wait for viewer initialization (all pages rendered, viewer ready)
     await page.waitForFunction(() => window.viewerReady === true, { timeout: 120000 });

@@ -34,6 +34,9 @@ module.exports = defineConfig({
     // Base URL for tests (assumes dev server running on port 8000)
     baseURL: 'http://localhost:8000',
 
+    // Ignore SSL errors for CDN resources
+    ignoreHTTPSErrors: true,
+
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
 
@@ -47,14 +50,14 @@ module.exports = defineConfig({
   // Configure projects for major browsers
   projects: [
     {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
     },
 
-    // Disabled for faster test runs (uncomment if needed)
+    // Disabled - Firefox download blocked
     // {
-    //   name: 'chromium',
-    //   use: { ...devices['Desktop Chrome'] },
+    //   name: 'firefox',
+    //   use: { ...devices['Desktop Firefox'] },
     // },
     // {
     //   name: 'webkit',
