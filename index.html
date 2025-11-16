@@ -3497,10 +3497,13 @@
               const pdf = await PDFUtils.loadPDFFromFile(file);
               await loadPDF(pdf, file.name);
 
-              // Save to storage for faster refresh
-              const fileData = await file.arrayBuffer();
-              pdfFileSizeRef.current = fileData.byteLength; // Track PDF file size
-              await PDFStorage.save(fileData, file.name);
+              // Save to storage only when using file:// protocol
+              // When served (http://), URL parameters provide persistence
+              if (window.location.protocol === 'file:') {
+                const fileData = await file.arrayBuffer();
+                pdfFileSizeRef.current = fileData.byteLength; // Track PDF file size
+                await PDFStorage.save(fileData, file.name);
+              }
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
                 console.log('Loading cancelled');
