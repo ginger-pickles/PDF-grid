@@ -4276,120 +4276,139 @@
                         <span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span>
                       </div>
 
-                      {/* Control buttons */}
-                      <div className="flex flex-wrap gap-1 sm:gap-2 mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <button
-                          onClick={() => setShowVerboseLogging(!showVerboseLogging)}
-                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                            showVerboseLogging
-                              ? 'bg-green-600 hover:bg-green-700 text-white'
-                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          }`}
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          Verbose Logs
-                        </button>
-                        <button
-                          onClick={() => setShowTileLabels(!showTileLabels)}
-                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                            showTileLabels
-                              ? 'bg-green-600 hover:bg-green-700 text-white'
-                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          }`}
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          Tile Labels
-                        </button>
-                        <button
-                          onClick={() => setShowTileBorders(!showTileBorders)}
-                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                            showTileBorders
-                              ? 'bg-green-600 hover:bg-green-700 text-white'
-                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                          }`}
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          Tile Borders
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (window.viewer) {
-                              console.log('[Debug] Forcing tile redraw...');
-                              window.viewer.forceRedraw();
-                            }
-                          }}
-                          className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-blue-600 hover:bg-blue-700 text-white"
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          Refresh
-                        </button>
-                        <button
-                          onClick={async () => {
-                            console.log('[Debug] Recreate button clicked!');
-                            console.log('[Debug] window.osdViewerRef:', window.osdViewerRef);
-                            console.log('[Debug] window.tileStreamerRef:', window.tileStreamerRef);
-
-                            if (!window.osdViewerRef) {
-                              console.error('[Debug] No viewer reference!');
-                              return;
-                            }
-                            if (!window.tileStreamerRef) {
-                              console.error('[Debug] No tileStreamer reference!');
-                              return;
-                            }
-
-                            try {
-                              console.log('[Debug] Starting TiledImage recreation...');
-                              const viewer = window.osdViewerRef;
-                              const currentZoom = viewer.viewport.getZoom();
-                              const currentCenter = viewer.viewport.getCenter();
-                              console.log('[Debug] Current zoom:', currentZoom, 'center:', currentCenter);
-
-                              // Clear tile cache
-                              window.tileStreamerRef.tileCache.clear();
-                              console.log('[Debug] Tile cache cleared');
-
-                              // Remove old TiledImage
-                              const oldTiledImage = viewer.world.getItemAt(0);
-                              console.log('[Debug] Old TiledImage:', oldTiledImage);
-                              if (oldTiledImage) {
-                                viewer.world.removeItem(oldTiledImage);
-                                console.log('[Debug] Old TiledImage removed');
-                              }
-
-                              // Wait for cleanup
-                              console.log('[Debug] Waiting for cleanup...');
-                              await new Promise(resolve => setTimeout(resolve, 50));
-
-                              // Add fresh TiledImage
-                              console.log('[Debug] Adding fresh TiledImage...');
-                              viewer.addTiledImage({
-                                tileSource: window.tileStreamerRef.getOSDConfig(),
-                                success: () => {
-                                  console.log('[Debug] TiledImage added, restoring viewport...');
-                                  viewer.viewport.zoomTo(currentZoom, null, true);
-                                  viewer.viewport.panTo(currentCenter, true);
-                                  console.log('[Debug] TiledImage recreation complete!');
-                                },
-                                error: (event) => {
-                                  console.error('[Debug] Error adding TiledImage:', event);
-                                }
-                              });
-                            } catch (error) {
-                              console.error('[Debug] Error during recreation:', error);
-                            }
-                          }}
-                          className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white"
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          Recreate
-                        </button>
+                      {/* Debug Visualization */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="flex flex-wrap gap-1 sm:gap-2">
+                          <button
+                            onClick={() => setShowVerboseLogging(!showVerboseLogging)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              showVerboseLogging
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Verbose Logs
+                          </button>
+                          <button
+                            onClick={() => setShowTileLabels(!showTileLabels)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              showTileLabels
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Tile Labels
+                          </button>
+                          <button
+                            onClick={() => setShowTileBorders(!showTileBorders)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              showTileBorders
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Tile Borders
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Performance Toggles */}
+                      {/* Manual Controls */}
                       <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <div className="text-yellow-400 font-bold mb-1 text-[10px] sm:text-xs">Performance Features</div>
                         <div className="flex flex-wrap gap-1 sm:gap-2">
+                          <button
+                            onClick={() => {
+                              if (window.viewer) {
+                                console.log('[Debug] Forcing tile redraw...');
+                                window.viewer.forceRedraw();
+                              }
+                            }}
+                            className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-blue-600 hover:bg-blue-700 text-white"
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Refresh
+                          </button>
+                          <button
+                            onClick={async () => {
+                              console.log('[Debug] Recreate button clicked!');
+                              console.log('[Debug] window.osdViewerRef:', window.osdViewerRef);
+                              console.log('[Debug] window.tileStreamerRef:', window.tileStreamerRef);
+
+                              if (!window.osdViewerRef) {
+                                console.error('[Debug] No viewer reference!');
+                                return;
+                              }
+                              if (!window.tileStreamerRef) {
+                                console.error('[Debug] No tileStreamer reference!');
+                                return;
+                              }
+
+                              try {
+                                console.log('[Debug] Starting TiledImage recreation...');
+                                const viewer = window.osdViewerRef;
+                                const currentZoom = viewer.viewport.getZoom();
+                                const currentCenter = viewer.viewport.getCenter();
+                                console.log('[Debug] Current zoom:', currentZoom, 'center:', currentCenter);
+
+                                // Clear tile cache
+                                window.tileStreamerRef.tileCache.clear();
+                                console.log('[Debug] Tile cache cleared');
+
+                                // Remove old TiledImage
+                                const oldTiledImage = viewer.world.getItemAt(0);
+                                console.log('[Debug] Old TiledImage:', oldTiledImage);
+                                if (oldTiledImage) {
+                                  viewer.world.removeItem(oldTiledImage);
+                                  console.log('[Debug] Old TiledImage removed');
+                                }
+
+                                // Wait for cleanup
+                                console.log('[Debug] Waiting for cleanup...');
+                                await new Promise(resolve => setTimeout(resolve, 50));
+
+                                // Add fresh TiledImage
+                                console.log('[Debug] Adding fresh TiledImage...');
+                                viewer.addTiledImage({
+                                  tileSource: window.tileStreamerRef.getOSDConfig(),
+                                  success: () => {
+                                    console.log('[Debug] TiledImage added, restoring viewport...');
+                                    viewer.viewport.zoomTo(currentZoom, null, true);
+                                    viewer.viewport.panTo(currentCenter, true);
+                                    console.log('[Debug] TiledImage recreation complete!');
+                                  },
+                                  error: (event) => {
+                                    console.error('[Debug] Error adding TiledImage:', event);
+                                  }
+                                });
+                              } catch (error) {
+                                console.error('[Debug] Error during recreation:', error);
+                              }
+                            }}
+                            className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white"
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Recreate
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Rendering Strategy */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="flex flex-wrap gap-1 sm:gap-2">
+                          <button
+                            onClick={() => setUpfrontRendering(!upfrontRendering)}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              upfrontRendering
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Render all pages before viewer starts (prevents blank tiles)"
+                          >
+                            Upfront
+                          </button>
                           <button
                             onClick={() => setParallelRendering(!parallelRendering)}
                             className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
@@ -4414,29 +4433,47 @@
                           >
                             On-Demand
                           </button>
+                        </div>
+                      </div>
+
+                      {/* Resolution Controls */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="flex flex-wrap gap-1 sm:gap-2">
                           <button
-                            onClick={() => setPredictiveRendering(!predictiveRendering)}
+                            onClick={() => setResolutionMode('high')}
                             className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              predictiveRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                              resolutionMode === 'high'
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
                                 : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                             }`}
                             style={{ pointerEvents: 'auto' }}
-                            title="Velocity-based predictive page loading"
+                            title="Render high-resolution pages only"
                           >
-                            Predictive
+                            High
                           </button>
                           <button
-                            onClick={() => setUpfrontRendering(!upfrontRendering)}
+                            onClick={() => setResolutionMode('low')}
                             className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                              upfrontRendering
-                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                              resolutionMode === 'low'
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
                                 : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                             }`}
                             style={{ pointerEvents: 'auto' }}
-                            title="Render all pages before viewer starts (prevents blank tiles)"
+                            title="Render low-resolution pages only"
                           >
-                            Upfront
+                            Low
+                          </button>
+                          <button
+                            onClick={() => setResolutionMode('dual')}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                              resolutionMode === 'dual'
+                                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                            }`}
+                            style={{ pointerEvents: 'auto' }}
+                            title="Render both high and low resolution pages"
+                          >
+                            Dual
                           </button>
                           <button
                             onClick={() => setFallbackRendering(!fallbackRendering)}
@@ -4450,47 +4487,6 @@
                           >
                             Fallback
                           </button>
-                        </div>
-                        <div className="mt-2">
-                          <div className="text-gray-400 text-[9px] sm:text-[10px] mb-1">Resolution Mode:</div>
-                          <div className="flex gap-1 sm:gap-2">
-                            <button
-                              onClick={() => setResolutionMode('high')}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                resolutionMode === 'high'
-                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Render high-resolution pages only"
-                            >
-                              High
-                            </button>
-                            <button
-                              onClick={() => setResolutionMode('low')}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                resolutionMode === 'low'
-                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Render low-resolution pages only"
-                            >
-                              Low
-                            </button>
-                            <button
-                              onClick={() => setResolutionMode('dual')}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                resolutionMode === 'dual'
-                                  ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Render both high and low resolution pages"
-                            >
-                              Dual
-                            </button>
-                          </div>
                         </div>
                       </div>
 
