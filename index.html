@@ -2580,6 +2580,24 @@
             }
           }, [showTileBorders]);
 
+          // Sync debug panel state with URL parameter
+          React.useEffect(() => {
+            const params = new URLSearchParams(window.location.search);
+            const currentDebugParam = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
+
+            // Only update URL if state differs from current param
+            if (showDebug !== currentDebugParam) {
+              if (showDebug) {
+                params.set('debug', '1');
+              } else {
+                params.delete('debug');
+              }
+
+              const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+              window.history.replaceState({}, '', newUrl);
+            }
+          }, [showDebug]);
+
           // Auto-load PDF on mount
           // Separated concerns: URL parameters always work, config auto-load is optional
           React.useEffect(() => {
