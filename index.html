@@ -68,7 +68,8 @@
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
-          DEBUG_TILES: false,  // Enable tile cache diagnostics logging
+          TILE_LABELS: false,  // Enable custom tile labels (level numbers and cache keys)
+          VERBOSE_LOGGING: false, // Enable verbose console logging for cache operations
           DEBUG_INITIAL_VIEW_WHOLE_GRID: false, // Show entire grid on load (true) or center on page 1 (false)
 
           // Auto-load
@@ -469,10 +470,10 @@
               // LRU: Move to end (most recently used)
               this.cache.delete(key);
               this.cache.set(key, value);
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageCache] HIT: ${key}`);
               }
-            } else if (CONFIG.DEBUG_TILES) {
+            } else if (CONFIG.VERBOSE_LOGGING) {
               console.log(`[PageCache] MISS: ${key}`);
             }
             return value || null;
@@ -486,13 +487,13 @@
             } else if (this.cache.size >= this.maxSize) {
               // Remove least recently used (first in Map)
               const firstKey = this.cache.keys().next().value;
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
               this.cache.delete(firstKey);
             }
             this.cache.set(key, value);
-            if (CONFIG.DEBUG_TILES) {
+            if (CONFIG.VERBOSE_LOGGING) {
               const action = isUpdate ? 'UPDATE' : 'ADD';
               console.log(`[PageCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
             }
@@ -661,7 +662,7 @@
               const canvas = await PDFUtils.renderPageToCanvas(page, scale);
               pageCache.set(key, canvas);
               this.renderingInProgress.delete(key);
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
               }
               return canvas;
@@ -1023,10 +1024,10 @@
               // LRU: Move to end (most recently used)
               this.cache.delete(key);
               this.cache.set(key, value);
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[TileCache] HIT: ${key}`);
               }
-            } else if (CONFIG.DEBUG_TILES) {
+            } else if (CONFIG.VERBOSE_LOGGING) {
               console.log(`[TileCache] MISS: ${key}`);
             }
             return value || null;
@@ -1041,13 +1042,13 @@
               // Level-aware eviction: Prioritize keeping low-level (broad zoom) tiles
               // Evict deep zoom tiles first to preserve minimap coverage
               const evictKey = this._selectTileToEvict();
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[TileCache] EVICT: ${evictKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
               this.cache.delete(evictKey);
             }
             this.cache.set(key, value);
-            if (CONFIG.DEBUG_TILES) {
+            if (CONFIG.VERBOSE_LOGGING) {
               const action = isUpdate ? 'UPDATE' : 'ADD';
               console.log(`[TileCache] ${action}: ${key} (size: ${this.cache.size}/${this.maxSize})`);
             }
@@ -1373,7 +1374,7 @@
             // Schedule new redraw after 100ms of inactivity
             this.redrawTimeout = setTimeout(() => {
               if (window.viewer) {
-                if (CONFIG.DEBUG_TILES) {
+                if (CONFIG.VERBOSE_LOGGING) {
                   console.log('[TileStreamer] Forcing tile redraw after on-demand page renders');
                 }
                 window.viewer.forceRedraw();
@@ -1689,7 +1690,7 @@
             if (availablePages.length < neededPages.length) {
               // Some pages missing - render partial tile and request missing pages
               const missingPages = neededPages.filter(p => !availablePages.includes(p));
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[TileStreamer] PARTIAL TILE: ${key} has ${availablePages.length}/${neededPages.length} pages (missing: ${missingPages.join(',')})`);
               }
               this._requestPagesAsync(missingPages, resolution);
@@ -1697,7 +1698,7 @@
 
             // If not all high-res pages available, trigger background loading
             if (!allPagesCached && resolution === 'high') {
-              if (CONFIG.DEBUG_TILES) {
+              if (CONFIG.VERBOSE_LOGGING) {
                 const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, 'high'));
                 console.log(`[TileStreamer] FALLBACK: ${key} missing high-res pages: ${missingPages.join(',')}`);
               }
@@ -1716,7 +1717,7 @@
               this.stats.tilesRenderedFallback++;
             }
 
-            if (CONFIG.DEBUG_TILES) {
+            if (CONFIG.VERBOSE_LOGGING) {
               const status = allPagesCached ? 'FULL' : 'FALLBACK';
               const cacheStatus = allPagesCached ? 'cached' : 'not cached (will regenerate)';
               console.log(`[TileStreamer] RENDER ${status}: ${key} (pages: ${neededPages.join(',')}, resolution: ${resolution}) - ${cacheStatus}`);
@@ -1867,7 +1868,7 @@
                   if (pageSet.has(p)) {
                     this.tileCache.cache.delete(key);
                     invalidated++;
-                    if (CONFIG.DEBUG_TILES) {
+                    if (CONFIG.VERBOSE_LOGGING) {
                       console.log(`[TileStreamer] INVALIDATE: ${key} (page ${p} now ready)`);
                     }
                     break;
@@ -1876,7 +1877,7 @@
               }
             }
 
-            if (invalidated > 0 && CONFIG.DEBUG_TILES) {
+            if (invalidated > 0 && CONFIG.VERBOSE_LOGGING) {
               console.log(`[TileStreamer] Invalidated ${invalidated} tiles after rendering pages: ${pageNums.join(',')}`);
             }
           }
@@ -1929,7 +1930,7 @@
 
 
             // DEBUG: Draw colored borders on each edge to verify overlap
-            if (CONFIG.DEBUG_MODE) {
+            if (CONFIG.TILE_LABELS) {
               this.tileCtx.lineWidth = 3;
 
               // Top edge - RED
@@ -2108,7 +2109,7 @@
                       window.__L0OnDemandTracking.completed.push({pageNum, resolution, time: Date.now()});
                     }
 
-                    if (CONFIG.DEBUG_TILES) {
+                    if (CONFIG.VERBOSE_LOGGING) {
                       console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, scheduling tile refresh`);
                     }
 
@@ -2469,7 +2470,9 @@
             const params = new URLSearchParams(window.location.search);
             return params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
           });
-          const [debugTiles, setDebugTiles] = useState(false);
+          const [showVerboseLogging, setShowVerboseLogging] = useState(false);
+          const [showTileLabels, setShowTileLabels] = useState(false);
+          const [showTileBorders, setShowTileBorders] = useState(false);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
           const [storageMB, setStorageMB] = useState(0); // Track storage usage
@@ -2552,6 +2555,22 @@
               window.removeEventListener('orientationchange', setVH);
             };
           }, []);
+
+          // Sync debug state with CONFIG
+          React.useEffect(() => {
+            CONFIG.VERBOSE_LOGGING = showVerboseLogging;
+          }, [showVerboseLogging]);
+
+          React.useEffect(() => {
+            CONFIG.TILE_LABELS = showTileLabels;
+          }, [showTileLabels]);
+
+          React.useEffect(() => {
+            if (window.viewer && window.viewer.drawer) {
+              window.viewer.drawer.debugMode = showTileBorders;
+              window.viewer.forceRedraw();
+            }
+          }, [showTileBorders]);
 
           // Auto-load PDF on mount
           // Separated concerns: URL parameters always work, config auto-load is optional
@@ -2705,14 +2724,6 @@
             })();
           }, []);
 
-          // Sync CONFIG.DEBUG_MODE with debug tiles state
-          React.useEffect(() => {
-            CONFIG.DEBUG_MODE = debugTiles;
-            if (tileStreamerRef.current) {
-              tileStreamerRef.current.debugMode = CONFIG.DEBUG_MODE;
-            }
-          }, [debugTiles]);
-
           // Sync CONFIG with performance toggles and persist to localStorage
           React.useEffect(() => {
             CONFIG.PARALLEL_RENDERING_ENABLED = parallelRendering;
@@ -2833,6 +2844,50 @@
           //   window.addEventListener('popstate', handlePopState);
           //   return () => window.removeEventListener('popstate', handlePopState);
           // }, []);
+
+          /**
+           * Reset all debug panel settings to defaults
+           */
+          const handleReset = () => {
+            // Determine defaults based on platform
+            const defaultTileCacheSize = isTouchDevice ? 150 : 300;
+            const defaultLowResPageCacheSize = isTouchDevice ? 200 : 100;
+            const defaultHighResPageCacheSize = isTouchDevice ? 50 : 100;
+            const defaultViewportRadius = 2;
+
+            // Reset performance toggles to defaults
+            setParallelRendering(true);
+            setOnDemandRendering(true);
+            setPredictiveRendering(true);
+            setUpfrontRendering(true);
+            setFallbackRendering(true);
+            setResolutionMode('dual');
+
+            // Reset cache sizes to platform defaults
+            setTileCacheSize(defaultTileCacheSize);
+            setLowResPageCacheSize(defaultLowResPageCacheSize);
+            setHighResPageCacheSize(defaultHighResPageCacheSize);
+            setViewportRadius(defaultViewportRadius);
+
+            // Reset debug visualization toggles
+            setShowVerboseLogging(false);
+            setShowTileLabels(false);
+            setShowTileBorders(false);
+
+            // Clear all localStorage
+            localStorage.removeItem('pdfgrid_parallel_rendering');
+            localStorage.removeItem('pdfgrid_ondemand_rendering');
+            localStorage.removeItem('pdfgrid_predictive_rendering');
+            localStorage.removeItem('pdfgrid_upfront_rendering');
+            localStorage.removeItem('pdfgrid_fallback_rendering');
+            localStorage.removeItem('pdfgrid_resolution_mode');
+            localStorage.removeItem('pdfgrid_tile_cache_size');
+            localStorage.removeItem('pdfgrid_lowres_cache_size');
+            localStorage.removeItem('pdfgrid_highres_cache_size');
+            localStorage.removeItem('pdfgrid_viewport_radius');
+
+            console.log('[Debug Panel] All settings reset to defaults');
+          };
 
           /**
            * Common PDF loading logic for both file upload and URL loading
@@ -3627,7 +3682,7 @@
               showDebug: () => {
                 const stats = window.__PDFGridDiagnostics.getCacheStats();
                 const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
-                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.DEBUG_TILES ? 'ON' : 'OFF'}${tileDebug}`);
+                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
               },
               // Test tile intersection calculation
               getTileIntersections: (level, x, y) => {
@@ -4123,16 +4178,25 @@
                         backdropFilter: 'blur(8px)'
                       }}
                     >
-                      {/* Header with close button */}
+                      {/* Header with RESET and close buttons */}
                       <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-700">
                         <div className="font-bold text-yellow-400 text-xs sm:text-sm">Debug Panel</div>
-                        <button
-                          onClick={() => setShowDebug(false)}
-                          className="text-gray-400 hover:text-white transition-colors text-lg font-bold leading-none"
-                          style={{ pointerEvents: 'auto' }}
-                        >
-                          ×
-                        </button>
+                        <div className="flex gap-2 items-center">
+                          <button
+                            onClick={handleReset}
+                            className="px-2 py-0.5 rounded text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition-colors"
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            RESET
+                          </button>
+                          <button
+                            onClick={() => setShowDebug(false)}
+                            className="text-gray-400 hover:text-white transition-colors text-lg font-bold leading-none"
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            ×
+                          </button>
+                        </div>
                       </div>
 
                       {/* Page counter */}
@@ -4143,15 +4207,37 @@
                       {/* Control buttons */}
                       <div className="flex flex-wrap gap-1 sm:gap-2 mb-2 sm:mb-3 pb-2 border-b border-gray-700">
                         <button
-                          onClick={() => setDebugTiles(!debugTiles)}
+                          onClick={() => setShowVerboseLogging(!showVerboseLogging)}
                           className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                            debugTiles
+                            showVerboseLogging
                               ? 'bg-green-600 hover:bg-green-700 text-white'
                               : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
                           }`}
                           style={{ pointerEvents: 'auto' }}
                         >
-                          Debug Tiles
+                          Verbose Logs
+                        </button>
+                        <button
+                          onClick={() => setShowTileLabels(!showTileLabels)}
+                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                            showTileLabels
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                          }`}
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          Tile Labels
+                        </button>
+                        <button
+                          onClick={() => setShowTileBorders(!showTileBorders)}
+                          className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
+                            showTileBorders
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                          }`}
+                          style={{ pointerEvents: 'auto' }}
+                        >
+                          Tile Borders
                         </button>
                         <button
                           onClick={() => {
