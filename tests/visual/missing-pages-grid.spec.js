@@ -17,13 +17,17 @@ test.describe('Missing Pages Detection - Whole Grid View', () => {
     await page.setViewportSize({ width: 1920, height: 1080 });
 
     // Load PDF with whole grid view
-    await page.goto('http://localhost:8000/?pdf=demo-3.pdf');
+    await page.goto('http://localhost:8000/?pdf=demo/demo-3.pdf');
 
     // Wait for viewer initialization (all pages rendered, viewer ready)
     await page.waitForFunction(() => window.viewerReady === true, { timeout: 120000 });
 
-    // Give OSD time to generate L0 tiles
-    await page.waitForTimeout(3000);
+    // Wait for OSD to finish loading and drawing tiles to canvas
+    // This is critical: tilesFullyLoaded ensures all tiles are not just generated but also drawn to OSD's display canvas
+    await page.waitForFunction(() => window.tilesFullyLoaded === true, { timeout: 30000 });
+
+    // Small additional buffer to ensure canvas is stable
+    await page.waitForTimeout(500);
 
     const analysis = await page.evaluate(() => {
       // Get grid pattern and dimensions
@@ -307,7 +311,7 @@ test.describe('Missing Pages Detection - Whole Grid View', () => {
     await page.setViewportSize({ width: 1920, height: 1080 });
 
     // Load large PDF (126 pages) - adjust filename as needed
-    await page.goto('http://localhost:8000/?pdf=demo-126.pdf');
+    await page.goto('http://localhost:8000/?pdf=demo/demo-126.pdf');
 
     // Wait longer for large PDF initial render
     await page.waitForTimeout(8000);
