@@ -3266,8 +3266,14 @@
 
                 // Get page dimensions from first rendered high-res page
                 const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
-                pageWidth = firstHighRes.width;
-                pageHeight = firstHighRes.height;
+                if (firstHighRes) {
+                  pageWidth = firstHighRes.width;
+                  pageHeight = firstHighRes.height;
+                } else {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Phase 1] No high-res pages cached (throttled?) - will get dimensions from low-res`);
+                  }
+                }
               } else {
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
@@ -3284,8 +3290,12 @@
                   }
                   await pageStreamer.renderPage(1, 'low');
                   const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
-                  pageWidth = firstLowRes.width;
-                  pageHeight = firstLowRes.height;
+                  if (firstLowRes) {
+                    pageWidth = firstLowRes.width;
+                    pageHeight = firstLowRes.height;
+                  } else {
+                    throw new Error('Failed to get page dimensions - page 1 render returned null');
+                  }
                 }
 
                 if (CONFIG.VERBOSE_LOGGING) {
