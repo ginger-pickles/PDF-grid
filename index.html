@@ -2064,6 +2064,139 @@
           }
 
           /**
+           * Heal incomplete tiles by detecting missing pages and forcing completion
+           * This addresses cache pressure scenarios where tiles can't hold all needed pages
+           * @param {number[]} levels - Which levels to check (default: [0, 1, 2, 3])
+           * @returns {Promise<Object>} Healing report with successes and failures
+           */
+          async healIncompleteTiles(levels = [0, 1, 2, 3]) {
+            console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')}`);
+
+            const report = {
+              scanned: 0,
+              incomplete: [],
+              healed: [],
+              failed: []
+            };
+
+            // For each level, identify which tiles should exist
+            for (const level of levels) {
+              const tilesAtLevel = this._identifyRequiredTiles(level);
+
+              for (const tileSpec of tilesAtLevel) {
+                report.scanned++;
+                const { x, y, key, neededPages, resolution } = tileSpec;
+
+                // Check if tile is cached (complete) or missing (incomplete)
+                const isCached = this.tileCache.has(key);
+
+                if (!isCached) {
+                  // Tile is incomplete - identify which pages are missing
+                  const missingPages = neededPages.filter(p =>
+                    !this.pageStreamer.hasPage(p, resolution)
+                  );
+
+                  report.incomplete.push({
+                    key,
+                    level,
+                    x,
+                    y,
+                    neededPages,
+                    missingPages,
+                    missingCount: missingPages.length
+                  });
+
+                  console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
+
+                  // Attempt to heal: render missing pages and regenerate tile
+                  try {
+                    if (missingPages.length > 0) {
+                      // Render missing pages (high priority, bypass normal queue)
+                      await this.pageStreamer.requestPages(missingPages, resolution);
+                    }
+
+                    // Force regenerate tile now that pages are available
+                    const scale = Math.pow(2, level);
+                    const tileUrl = this.generateTile(level, x, y, scale);
+
+                    // Verify it's now cached (complete)
+                    const isNowCached = this.tileCache.has(key);
+
+                    if (isNowCached) {
+                      report.healed.push(key);
+                      console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+                    } else {
+                      report.failed.push({ key, reason: 'still_not_cached' });
+                      console.warn(`[Tile Healing] ✗ FAILED: ${key} still incomplete after healing attempt`);
+                    }
+                  } catch (error) {
+                    report.failed.push({ key, reason: error.message });
+                    console.error(`[Tile Healing] ✗ ERROR healing ${key}:`, error);
+                  }
+                }
+              }
+            }
+
+            console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
+
+            // Trigger viewer refresh if tiles were healed
+            if (report.healed.length > 0) {
+              this.scheduleRedraw();
+            }
+
+            return report;
+          }
+
+          /**
+           * Identify which tiles should exist at a given level
+           * @param {number} level - Tile pyramid level
+           * @returns {Array} Tile specifications with coordinates and needed pages
+           */
+          _identifyRequiredTiles(level) {
+            const tiles = [];
+            const scale = Math.pow(2, level);
+            const { totalWidth, totalHeight } = this.gridDims;
+
+            // Calculate how many tiles needed to cover the grid at this level
+            const scaledWidth = totalWidth / scale;
+            const scaledHeight = totalHeight / scale;
+            const tilesX = Math.ceil(scaledWidth / this.tileSize);
+            const tilesY = Math.ceil(scaledHeight / this.tileSize);
+
+            // For each tile position, determine which pages it needs
+            for (let x = 0; x < tilesX; x++) {
+              for (let y = 0; y < tilesY; y++) {
+                const tileLeft = x * this.tileSize * scale;
+                const tileTop = y * this.tileSize * scale;
+                const tileRight = Math.min(tileLeft + this.tileSize * scale, totalWidth);
+                const tileBottom = Math.min(tileTop + this.tileSize * scale, totalHeight);
+
+                // Determine which pages intersect this tile
+                const neededPages = this._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
+
+                // Determine resolution (use low-res for overview levels)
+                const resolution = level < 4 ? 'low' : 'high';
+
+                // Generate tile key
+                const firstPage = Math.min(...neededPages);
+                const lastPage = Math.max(...neededPages);
+                const key = `${level}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+
+                tiles.push({
+                  level,
+                  x,
+                  y,
+                  key,
+                  neededPages,
+                  resolution
+                });
+              }
+            }
+
+            return tiles;
+          }
+
+          /**
            * Render tile content
            */
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
@@ -4032,10 +4165,29 @@
                 // Add fresh TiledImage
                 viewer.addTiledImage({
                   tileSource: window.tileStreamerRef.getOSDConfig(),
-                  success: () => {
+                  success: async () => {
                     viewer.viewport.zoomTo(currentZoom, null, true);
                     viewer.viewport.panTo(currentCenter, true);
                     console.log('[Background] TiledImage recreation complete - all tiles have full content!');
+
+                    // CRITICAL: Heal any incomplete tiles
+                    // On devices with limited cache, some tiles may still have missing pages
+                    // This ensures L0/L1/L2/L3 tiles become complete via feedback-driven detection
+                    if (window.tileStreamerRef) {
+                      setTimeout(async () => {
+                        try {
+                          const healingReport = await window.tileStreamerRef.healIncompleteTiles([0, 1, 2, 3]);
+                          if (healingReport.incomplete.length > 0) {
+                            console.log(`[Tile Healing] Found ${healingReport.incomplete.length} incomplete tiles`);
+                            console.log(`[Tile Healing] Healed: ${healingReport.healed.length}, Failed: ${healingReport.failed.length}`);
+                          } else {
+                            console.log('[Tile Healing] All tiles complete, no healing needed');
+                          }
+                        } catch (error) {
+                          console.error('[Tile Healing] Error during automatic healing:', error);
+                        }
+                      }, 1000); // Delay to let cache settle after TiledImage recreation
+                    }
                   }
                 });
               } catch (error) {
@@ -4503,6 +4655,14 @@
                   },
                   parallelRendering: window.__parallelRenderStats || null
                 };
+              },
+              // Heal incomplete tiles by detecting and fixing missing pages
+              healIncompleteTiles: async (levels = [0, 1, 2, 3]) => {
+                if (!tileStreamer) {
+                  console.error('[Tile Healing] TileStreamer not available');
+                  return { error: 'TileStreamer not initialized' };
+                }
+                return await tileStreamer.healIncompleteTiles(levels);
               }
             };
 
