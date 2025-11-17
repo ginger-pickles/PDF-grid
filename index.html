@@ -109,7 +109,7 @@
           // Caching
           MAX_CACHE_SIZE: 200,           // Max tiles in TileCache (reduced from 300 to limit memory)
           PAGE_CACHE_MAX_SIZE_LOW: 100,  // Max low-res pages in PageCache (separate from high-res)
-          PAGE_CACHE_MAX_SIZE_HIGH: 50,  // Max high-res pages (reduced from 100 - each is 10-20MB!)
+          PAGE_CACHE_MAX_SIZE_HIGH: 10,  // Max high-res pages (CRITICAL: Large PDFs = 100MB+ per page!)
 
           // Mobile-specific limits (override above if on iOS)
           MOBILE_MAX_CACHE_SIZE: 150,          // TileCache for iOS - enough for deep zoom + pyramid + pan buffer
