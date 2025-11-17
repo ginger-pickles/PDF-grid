@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - PDFs with >100 pages: Skip Phase 3 upfront rendering to avoid blocking (pages render on-demand)
   - Saves ~10ms per page in initialization time for large documents
 
+- **Smart page scaling for mixed-dimension PDFs** (lines 458-534, 301-347, 793)
+  - Modal dimension detection automatically finds most common page size in PDF
+  - Samples representative pages (all pages for ≤10 pages, quartiles + random for larger PDFs)
+  - Oversized pages (>10% larger than modal) automatically scaled down to fit grid
+  - Preserves aspect ratio - no stretching or squashing
+  - Handles fold-outs, covers, and special pages gracefully
+  - Grid layout uses modal dimensions for consistent spacing
+  - Example: PDF with 8 standard pages (612×792) + 1 fold-out (1224×792) + 1 square (792×792)
+    - Modal detected: 612×792 (most common)
+    - Fold-out scaled by 0.5× to fit, square scaled by 0.77× to fit
+    - All pages aligned in uniform grid without distortion
+
 ### Fixed
 - **Critical:** On-demand rendering blocked by stuck promises in renderingInProgress Map
   - Added try...finally cleanup to ensure renderingInProgress always gets cleaned up (line 675-679)
@@ -73,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Minimap/navigator: 67.3% content coverage
   - All tests confirm 194/194 pages cached (100%) with no missing pages in grid
   - Tests use grid pattern logic to identify expected page positions, ignoring natural empty corners in diagonal layout
+
+- **Modal detection and smart scaling tests:**
+  - `tests/modal-detection-comprehensive.spec.js` - Verifies modal detection with uniform PDF (demo-1.pdf)
+    - Confirms modal dimensions detected (720×540)
+    - Validates grid uses modal dimensions
+    - Checks no unnecessary scaling for uniform pages
+  - `tests/verify-canvas-sizes.spec.js` - Validates smart scaling with mixed-dimension PDF
+    - Created test PDF: 10 pages with 3 different sizes (standard 612×792, fold-out 1224×792, square 792×792)
+    - Confirms modal correctly identified as 612×792 (7/10 pages)
+    - Verifies oversized pages scaled to fit: fold-out → 2448×1584, square → 2448×2448
+    - All pages fit modal grid without distortion
 
 ### Notes
 - **Render scale preserved at 4.0** (high quality) - NOT changed to 3.0
