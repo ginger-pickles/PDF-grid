@@ -2257,42 +2257,102 @@
               }
             }
 
-            // CRITICAL: Force OSD to refresh and display new tiles (not stale cached ones)
+            // CRITICAL: Escalating tickle strategies - start gentle, verify, escalate if needed
             if (report.healed.length > 0 && window.osdViewerRef) {
               console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
 
-              const viewer = window.osdViewerRef;
-              const tiledImage = viewer.world.getItemAt(0);
-
-              if (tiledImage) {
-                // Strategy 1: Reset coverage (forces OSD to re-request tiles)
-                tiledImage.resetCoverage();
-
-                // Strategy 2: Force immediate redraw
-                viewer.forceRedraw();
-
-                // Strategy 3: Clear OSD's internal tile cache for healed tiles
-                // OSD caches tiles internally and may show stale versions
-                if (tiledImage._tileCache) {
-                  // Access OSD's internal tile cache and remove healed tiles
-                  const cache = tiledImage._tileCache;
-                  if (cache._cachesLoaded) {
-                    for (const healedKey of report.healed) {
-                      // OSD uses different key format - clear entire cache for safety
-                      cache._cachesLoaded = {}; // Nuclear: clear all cached tiles
-                      break; // Only need to do this once
-                    }
-                  }
-                }
-
-                console.log('[Tile Healing] OSD refresh triggered - new tiles should display');
-              }
-
-              // Also schedule our own redraw (debounced)
-              this.scheduleRedraw();
+              await this._escalatingRefresh(report.healed);
             }
 
             return report;
+          }
+
+          /**
+           * Escalating OSD refresh strategies - feedback-driven tickling
+           * Starts gentle, verifies visible tiles, escalates if still incomplete
+           */
+          async _escalatingRefresh(healedKeys) {
+            const viewer = window.osdViewerRef;
+            if (!viewer) return;
+
+            const tiledImage = viewer.world.getItemAt(0);
+            if (!tiledImage) return;
+
+            // Helper: Check if visible tiles are now complete
+            const checkVisibleTiles = () => {
+              const visible = this.getVisibleTiles();
+              const incomplete = visible.filter(t => t.status === 'fallback' && healedKeys.includes(t.key));
+              return {
+                total: visible.length,
+                incomplete: incomplete.length,
+                incompleteKeys: incomplete.map(t => t.key)
+              };
+            };
+
+            // Level 1: Gentle - Force redraw
+            console.log('[Tickle L1] Trying forceRedraw()...');
+            viewer.forceRedraw();
+            this.scheduleRedraw();
+            await new Promise(resolve => setTimeout(resolve, 100)); // Let it settle
+
+            let status = checkVisibleTiles();
+            if (status.incomplete === 0) {
+              console.log('[Tickle L1] ✓ SUCCESS - all visible tiles complete');
+              return;
+            }
+            console.log(`[Tickle L1] ✗ FAILED - ${status.incomplete} tiles still incomplete: [${status.incompleteKeys.join(',')}]`);
+
+            // Level 2: Medium - Reset coverage
+            console.log('[Tickle L2] Trying resetCoverage()...');
+            tiledImage.resetCoverage();
+            viewer.forceRedraw();
+            await new Promise(resolve => setTimeout(resolve, 200)); // Let it settle
+
+            status = checkVisibleTiles();
+            if (status.incomplete === 0) {
+              console.log('[Tickle L2] ✓ SUCCESS - all visible tiles complete');
+              return;
+            }
+            console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete`);
+
+            // Level 3: Aggressive - Clear OSD internal cache
+            console.log('[Tickle L3] Trying OSD cache clear...');
+            if (tiledImage._tileCache?._cachesLoaded) {
+              tiledImage._tileCache._cachesLoaded = {};
+            }
+            tiledImage.resetCoverage();
+            viewer.forceRedraw();
+            await new Promise(resolve => setTimeout(resolve, 300)); // Let it settle
+
+            status = checkVisibleTiles();
+            if (status.incomplete === 0) {
+              console.log('[Tickle L3] ✓ SUCCESS - all visible tiles complete');
+              return;
+            }
+            console.log(`[Tickle L3] ✗ FAILED - ${status.incomplete} tiles still incomplete`);
+
+            // Level 4: Nuclear - Recreate TiledImage
+            console.log('[Tickle L4] NUCLEAR - Recreating TiledImage...');
+            const currentZoom = viewer.viewport.getZoom();
+            const currentCenter = viewer.viewport.getCenter();
+
+            viewer.world.removeAll();
+            viewer.addTiledImage({
+              tileSource: this.getOSDConfig(),
+              success: async () => {
+                viewer.viewport.zoomTo(currentZoom, null, true);
+                viewer.viewport.panTo(currentCenter, true);
+                await new Promise(resolve => setTimeout(resolve, 500)); // Let it settle
+
+                status = checkVisibleTiles();
+                if (status.incomplete === 0) {
+                  console.log('[Tickle L4] ✓ SUCCESS - TiledImage recreation worked!');
+                } else {
+                  console.error(`[Tickle L4] ✗ FAILED - ${status.incomplete} tiles STILL incomplete after recreation. Manual intervention needed.`);
+                  console.error('Incomplete tiles:', status.incompleteKeys);
+                }
+              }
+            });
           }
 
           /**
