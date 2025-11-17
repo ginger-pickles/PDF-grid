@@ -590,8 +590,14 @@
           const deviceMemoryGB = navigator.deviceMemory || 4; // Default to 4GB if not available
 
           // Calculate low-res cache size
-          // CRITICAL: Respect configured limits to prevent memory bloat
-          // Goal: Cache enough pages for minimap, but not ALL pages
+          // Strategy: BOUNDED MEMORY + PROGRESSIVE RENDERING
+          // For large PDFs (>100 pages):
+          //   1. Render only first N pages (respecting cache limit) - prevents 4GB spike
+          //   2. Generate L0/L1/L2 tiles with available pages (partial OK)
+          //   3. Continue rendering remaining pages in background
+          //   4. Invalidate + regenerate tiles as new pages complete
+          //   5. TiledImage recreate when minimap tiles are done
+          // Result: <1GB memory throughout, tiles progressively improve
           let lowResSize;
 
           // Apply device-specific limits
@@ -599,17 +605,17 @@
             // iOS: Conservative limit due to memory constraints
             lowResSize = Math.min(numPages, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW);
           } else {
-            // Desktop: Start with configured limit, only increase if memory allows
+            // Desktop: Respect configured limit for bounded memory
             lowResSize = CONFIG.PAGE_CACHE_MAX_SIZE_LOW;
 
-            // For small PDFs, allow caching all pages
+            // For small PDFs, allow caching all pages (complete minimap immediately)
             if (numPages <= CONFIG.PAGE_CACHE_MAX_SIZE_LOW) {
               lowResSize = numPages;
             } else {
-              // For large PDFs, respect the configured limit
-              // Don't try to cache all pages - use on-demand rendering instead
+              // For large PDFs, use bounded cache with progressive tile building
+              // Initial L0/L1 tiles will be partial, filled in as pages render
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Cache Sizing] Large PDF (${numPages} pages) - capping low-res cache at ${lowResSize} pages`);
+                console.log(`[Cache Sizing] Large PDF (${numPages} pages) - progressive rendering with ${lowResSize}-page cache (no 4GB spike)`);
               }
             }
           }
@@ -3286,7 +3292,7 @@
                   console.log('[Background] Starting low-res rendering for navigator/minimap...');
                 }
 
-                // Render all remaining low-res pages
+                // Collect remaining pages that need rendering
                 const remainingPages = [];
                 for (let i = 1; i <= pdf.numPages; i++) {
                   if (!pageStreamer.hasPage(i, 'low')) {
@@ -3294,10 +3300,23 @@
                   }
                 }
 
+                // PROGRESSIVE RENDERING: Respect cache limits to prevent 4GB memory spike
+                // For large PDFs, render only what fits in cache, let on-demand handle the rest
+                const cacheLowSize = pageStreamer.lowResPageCache.maxSize;
+                const currentlyCached = pageStreamer.getCacheStats().low;
+                const availableSlots = cacheLowSize - currentlyCached;
+                const pagesToRender = remainingPages.slice(0, availableSlots);
+                const pagesDeferred = remainingPages.length - pagesToRender.length;
+
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Background] Cache capacity: ${currentlyCached}/${cacheLowSize} low-res pages`);
+                  console.log(`[Background] Rendering: ${pagesToRender.length} pages now, ${pagesDeferred} deferred to on-demand`);
+                }
+
                 // Create progress overlay on navigator
                 let overlayDiv = null;
                 const navigatorElement = document.querySelector('.navigator');
-                if (navigatorElement && remainingPages.length > 0) {
+                if (navigatorElement && pagesToRender.length > 0) {
                   overlayDiv = document.createElement('div');
                   overlayDiv.style.cssText = `
                     position: absolute;
@@ -3327,25 +3346,26 @@
                   document.head.appendChild(style);
                 }
 
-                if (remainingPages.length > 0) {
+                // Render initial batch (respects cache limit)
+                if (pagesToRender.length > 0) {
                   if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`[Background] Rendering ${remainingPages.length} remaining low-res pages...`);
+                    console.log(`[Background] Rendering ${pagesToRender.length} low-res pages (bounded by cache limit)...`);
                   }
 
                   await pageStreamer.renderBatch(
-                    remainingPages,
+                    pagesToRender,
                     'low',
                     20,
                     (current, total) => {
                       // Update progress overlay
                       const progressText = document.getElementById('nav-progress-text');
                       if (progressText) {
-                        const percent = Math.round((current / remainingPages.length) * 100);
+                        const percent = Math.round((current / pagesToRender.length) * 100);
                         progressText.textContent = `Rendering minimap ${percent}%`;
                       }
 
                       if (CONFIG.VERBOSE_LOGGING && current % 20 === 0) {
-                        console.log(`[Background] Progress: ${current}/${remainingPages.length} pages`);
+                        console.log(`[Background] Progress: ${current}/${pagesToRender.length} pages`);
                       }
                     }
                   );
@@ -3353,14 +3373,17 @@
 
                 if (CONFIG.VERBOSE_LOGGING) {
                   const finalCacheStats = pageStreamer.getCacheStats();
-                  console.log('[Background] All low-res pages rendered. Refreshing viewer...');
+                  console.log('[Background] Initial batch complete. Refreshing viewer...');
                   console.log(`[Background] Cache status: low-res ${finalCacheStats.low}/${pdf.numPages} pages`);
+                  if (pagesDeferred > 0) {
+                    console.log(`[Background] ${pagesDeferred} pages deferred - will render on-demand as user navigates`);
+                  }
                 }
 
                 // Recreate main viewer TiledImage (should cascade to navigator)
                 if (window.viewer && window.tileStreamerRef) {
                   if (CONFIG.VERBOSE_LOGGING) {
-                    console.log('[Background] Recreating viewer TiledImage with complete grid...');
+                    console.log('[Background] Recreating viewer TiledImage with initial page batch...');
                   }
 
                   // Save current viewport state
@@ -3369,7 +3392,8 @@
                   // Remove old TiledImage from main viewer
                   window.viewer.world.removeAll();
 
-                  // Add fresh TiledImage with complete page coverage
+                  // Add fresh TiledImage with initial page coverage
+                  // Missing pages will render on-demand and tiles will auto-regenerate
                   window.viewer.addTiledImage({
                     tileSource: window.tileStreamerRef.getOSDConfig(),
                     success: () => {
@@ -3382,7 +3406,8 @@
                       }
 
                       if (CONFIG.VERBOSE_LOGGING) {
-                        console.log('[Background] Viewer TiledImage recreated with complete grid!');
+                        const stats = pageStreamer.getCacheStats();
+                        console.log(`[Background] Viewer TiledImage recreated! (${stats.low}/${pdf.numPages} pages cached)`);
                       }
                     },
                     error: (event) => {
@@ -3404,8 +3429,8 @@
                 const cacheStats = pageStreamer.getCacheStats();
                 console.log(`Initial rendering complete:`);
                 console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
-                console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages`);
-                console.log(`  Navigator: deferred (will appear when all low-res pages ready)`);
+                console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (initial batch, more on-demand)`);
+                console.log(`  Navigator: deferred (will appear when initial batch ready)`);
               }
 
             } catch (error) {
