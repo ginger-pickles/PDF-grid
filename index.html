@@ -656,21 +656,61 @@
               return await inProgress;
             }
 
-            // Start rendering
+            // Start rendering - MUST add to map BEFORE starting async work
+            // to avoid race condition where fast renders complete before map.set()
             const scale = resolution === 'low' ? CONFIG.PDF_LOWRES_SCALE : CONFIG.PDF_RENDER_SCALE;
+
             const renderPromise = (async () => {
-              const page = await this.pdfDoc.getPage(pageNum);
-              const canvas = await PDFUtils.renderPageToCanvas(page, scale);
-              pageCache.set(key, canvas);
-              this.renderingInProgress.delete(key);
-              if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
+              try {
+                const page = await this.pdfDoc.getPage(pageNum);
+                const canvas = await PDFUtils.renderPageToCanvas(page, scale);
+                pageCache.set(key, canvas);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
+                }
+
+                // CRITICAL: Invalidate tiles that used this page
+                // This ensures tiles with black/missing pages get regenerated
+                // Applies to ALL page renders (initial, upfront, on-demand)
+                if (window.tileStreamerRef) {
+                  window.tileStreamerRef._invalidateTilesUsingPages([pageNum], resolution);
+                  // Trigger OpenSeadragon refresh (debounced to batch multiple page renders)
+                  window.tileStreamerRef.scheduleRedraw();
+                }
+
+                return canvas;
+              } catch (error) {
+                console.error(`[PageStreamer] ERROR rendering page ${pageNum} at ${resolution}:`, error);
+                throw error;
+              } finally {
+                // CRITICAL: Always cleanup renderingInProgress
+                // This must run even if rendering succeeds, fails, or is cancelled
+                this.renderingInProgress.delete(key);
               }
-              return canvas;
             })();
 
+            // CRITICAL: Add to map BEFORE awaiting
+            // If we await first, fast renders could complete before map.set() executes
             this.renderingInProgress.set(key, renderPromise);
-            return await renderPromise;
+
+            // Safety timeout: auto-cleanup if promise hangs for >10 seconds
+            // Prevents stuck promises from permanently blocking on-demand rendering
+            // Most pages render in <1s, so 10s indicates a genuine stuck promise
+            const timeoutHandle = setTimeout(() => {
+              if (this.renderingInProgress.has(key)) {
+                console.warn(`[PageStreamer] TIMEOUT: page ${pageNum} at ${resolution} took >10s, removing from renderingInProgress`);
+                this.renderingInProgress.delete(key);
+              }
+            }, 10000);
+
+            try {
+              const result = await renderPromise;
+              clearTimeout(timeoutHandle);
+              return result;
+            } catch (error) {
+              clearTimeout(timeoutHandle);
+              throw error;
+            }
           }
 
           /**
@@ -2122,9 +2162,13 @@
                       console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, scheduling tile refresh`);
                     }
 
+                    // CRITICAL: Invalidate cached tiles that used this page
+                    // Without this, old tiles (with black pages) stay in cache and get reused
+                    this._invalidateTilesUsingPages([pageNum], resolution);
+
                     // CRITICAL: Schedule tile refresh to show newly-rendered pages
                     // Without this, tiles with blank pages won't update even though pages are now rendered
-                    // Uses debounced refresh to batch multiple page renders (100ms timeout)
+                    // Uses debounced refresh to batch multiple page renders (30ms timeout)
                     this.scheduleRedraw();
                   })
                   .catch(err => {
@@ -2248,33 +2292,27 @@
               return false;
             }
 
-            // Bounds check with floating point tolerance (1px epsilon)
-            // Floating point math can produce values like 124.00000000000001 when canvas is 124px
-            // Allow small overshoot to prevent rejecting valid draws due to FP precision errors
-            const epsilon = 1.0;
-            const maxSrcX = pageCanvas.width + epsilon;
-            const maxSrcY = pageCanvas.height + epsilon;
+            // Clamp source rectangle to canvas bounds
+            // Handle dimension mismatches gracefully instead of rejecting draw
+            // This can happen when PDF pages have unexpected dimensions
+            const clampedSrcX = Math.max(0, Math.min(srcX, pageCanvas.width));
+            const clampedSrcY = Math.max(0, Math.min(srcY, pageCanvas.height));
+            const clampedSrcW = Math.max(0, Math.min(srcW, pageCanvas.width - clampedSrcX));
+            const clampedSrcH = Math.max(0, Math.min(srcH, pageCanvas.height - clampedSrcY));
 
-            if (srcX < -epsilon || srcY < -epsilon || srcX + srcW > maxSrcX || srcY + srcH > maxSrcY) {
-              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
-              window.__drawPageDebug.failures.push({
-                level, pageNum, resolution,
-                reason: 'source_out_of_bounds',
-                srcX, srcY, srcW, srcH,
-                canvasWidth: pageCanvas.width,
-                canvasHeight: pageCanvas.height,
-                canvasScaleFactor,
-                overshootX: (srcX + srcW) - pageCanvas.width,
-                overshootY: (srcY + srcH) - pageCanvas.height
-              });
-              return false;
+            // Track if clamping occurred (for diagnostics)
+            const wasClamped = clampedSrcX !== srcX || clampedSrcY !== srcY ||
+                              clampedSrcW !== srcW || clampedSrcH !== srcH;
+
+            if (wasClamped && CONFIG.VERBOSE_LOGGING) {
+              console.warn(`[TileStreamer] Clamped source rect for page ${pageNum}: original (${srcX.toFixed(1)}, ${srcY.toFixed(1)}, ${srcW.toFixed(1)}, ${srcH.toFixed(1)}) → clamped (${clampedSrcX.toFixed(1)}, ${clampedSrcY.toFixed(1)}, ${clampedSrcW.toFixed(1)}, ${clampedSrcH.toFixed(1)})`);
             }
 
-            // Draw
+            // Draw using clamped values
             try {
               this.tileCtx.drawImage(
                 pageCanvas,
-                srcX, srcY, srcW, srcH,
+                clampedSrcX, clampedSrcY, clampedSrcW, clampedSrcH,
                 destX, destY, destW, destH
               );
 
@@ -3062,7 +3100,56 @@
 
               // Phase 4: Initialize viewer (user can interact, all pages ready!)
               setLoadingStatus('Initializing viewer...');
+
+              // CRITICAL: Clear tile cache before initializing viewer
+              // When Phase 3 is skipped (large PDFs), some pages may still be rendering
+              // Tiles generated during this window will have black/missing pages
+              // Clearing ensures viewer starts fresh and all tiles use completed pages
+              if (window.tileStreamerRef) {
+                const tileCount = window.tileStreamerRef.tileCache.size;
+                if (tileCount > 0) {
+                  window.tileStreamerRef.tileCache.clear();
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Init] Cleared ${tileCount} pre-initialization tiles to prevent black pages`);
+                  }
+                }
+              }
+
               initializeViewer(pdf.numPages, pageWidth, pageHeight);
+
+              // CRITICAL: When Phase 3 is skipped (large PDFs), many pages are still rendering
+              // Wait for initial renders to complete, then invalidate tiles to ensure fresh display
+              if (shouldSkipPhase3) {
+                // Give renders time to complete (async, non-blocking)
+                setTimeout(async () => {
+                  // Wait up to 10 seconds for renderingInProgress to mostly clear
+                  const maxWait = 10000;
+                  const startTime = Date.now();
+                  let lastSize = pageStreamer.renderingInProgress.size;
+
+                  while (Date.now() - startTime < maxWait && pageStreamer.renderingInProgress.size > 10) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    const currentSize = pageStreamer.renderingInProgress.size;
+
+                    // If no progress in 2 seconds, stop waiting
+                    if (currentSize === lastSize) {
+                      break;
+                    }
+                    lastSize = currentSize;
+                  }
+
+                  // Clear tile cache and force redraw to show completed pages
+                  if (window.tileStreamerRef && window.viewer) {
+                    const clearedTiles = window.tileStreamerRef.tileCache.size;
+                    window.tileStreamerRef.tileCache.clear();
+                    window.viewer.forceRedraw();
+
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log(`[Post-Init] Cleared ${clearedTiles} tiles and refreshed viewer after initial renders completed`);
+                    }
+                  }
+                }, 100);
+              }
 
               // Note: window.viewerReady is set in the viewer's 'open' event handler
               setLoadingStatus('');
