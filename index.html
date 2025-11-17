@@ -605,21 +605,32 @@
             // iOS: Conservative limit due to memory constraints
             lowResSize = Math.min(numPages, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW);
           } else {
-            // Desktop: Scale cache based on PDF size for complete L0/L1/L2 tiles
+            // Desktop: Scale cache dynamically based on device memory
             // Low-res pages are small (~1-2MB each), safe to cache more
-            const MAX_LOWRES_CACHE = 300; // Absolute cap: ~300-600MB for low-res pages
+            // Allocate up to 25% of device RAM for low-res cache (conservative, leaves room for high-res + tiles)
+            const lowResMemoryBudgetMB = (deviceMemoryGB * 1024) * 0.25; // 25% of RAM
+            const avgLowResPageMB = 2; // Conservative estimate: 2MB per low-res page
+            const maxLowResByMemory = Math.floor(lowResMemoryBudgetMB / avgLowResPageMB);
 
-            if (numPages <= MAX_LOWRES_CACHE) {
-              // Small/medium PDFs: Cache all pages for complete minimap tiles
+            // Absolute minimum: at least 200 pages (for PDFs up to 200 pages to work)
+            // Absolute maximum: cap at 1000 pages (~2GB) to prevent excessive memory use
+            const MIN_LOWRES_CACHE = 200;
+            const MAX_LOWRES_CACHE = 1000;
+            const dynamicMax = Math.max(MIN_LOWRES_CACHE, Math.min(maxLowResByMemory, MAX_LOWRES_CACHE));
+
+            if (numPages <= dynamicMax) {
+              // PDF fits in memory budget: Cache all pages for complete minimap tiles
               lowResSize = numPages;
-              if (CONFIG.VERBOSE_LOGGING && numPages > CONFIG.PAGE_CACHE_MAX_SIZE_LOW) {
-                console.log(`[Cache Sizing] Medium PDF (${numPages} pages) - caching all pages for complete L0/L1/L2 tiles`);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching all pages for complete L0/L1/L2 tiles`);
+                console.log(`[Cache Sizing] Device memory: ${deviceMemoryGB}GB, low-res budget: ${lowResMemoryBudgetMB.toFixed(0)}MB, max pages: ${dynamicMax}`);
               }
             } else {
-              // Very large PDFs: Use bounded cache, rely on partial tiles + on-demand
-              lowResSize = MAX_LOWRES_CACHE;
+              // PDF exceeds memory budget: Use bounded cache, rely on partial tiles + on-demand
+              lowResSize = dynamicMax;
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[Cache Sizing] Large PDF (${numPages} pages) - bounded cache at ${lowResSize} pages (L0 tiles will be partial)`);
+                console.log(`[Cache Sizing] Device memory: ${deviceMemoryGB}GB, low-res budget: ${lowResMemoryBudgetMB.toFixed(0)}MB`);
               }
             }
           }
