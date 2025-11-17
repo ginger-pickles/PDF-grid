@@ -1837,16 +1837,10 @@
                 console.log(`[TileStreamer] PARTIAL TILE: ${key} has ${availablePages.length}/${neededPages.length} pages (missing: ${missingPages.join(',')})`);
               }
 
-              // CRITICAL: Disable on-demand rendering for low-res to prevent memory spikes
-              // Low-res pages will render slowly in background, tiles will update naturally
-              // Only trigger on-demand for high-res (user actively viewing specific area)
-              if (resolution === 'high') {
-                this._requestPagesAsync(missingPages, resolution);
-              } else {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[TileStreamer] SKIPPED on-demand for low-res pages ${missingPages.join(',')} - waiting for background render`);
-                }
-              }
+              // Trigger on-demand rendering for missing pages
+              // Low-res: Safe to render on-demand now that eviction threshold is 95%
+              // High-res: User actively viewing specific area (viewport-based)
+              this._requestPagesAsync(missingPages, resolution);
             }
 
             // If not all high-res pages available, trigger background loading
