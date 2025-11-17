@@ -1795,12 +1795,22 @@
             );
 
             if (availablePages.length < neededPages.length) {
-              // Some pages missing - render partial tile and request missing pages
+              // Some pages missing - render partial tile
               const missingPages = neededPages.filter(p => !availablePages.includes(p));
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[TileStreamer] PARTIAL TILE: ${key} has ${availablePages.length}/${neededPages.length} pages (missing: ${missingPages.join(',')})`);
               }
-              this._requestPagesAsync(missingPages, resolution);
+
+              // CRITICAL: Disable on-demand rendering for low-res to prevent memory spikes
+              // Low-res pages will render slowly in background, tiles will update naturally
+              // Only trigger on-demand for high-res (user actively viewing specific area)
+              if (resolution === 'high') {
+                this._requestPagesAsync(missingPages, resolution);
+              } else {
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[TileStreamer] SKIPPED on-demand for low-res pages ${missingPages.join(',')} - waiting for background render`);
+                }
+              }
             }
 
             // If not all high-res pages available, trigger background loading
@@ -3426,6 +3436,71 @@
                       if (CONFIG.VERBOSE_LOGGING) {
                         const stats = pageStreamer.getCacheStats();
                         console.log(`[Background] Viewer TiledImage recreated! (${stats.low}/${pdf.numPages} pages cached)`);
+                      }
+
+                      // SLOW BACKGROUND CONTINUATION: Render remaining pages gradually
+                      // This ensures minimap eventually becomes complete without memory spikes
+                      if (pagesDeferred > 0) {
+                        // Wait 3 seconds for user to settle, then start slow rendering
+                        setTimeout(() => {
+                          if (!pageStreamer) return; // Component may have unmounted
+
+                          // Collect all pages not yet cached
+                          const stillMissing = [];
+                          for (let i = 1; i <= pdf.numPages; i++) {
+                            if (!pageStreamer.hasPage(i, 'low')) {
+                              stillMissing.push(i);
+                            }
+                          }
+
+                          if (stillMissing.length === 0) {
+                            if (CONFIG.VERBOSE_LOGGING) {
+                              console.log('[Background Continuation] All pages already rendered');
+                            }
+                            return;
+                          }
+
+                          if (CONFIG.VERBOSE_LOGGING) {
+                            console.log(`[Background Continuation] Slowly rendering ${stillMissing.length} remaining pages...`);
+                          }
+
+                          // Render slowly: 10 pages every 2 seconds to avoid memory spike
+                          let batchIndex = 0;
+                          const batchSize = 10;
+                          const batchDelay = 2000; // 2 seconds between batches
+
+                          const renderNextBatch = async () => {
+                            if (!pageStreamer) return; // Check if still valid
+
+                            const startIdx = batchIndex * batchSize;
+                            const batch = stillMissing.slice(startIdx, startIdx + batchSize);
+
+                            if (batch.length === 0) {
+                              if (CONFIG.VERBOSE_LOGGING) {
+                                console.log('[Background Continuation] All remaining pages rendered!');
+                                console.log('[Background Continuation] Minimap now complete');
+                              }
+                              return;
+                            }
+
+                            try {
+                              await pageStreamer.renderBatch(batch, 'low', 5);
+
+                              if (CONFIG.VERBOSE_LOGGING) {
+                                const progress = Math.min(startIdx + batch.length, stillMissing.length);
+                                console.log(`[Background Continuation] Progress: ${progress}/${stillMissing.length} pages`);
+                              }
+
+                              batchIndex++;
+                              setTimeout(renderNextBatch, batchDelay);
+                            } catch (error) {
+                              console.error('[Background Continuation] Error rendering batch:', error);
+                            }
+                          };
+
+                          // Start slow rendering
+                          renderNextBatch();
+                        }, 3000); // Wait 3 seconds before starting
                       }
                     },
                     error: (event) => {
