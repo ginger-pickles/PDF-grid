@@ -2563,8 +2563,9 @@
               window.viewerReady = true;
 
               // Apply persisted tile borders setting from localStorage
-              if (viewer.drawer && showTileBorders) {
-                viewer.drawer.debugMode = showTileBorders;
+              const persistedTileBorders = localStorage.getItem('pdfgrid_tile_borders');
+              if (viewer.drawer && persistedTileBorders) {
+                viewer.drawer.debugMode = JSON.parse(persistedTileBorders);
               }
 
               if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
