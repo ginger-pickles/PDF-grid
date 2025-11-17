@@ -2160,6 +2160,102 @@
           }
 
           /**
+           * Detect incomplete tiles in viewport area across ALL zoom levels
+           * Scans the current viewport bounds at every level (0 to maxLevel)
+           * @returns {Array} Incomplete tiles at all levels covering viewport
+           */
+          detectIncompleteTilesAllLevels() {
+            if (!window.osdViewerRef) {
+              console.warn('[All-Levels Detector] OSD viewer not available');
+              return [];
+            }
+
+            const viewer = window.osdViewerRef;
+            const viewport = viewer.viewport;
+            const tiledImage = viewer.world.getItemAt(0);
+            if (!tiledImage) {
+              console.warn('[All-Levels Detector] No TiledImage available');
+              return [];
+            }
+
+            // Get viewport bounds in image coordinates
+            const bounds = viewport.getBounds(true);
+            const viewportRect = tiledImage.viewportToImageRectangle(bounds);
+
+            console.log(`[All-Levels Detector] Scanning viewport area at ALL levels (0-${this.maxLevel})`);
+            console.log(`  Viewport bounds: x=${viewportRect.x.toFixed(0)}, y=${viewportRect.y.toFixed(0)}, w=${viewportRect.width.toFixed(0)}, h=${viewportRect.height.toFixed(0)}`);
+
+            const incompleteTiles = [];
+            const stats = {
+              totalScanned: 0,
+              incomplete: 0,
+              byLevel: {}
+            };
+
+            // Scan ALL zoom levels (0 to maxLevel)
+            for (let level = 0; level <= this.maxLevel; level++) {
+              stats.byLevel[level] = { scanned: 0, incomplete: 0 };
+
+              const scale = Math.pow(2, level);
+              const tileWidth = this.tileSize * scale;
+              const tileHeight = this.tileSize * scale;
+
+              // Calculate which tiles cover viewport at this level
+              const startX = Math.max(0, Math.floor(viewportRect.x / tileWidth));
+              const startY = Math.max(0, Math.floor(viewportRect.y / tileHeight));
+              const endX = Math.min(Math.ceil((viewportRect.x + viewportRect.width) / tileWidth), Math.ceil(this.gridDims.totalWidth / tileWidth));
+              const endY = Math.min(Math.ceil((viewportRect.y + viewportRect.height) / tileHeight), Math.ceil(this.gridDims.totalHeight / tileHeight));
+
+              // Check each tile in viewport at this level
+              for (let x = startX; x <= endX; x++) {
+                for (let y = startY; y <= endY; y++) {
+                  stats.totalScanned++;
+                  stats.byLevel[level].scanned++;
+
+                  const tileLeft = x * tileWidth;
+                  const tileTop = y * tileHeight;
+                  const tileRight = Math.min(tileLeft + tileWidth, this.gridDims.totalWidth);
+                  const tileBottom = Math.min(tileTop + tileHeight, this.gridDims.totalHeight);
+
+                  const neededPages = this._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
+                  const firstPage = Math.min(...neededPages);
+                  const lastPage = Math.max(...neededPages);
+                  const resolution = level < 4 ? 'low' : 'high';
+                  const key = `${level}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+
+                  // Check tile render registry
+                  const renderStatus = this.tileRenderRegistry?.get(key);
+
+                  // Tile is incomplete if: missing from registry, status=fallback, or has missing pages
+                  if (!renderStatus || renderStatus.status === 'fallback' || renderStatus.missingPages?.length > 0) {
+                    stats.incomplete++;
+                    stats.byLevel[level].incomplete++;
+
+                    incompleteTiles.push({
+                      key,
+                      level,
+                      x, y,
+                      resolution,
+                      neededPages,
+                      missingPages: renderStatus?.missingPages || neededPages,
+                      status: renderStatus?.status || 'unknown'
+                    });
+                  }
+                }
+              }
+            }
+
+            console.log(`[All-Levels Detector] Scanned ${stats.totalScanned} tiles, found ${stats.incomplete} incomplete`);
+            for (let level = 0; level <= this.maxLevel; level++) {
+              if (stats.byLevel[level].incomplete > 0) {
+                console.log(`  L${level}: ${stats.byLevel[level].incomplete}/${stats.byLevel[level].scanned} incomplete`);
+              }
+            }
+
+            return incompleteTiles;
+          }
+
+          /**
            * Heal incomplete tiles by detecting missing pages and forcing completion
            * This addresses cache pressure scenarios where tiles can't hold all needed pages
            * @param {number[]|null} levels - Which levels to check (default: null = all levels 0 to maxLevel)
@@ -2270,7 +2366,7 @@
 
           /**
            * Escalating OSD refresh strategies - feedback-driven tickling
-           * Starts gentle, verifies visible tiles, escalates if still incomplete
+           * Operates at ALL zoom levels, verifies viewport tiles across entire pyramid
            */
           async _escalatingRefresh(healedKeys) {
             const viewer = window.osdViewerRef;
@@ -2279,42 +2375,48 @@
             const tiledImage = viewer.world.getItemAt(0);
             if (!tiledImage) return;
 
-            // Helper: Check if visible tiles are now complete
-            const checkVisibleTiles = () => {
-              const visible = this.getVisibleTiles();
-              const incomplete = visible.filter(t => t.status === 'fallback' && healedKeys.includes(t.key));
+            // Helper: Check if tiles at ALL levels in viewport are now complete
+            const checkAllLevels = () => {
+              const allLevelTiles = this.detectIncompleteTilesAllLevels();
+              const incomplete = allLevelTiles.filter(t => healedKeys.includes(t.key));
               return {
-                total: visible.length,
+                total: allLevelTiles.length,
                 incomplete: incomplete.length,
-                incompleteKeys: incomplete.map(t => t.key)
+                incompleteKeys: incomplete.map(t => t.key),
+                byLevel: incomplete.reduce((acc, t) => {
+                  acc[t.level] = (acc[t.level] || 0) + 1;
+                  return acc;
+                }, {})
               };
             };
 
-            // Level 1: Gentle - Force redraw
-            console.log('[Tickle L1] Trying forceRedraw()...');
+            // Level 1: Gentle - Force redraw (ALL zoom levels)
+            console.log('[Tickle L1] Trying forceRedraw() at ALL levels...');
             viewer.forceRedraw();
             this.scheduleRedraw();
             await new Promise(resolve => setTimeout(resolve, 100)); // Let it settle
 
-            let status = checkVisibleTiles();
+            let status = checkAllLevels();
             if (status.incomplete === 0) {
-              console.log('[Tickle L1] ✓ SUCCESS - all visible tiles complete');
+              console.log('[Tickle L1] ✓ SUCCESS - all tiles complete at all levels');
               return;
             }
-            console.log(`[Tickle L1] ✗ FAILED - ${status.incomplete} tiles still incomplete: [${status.incompleteKeys.join(',')}]`);
+            const byLevelStr = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
+            console.log(`[Tickle L1] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr})`);
 
-            // Level 2: Medium - Reset coverage
-            console.log('[Tickle L2] Trying resetCoverage()...');
+            // Level 2: Medium - Reset coverage (ALL zoom levels)
+            console.log('[Tickle L2] Trying resetCoverage() at ALL levels...');
             tiledImage.resetCoverage();
             viewer.forceRedraw();
             await new Promise(resolve => setTimeout(resolve, 200)); // Let it settle
 
-            status = checkVisibleTiles();
+            status = checkAllLevels();
             if (status.incomplete === 0) {
-              console.log('[Tickle L2] ✓ SUCCESS - all visible tiles complete');
+              console.log('[Tickle L2] ✓ SUCCESS - all tiles complete at all levels');
               return;
             }
-            console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete`);
+            const byLevelStr2 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
+            console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr2})`);
 
             // Level 3: Aggressive - NUCLEAR clear of ALL OSD internal caches
             console.log('[Tickle L3] AGGRESSIVE - Clearing ALL OSD caches...');
@@ -2351,15 +2453,16 @@
 
             await new Promise(resolve => setTimeout(resolve, 500)); // Longer settle time
 
-            status = checkVisibleTiles();
+            status = checkAllLevels();
             if (status.incomplete === 0) {
-              console.log('[Tickle L3] ✓ SUCCESS - all visible tiles complete');
+              console.log('[Tickle L3] ✓ SUCCESS - all tiles complete at all levels');
               return;
             }
-            console.log(`[Tickle L3] ✗ FAILED - ${status.incomplete} tiles still incomplete`);
+            const byLevelStr3 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
+            console.log(`[Tickle L3] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr3})`);
 
-            // Level 4: Nuclear - Recreate TiledImage
-            console.log('[Tickle L4] NUCLEAR - Recreating TiledImage...');
+            // Level 4: Nuclear - Recreate TiledImage (ALL zoom levels)
+            console.log('[Tickle L4] NUCLEAR - Recreating TiledImage at ALL levels...');
             const currentZoom = viewer.viewport.getZoom();
             const currentCenter = viewer.viewport.getCenter();
 
@@ -2371,11 +2474,12 @@
                 viewer.viewport.panTo(currentCenter, true);
                 await new Promise(resolve => setTimeout(resolve, 500)); // Let it settle
 
-                status = checkVisibleTiles();
+                status = checkAllLevels();
                 if (status.incomplete === 0) {
-                  console.log('[Tickle L4] ✓ SUCCESS - TiledImage recreation worked!');
+                  console.log('[Tickle L4] ✓ SUCCESS - TiledImage recreation worked at all levels!');
                 } else {
-                  console.error(`[Tickle L4] ✗ FAILED - ${status.incomplete} tiles STILL incomplete after recreation. Manual intervention needed.`);
+                  const byLevelStr4 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
+                  console.error(`[Tickle L4] ✗ FAILED - ${status.incomplete} tiles STILL incomplete after recreation (${byLevelStr4}). Manual intervention needed.`);
                   console.error('Incomplete tiles:', status.incompleteKeys);
                 }
               }
