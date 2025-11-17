@@ -2709,8 +2709,11 @@
           // Auto-load PDF on mount
           // Separated concerns: URL parameters always work, config auto-load is optional
           React.useEffect(() => {
+            let mounted = true; // Track if component is still mounted
+
             // Handle URL parameters - ALWAYS runs (independent of CONFIG.AUTO_LOAD_PDF)
             const handleURLParameters = async () => {
+              if (!mounted) return false; // Exit if unmounted
               const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
 
               // Priority 1: ?url= parameter (remote URL)
@@ -2738,6 +2741,7 @@
                   storageAttempted = true;
                   const stored = await PDFStorage.load();
                   if (stored && stored.filename === pdfFilename) {
+                    if (!mounted) return false; // Check before state updates
                     console.log(`Loading local PDF from storage: ${pdfFilename}`);
                     loadingCancelledRef.current = false; // Reset cancel flag
                     setIsLoading(true);
@@ -2746,6 +2750,7 @@
                     setUrlInput(stored.filename);
 
                     const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                    if (!mounted) return false; // Check after async operation
                     await loadPDF(pdf, stored.filename);
                     return true; // Successfully handled
                   }
@@ -2794,6 +2799,8 @@
 
             // Restore stored PDF from previous session - only when opened locally (file://)
             const restoreStoredPDF = async () => {
+              if (!mounted) return false; // Exit if unmounted
+
               // Only auto-restore when using file:// protocol (local file usage)
               // When served (http://), start with clean home screen
               if (window.location.protocol !== 'file:') {
@@ -2802,6 +2809,7 @@
 
               try {
                 const stored = await PDFStorage.load();
+                if (!mounted) return false; // Check after async operation
                 if (stored) {
                   console.log(`Loading stored PDF from previous session: ${stored.filename}`);
                   loadingCancelledRef.current = false; // Reset cancel flag
@@ -2814,10 +2822,12 @@
                   URLManager.replaceState('pdf', stored.filename);
 
                   const pdf = await pdfjsLib.getDocument({ data: stored.pdfData }).promise;
+                  if (!mounted) return false; // Check after async operation
                   await loadPDF(pdf, stored.filename);
                   return true; // Successfully restored
                 }
               } catch (error) {
+                if (!mounted) return false; // Don't set state if unmounted
                 console.error(`Failed to load stored PDF:`, error);
                 setIsLoading(false);
                 // Clear bad storage silently
@@ -2829,6 +2839,8 @@
 
             // Auto-load demo PDF - ONLY runs if CONFIG.AUTO_LOAD_PDF is set
             const autoLoadDemo = async () => {
+              if (!mounted) return; // Exit if unmounted
+
               if (!CONFIG.AUTO_LOAD_PDF) {
                 console.log('No PDF to auto-load. Waiting for manual upload or URL parameters.');
                 return;
@@ -2842,6 +2854,7 @@
 
               try {
                 console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
+                if (!mounted) return; // Check before async operation
                 await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF, false, true); // skipHistory=false, suppressAlerts=true
               } catch (error) {
                 console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
@@ -2851,17 +2864,25 @@
 
             // Run loading sequence
             (async () => {
+              if (!mounted) return; // Check at start
+
               // First, check for URL parameters (highest priority, always runs)
               const handledByURL = await handleURLParameters();
-              if (handledByURL) return;
+              if (!mounted || handledByURL) return;
 
               // Second, try to restore stored PDF from previous session (always runs)
               const restoredFromStorage = await restoreStoredPDF();
-              if (restoredFromStorage) return;
+              if (!mounted || restoredFromStorage) return;
 
               // Finally, auto-load demo if configured (only if CONFIG.AUTO_LOAD_PDF is set)
+              if (!mounted) return;
               await autoLoadDemo();
             })();
+
+            // Cleanup function - mark component as unmounted
+            return () => {
+              mounted = false;
+            };
           }, []);
 
           // Sync CONFIG with performance toggles and persist to localStorage
@@ -3036,6 +3057,12 @@
 
               // Allow UI to update (show spinner) before heavy rendering starts
               await new Promise(resolve => setTimeout(resolve, 100));
+
+              // Clean up old PageStreamer instance to prevent memory leak
+              if (window.pageStreamerRef) {
+                window.pageStreamerRef.clear(); // Clear all caches
+                window.pageStreamerRef = null;
+              }
 
               // Create PageStreamer instance
               const pageStreamer = new PageStreamer(pdf);
