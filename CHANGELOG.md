@@ -5,6 +5,27 @@ All notable changes to PDF Grid Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.6] - 2025-11-16
+
+### Fixed
+- **Navigator incorrectly showing on mobile/touch devices**
+  - Removed forced `showNavigator: true` parameter that bypassed device detection (line 3071)
+  - Navigator now properly hidden on small phones (<600px) as intended
+  - Touch device detection via `OSDManager.isTouchDevice()` now works correctly
+
+- **Graceful error handling - no more modal dialogs for automatic loading failures**
+  - Auto-load failures (CONFIG.AUTO_LOAD_PDF) now fail silently with console logging only
+  - URL parameter failures (?url=, ?pdf=) log to console instead of showing alert dialogs
+  - Storage restore failures clear bad data silently without user interruption
+  - Added `suppressAlerts` flag threaded through loadPDFFromURL → loadPDF chain
+  - All automatic loading paths now gracefully show home screen on failure
+
+### Changed
+- **Empty URL input behavior**
+  - Clearing URL field and clicking "Open URL" now destroys viewer and shows home screen
+  - Previously showed "Please enter a URL" alert dialog
+  - Provides clean way to return to home state without page refresh
+
 ## [1.9.5] - 2025-11-16
 
 ### Goal

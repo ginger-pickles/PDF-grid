@@ -64,7 +64,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.5',
+          VERSION: '1.9.6',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -2667,7 +2667,7 @@
                   return true; // Successfully handled
                 } catch (error) {
                   console.error(`Failed to load PDF from URL parameter: ${error.message}`);
-                  alert(`Failed to load PDF from URL: ${error.message}`);
+                  // Fail silently - show home screen
                   return true; // Handled (even though it failed)
                 }
               }
@@ -2708,28 +2708,29 @@
                   } catch (error) {
                     console.error(`Failed to fetch PDF from server: ${error.message}`);
 
-                    // Build context-aware error message
-                    let errorMsg = `PDF "${pdfFilename}" could not be loaded.\n\n`;
+                    // Build context-aware error message for console
+                    let errorMsg = `PDF "${pdfFilename}" could not be loaded.`;
                     if (storageError) {
-                      errorMsg += `Storage error: ${storageError.message}\n`;
+                      errorMsg += ` Storage error: ${storageError.message}.`;
                     } else if (storageAttempted) {
-                      errorMsg += `Not found in storage.\n`;
+                      errorMsg += ` Not found in storage.`;
                     }
-                    errorMsg += `Server fetch failed: ${error.message}`;
+                    errorMsg += ` Server fetch failed: ${error.message}`;
 
-                    alert(errorMsg);
+                    console.error(errorMsg);
+                    // Fail silently - show home screen
                     return true; // Handled (even though it failed)
                   }
                 } else {
                   // file:// protocol - can't fetch from server
-                  let errorMsg = `PDF "${pdfFilename}" not found in storage.\n\n`;
+                  let errorMsg = `PDF "${pdfFilename}" not found in storage.`;
                   if (storageError) {
-                    errorMsg += `Storage error: ${storageError.message}\n\n`;
+                    errorMsg += ` Storage error: ${storageError.message}.`;
                   }
-                  errorMsg += `Cannot fetch from server (file:// protocol).`;
+                  errorMsg += ` Cannot fetch from server (file:// protocol).`;
 
-                  console.log(errorMsg);
-                  alert(errorMsg);
+                  console.error(errorMsg);
+                  // Fail silently - show home screen
                   return true; // Handled (even though it failed)
                 }
               }
@@ -2765,8 +2766,8 @@
               } catch (error) {
                 console.error(`Failed to load stored PDF:`, error);
                 setIsLoading(false);
-                // Show error and clear bad storage
-                alert(`Failed to restore stored PDF: ${error.message}\n\nClearing storage.`);
+                // Clear bad storage silently
+                console.log(`Clearing storage due to restore failure`);
                 await PDFStorage.clear();
               }
               return false; // No stored PDF or failed to restore
@@ -2787,7 +2788,7 @@
 
               try {
                 console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
-                await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF);
+                await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF, false, true); // skipHistory=false, suppressAlerts=true
               } catch (error) {
                 console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
                 // Silently fail - user can upload manually
@@ -2967,7 +2968,7 @@
           /**
            * Common PDF loading logic for both file upload and URL loading
            */
-          const loadPDF = async (pdf, filename = 'PDF') => {
+          const loadPDF = async (pdf, filename = 'PDF', suppressAlerts = false) => {
             try {
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
@@ -3067,8 +3068,8 @@
                 }
               }
 
-              // Initialize viewer WITH navigator (will recreate TiledImage when pages ready)
-              initializeViewer(pdf.numPages, pageWidth, pageHeight, true);
+              // Initialize viewer (navigator auto-hidden on touch devices)
+              initializeViewer(pdf.numPages, pageWidth, pageHeight);
 
               // Background: Render remaining low-res pages, then add navigator when ready
               setTimeout(async () => {
@@ -3574,7 +3575,7 @@
             console.log('[Background] Progressive minimap rendering complete');
           };
 
-          const loadPDFFromURL = async (url, skipHistory = false) => {
+          const loadPDFFromURL = async (url, skipHistory = false, suppressAlerts = false) => {
             loadingCancelledRef.current = false; // Reset cancel flag
             setShowHelp(false); // Close help panel when loading starts
             setIsLoading(true);
@@ -3598,7 +3599,7 @@
 
             try {
               const pdf = await PDFUtils.loadPDFFromURL(url);
-              await loadPDF(pdf, url);
+              await loadPDF(pdf, url, suppressAlerts);
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
                 console.log('Loading cancelled');
@@ -3660,7 +3661,16 @@
           const handleUrlLoad = async () => {
             const url = urlInput.trim();
             if (!url) {
-              alert('Please enter a URL');
+              // Empty URL = clear viewer and show home screen
+              if (osdViewerRef.current) {
+                osdViewerRef.current.destroy();
+                osdViewerRef.current = null;
+              }
+              setPdfFile(null);
+              pdfDocRef.current = null;
+              setNumPages(0);
+              setCurrentFilename('');
+              URLManager.pushState('clear', '');
               return;
             }
 
