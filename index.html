@@ -3045,6 +3045,41 @@
            */
           const loadPDF = async (pdf, filename = 'PDF', suppressAlerts = false) => {
             try {
+              // CRITICAL: Clean up old instances BEFORE loading new PDF to prevent memory leaks
+
+              // 1. Destroy old OpenSeadragon viewer
+              if (osdViewerRef.current) {
+                console.log('[Memory] Destroying old OpenSeadragon viewer');
+                osdViewerRef.current.destroy();
+                osdViewerRef.current = null;
+                window.osdViewerRef = null;
+              }
+
+              // 2. Destroy old PDF.js document (releases parsed PDF data from memory)
+              if (pdfDocRef.current) {
+                console.log('[Memory] Destroying old PDF document');
+                pdfDocRef.current.destroy();
+                pdfDocRef.current = null;
+              }
+
+              // 3. Clean up old TileStreamer instance
+              if (window.tileStreamerRef) {
+                console.log('[Memory] Clearing old TileStreamer');
+                window.tileStreamerRef.tileCache.clear();
+                window.tileStreamerRef = null;
+              }
+              if (tileStreamerRef.current) {
+                tileStreamerRef.current = null;
+              }
+
+              // 4. Clean up old PageStreamer instance
+              if (window.pageStreamerRef) {
+                console.log('[Memory] Clearing old PageStreamer');
+                window.pageStreamerRef.clear(); // Clear all page canvases
+                window.pageStreamerRef = null;
+              }
+
+              // Now set up new PDF
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
               setCurrentFilename(filename);
@@ -3057,12 +3092,6 @@
 
               // Allow UI to update (show spinner) before heavy rendering starts
               await new Promise(resolve => setTimeout(resolve, 100));
-
-              // Clean up old PageStreamer instance to prevent memory leak
-              if (window.pageStreamerRef) {
-                window.pageStreamerRef.clear(); // Clear all caches
-                window.pageStreamerRef = null;
-              }
 
               // Create PageStreamer instance
               const pageStreamer = new PageStreamer(pdf);
