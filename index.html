@@ -2221,19 +2221,7 @@
           _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
             const { pageWidth, pageHeight, spacing } = this.gridDims;
 
-            // Calculate page position in grid
-            const pageLeft = col * (pageWidth + spacing);
-            const pageTop = row * (pageHeight + spacing);
-            const pageRight = pageLeft + pageWidth;
-            const pageBottom = pageTop + pageHeight;
-
-            // Check intersection
-            if (pageRight <= tileLeft || pageLeft >= tileRight ||
-                pageBottom <= tileTop || pageTop >= tileBottom) {
-              return false;
-            }
-
-            // Get page canvas
+            // Get page canvas first to determine actual dimensions
             const pageNum = this.pattern[row][col];
 
             // Skip blank cells in staggered grid pattern
@@ -2241,9 +2229,13 @@
               return false;
             }
 
-            // Get canvas from PageStreamer cache with conditional fallback
+            // Get canvas from PageStreamer cache
             const pageCache = this.pageStreamer._getPageCache(resolution);
             let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
+
+            // Calculate base grid cell position (modal dimensions)
+            const cellLeft = col * (pageWidth + spacing);
+            const cellTop = row * (pageHeight + spacing);
 
             // Track cache misses and trigger on-demand rendering
             if (!pageCanvas) {
@@ -2358,15 +2350,38 @@
 
             // Debug: Disabled per-page canvas validation
 
+            // Calculate actual page dimensions by fitting canvas aspect ratio within modal bounds
+            // This preserves aspect ratio for odd-sized pages (fold-outs, narrow pages, etc.)
+            const canvasAspectRatio = pageCanvas.width / pageCanvas.height;
+
+            // Fit canvas aspect ratio within modal dimensions
+            // Try width-constrained fit
+            let actualPageWidth = pageWidth;
+            let actualPageHeight = pageWidth / canvasAspectRatio;
+
+            // If height exceeds modal, use height-constrained fit instead
+            if (actualPageHeight > pageHeight) {
+              actualPageHeight = pageHeight;
+              actualPageWidth = pageHeight * canvasAspectRatio;
+            }
+
+            // Calculate canvas scale factor from actual dimensions
+            const canvasScaleFactor = pageCanvas.width / actualPageWidth;
+
+            // Center page within grid cell if dimensions differ from modal
+            const offsetX = (pageWidth - actualPageWidth) / 2;
+            const offsetY = (pageHeight - actualPageHeight) / 2;
+
+            const pageLeft = cellLeft + offsetX;
+            const pageTop = cellTop + offsetY;
+            const pageRight = pageLeft + actualPageWidth;
+            const pageBottom = pageTop + actualPageHeight;
+
             // Calculate intersection rectangle
             const intersectLeft = Math.max(tileLeft, pageLeft);
             const intersectTop = Math.max(tileTop, pageTop);
             const intersectRight = Math.min(tileRight, pageRight);
             const intersectBottom = Math.min(tileBottom, pageBottom);
-
-            // Calculate canvas scale factor
-            // Grid dimensions are based on high-res, but canvas might be low-res
-            const canvasScaleFactor = pageCanvas.width / pageWidth;
 
             // Diagnostic: Warn if scale factor is unexpectedly small (indicates wrong resolution)
             if (CONFIG.DEBUG_MODE && level > this.minimapMaxLevel && canvasScaleFactor < 0.5) {
