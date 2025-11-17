@@ -3079,6 +3079,39 @@
                 window.pageStreamerRef = null;
               }
 
+              // 5. Clean up all global window variables that hold references
+              console.log('[Memory] Clearing global window variables');
+              window.viewer = null;
+              window.viewerReady = false;
+              window.tilesFullyLoaded = false;
+
+              // Clean up diagnostics objects (these contain closures to old instances)
+              if (window.__PDFGridDiagnostics) {
+                window.__PDFGridDiagnostics = null;
+              }
+
+              // Clean up debug tracking objects
+              window.__parallelRenderStats = null;
+              window.__L0TileGeneration = null;
+              window.__tileDebugLog = null;
+              window.__L0OnDemandTracking = null;
+              window.__L0OnDemandSkipped = null;
+              window.__drawPageDebug = null;
+              window.__tileCacheDebug = null;
+
+              // Clean up grid dimension globals
+              window.gridPageWidth = null;
+              window.gridPageHeight = null;
+              window.gridSize = null;
+
+              // Clean up function references (closures)
+              window.analyzePeriodicityPatterns = null;
+              window.osdShowNavigator = null;
+
+              // Force a small delay to allow cleanup to propagate before allocating new memory
+              // This helps the browser's garbage collector identify unreferenced objects
+              await new Promise(resolve => setTimeout(resolve, 50));
+
               // Now set up new PDF
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
