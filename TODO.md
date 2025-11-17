@@ -14,7 +14,7 @@ Merge STOP button with LOAD buttons like modern browser (combined stop/reload bu
 
 On mobile, increase pan inertia (flickMomentum)
 
-When input field is cleared and blank value submitted, clear URL params and go to home screen
+Handle draw errors gracefully - improve error handling for canvas draw operations that fail
 
 Smartly harmonize home screen text with help screen text to include attribution, and do not display "drag & drop" on mobile
 
