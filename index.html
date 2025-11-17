@@ -153,7 +153,7 @@
           OSD_VISIBILITY_RATIO: 0.01, // 1% of grid must remain visible (allows very deep zoom even in large documents)
 
           // Storage
-          STORAGE_EXPIRY_DAYS: 7, // Auto-delete stored local PDFs after N days
+          STORAGE_EXPIRY_DAYS: 0.042, // Auto-delete stored local PDFs after N days (~1 hour for refresh persistence)
 
           // UI
           BACKGROUND_COLOR: '#1f2937'
@@ -3539,6 +3539,7 @@
 
           const loadPDFFromURL = async (url, skipHistory = false) => {
             loadingCancelledRef.current = false; // Reset cancel flag
+            setShowHelp(false); // Close help panel when loading starts
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile({ name: url }); // Store URL as "file" for display
@@ -3582,6 +3583,7 @@
             if (!file) return;
 
             loadingCancelledRef.current = false; // Reset cancel flag
+            setShowHelp(false); // Close help panel when loading starts
             setIsLoading(true);
             setLoadingStatus('Loading PDF...');
             setPdfFile(file);
@@ -3597,13 +3599,14 @@
               const pdf = await PDFUtils.loadPDFFromFile(file);
               await loadPDF(pdf, file.name);
 
-              // Save to storage only when using file:// protocol
-              // When served (http://), URL parameters provide persistence
-              if (window.location.protocol === 'file:') {
-                const fileData = await file.arrayBuffer();
-                pdfFileSizeRef.current = fileData.byteLength; // Track PDF file size
-                await PDFStorage.save(fileData, file.name);
-              }
+              // Save to storage for persistence across refreshes
+              // Uses sessionStorage (clears on tab close) with IndexedDB fallback
+              const fileData = await file.arrayBuffer();
+              pdfFileSizeRef.current = fileData.byteLength; // Track PDF file size
+              await PDFStorage.save(fileData, file.name);
+
+              // Add ?pdf= parameter to URL for easy sharing/bookmarking
+              URLManager.replaceState('pdf', file.name);
             } catch (error) {
               if (error.message === 'Loading cancelled by user') {
                 console.log('Loading cancelled');
@@ -4207,7 +4210,7 @@
 
                         <div>
                           <h3 className="font-semibold text-white mb-2">Loading Data</h3>
-                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?pdf=natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?url=https://dn720003.ca.archive.org/0/items/taleofgingerpick0000pott/taleofgingerpick0000pott.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
+                          <p>A demo PDF may already be loaded. <br /> Try inspecting something big, like a <a href="?pdf=demo/natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>magazine</a>, <a href="?pdf=demo/ginger-pickles.pdf" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>book</a>, or <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline" onClick={() => setShowHelp(false)}>academic publication</a>!</p>
                           <ul className="list-disc list-inside space-y-1">
                             <li><strong>From URL:</strong> Enter a URL and click "Open URL" (or press Enter).</li>
                             <li><strong>Remote Parameter:</strong> Add <code className="bg-gray-700 px-1 rounded">?url=https://example.com/file.pdf</code> to the page URL.</li>
@@ -4291,9 +4294,9 @@
                       <p className="text-sm mt-2">This app is a single HTML file. Save it to your device and open to run "offline." <i>Serve</i> it from your device for improved functionality, such as auto-loading files with ?pdf parameter.</p>
                       <p className="text-sm mt-4">
                         <span className="text-gray-500">Try an example: </span>
-                        <a href="?pdf=natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline">magazine</a>
+                        <a href="?pdf=demo/natgeo-1969-05.pdf" className="text-blue-400 hover:text-blue-300 underline">magazine</a>
                         {', '}
-                        <a href="?url=https://dn720003.ca.archive.org/0/items/taleofgingerpick0000pott/taleofgingerpick0000pott.pdf" className="text-blue-400 hover:text-blue-300 underline">book</a>
+                        <a href="?pdf=demo/ginger-pickles.pdf" className="text-blue-400 hover:text-blue-300 underline">book</a>
                         {', or '}
                         <a href="?url=https://utoronto.scholaris.ca/server/api/core/bitstreams/d72537ff-052e-4d5a-b9db-0a63438e8d4e/content" className="text-blue-400 hover:text-blue-300 underline">academic publication</a>
                       </p>
@@ -4344,15 +4347,19 @@
 
                   return (
                     <div
-                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 p-2 sm:p-3 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md max-h-[80vh] overflow-y-auto"
+                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md max-h-[80vh] flex flex-col"
                       style={{
                         backgroundColor: 'rgba(17, 24, 39, 0.90)',
                         backdropFilter: 'blur(8px)'
                       }}
                     >
-                      {/* Header with RESET and close buttons */}
-                      <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-700">
-                        <div className="font-bold text-yellow-400 text-xs sm:text-sm">Debug Panel</div>
+                      {/* Header with RESET and close buttons - STICKY */}
+                      <div className="flex justify-between items-center p-2 sm:p-3 pb-2 border-b border-gray-700 sticky top-0 z-10"
+                           style={{
+                             backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                             backdropFilter: 'blur(8px)'
+                           }}>
+                        <div className="font-bold text-yellow-400 text-xs sm:text-sm">PDF Grid v{CONFIG.VERSION} Debug</div>
                         <div className="flex gap-2 items-center">
                           <button
                             onClick={handleReset}
@@ -4371,8 +4378,10 @@
                         </div>
                       </div>
 
+                      {/* Scrollable content area */}
+                      <div className="overflow-y-auto p-2 sm:p-3 pt-0">
                       {/* Page counter */}
-                      <div className="mb-2 pb-2 border-b border-gray-700 text-[9px] sm:text-[10px]">
+                      <div className="mb-2 pb-2 border-b border-gray-700 text-[9px] sm:text-[10px] mt-2">
                         <div><span className="text-gray-400">Pages:</span> <span className="text-white font-bold">{currentPage}</span></div>
                         {memoryStats && (
                           <div className="text-gray-400 mt-0.5">
@@ -4789,6 +4798,7 @@
                           <div className="pl-2 text-white">iOS: {isIOSSafari ? 'YES' : 'NO'}, Debug: {CONFIG.DEBUG_MODE ? 'ON' : 'OFF'}</div>
                         </div>
                       </div>
+                      </div> {/* End scrollable content area */}
                     </div>
                   );
                 })()}
