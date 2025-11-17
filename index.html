@@ -3099,7 +3099,17 @@
               // 1. Destroy old OpenSeadragon viewer
               if (osdViewerRef.current) {
                 console.log('[Memory] Destroying old OpenSeadragon viewer');
-                osdViewerRef.current.destroy();
+                try {
+                  // CRITICAL: Remove ALL event handlers before destroying
+                  // Event handlers create closures that prevent GC
+                  if (osdViewerRef.current.removeAllHandlers) {
+                    osdViewerRef.current.removeAllHandlers();
+                  }
+                  // Destroy the viewer
+                  osdViewerRef.current.destroy();
+                } catch (e) {
+                  console.error('[Memory] Error destroying viewer:', e);
+                }
                 osdViewerRef.current = null;
                 window.osdViewerRef = null;
               }
@@ -3157,9 +3167,11 @@
               window.analyzePeriodicityPatterns = null;
               window.osdShowNavigator = null;
 
-              // Force a small delay to allow cleanup to propagate before allocating new memory
-              // This helps the browser's garbage collector identify unreferenced objects
-              await new Promise(resolve => setTimeout(resolve, 50));
+              // Force a delay to allow cleanup to propagate and GC to run before allocating new memory
+              // This helps the browser's garbage collector identify and collect unreferenced objects
+              // Increased from 50ms to 500ms to give GC more time for large PDFs
+              console.log('[Memory] Waiting 500ms for garbage collection...');
+              await new Promise(resolve => setTimeout(resolve, 500));
 
               // Now set up new PDF
               setNumPages(pdf.numPages);
