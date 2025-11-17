@@ -605,17 +605,21 @@
             // iOS: Conservative limit due to memory constraints
             lowResSize = Math.min(numPages, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW);
           } else {
-            // Desktop: Respect configured limit for bounded memory
-            lowResSize = CONFIG.PAGE_CACHE_MAX_SIZE_LOW;
+            // Desktop: Scale cache based on PDF size for complete L0/L1/L2 tiles
+            // Low-res pages are small (~1-2MB each), safe to cache more
+            const MAX_LOWRES_CACHE = 300; // Absolute cap: ~300-600MB for low-res pages
 
-            // For small PDFs, allow caching all pages (complete minimap immediately)
-            if (numPages <= CONFIG.PAGE_CACHE_MAX_SIZE_LOW) {
+            if (numPages <= MAX_LOWRES_CACHE) {
+              // Small/medium PDFs: Cache all pages for complete minimap tiles
               lowResSize = numPages;
+              if (CONFIG.VERBOSE_LOGGING && numPages > CONFIG.PAGE_CACHE_MAX_SIZE_LOW) {
+                console.log(`[Cache Sizing] Medium PDF (${numPages} pages) - caching all pages for complete L0/L1/L2 tiles`);
+              }
             } else {
-              // For large PDFs, use bounded cache with progressive tile building
-              // Initial L0/L1 tiles will be partial, filled in as pages render
+              // Very large PDFs: Use bounded cache, rely on partial tiles + on-demand
+              lowResSize = MAX_LOWRES_CACHE;
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Cache Sizing] Large PDF (${numPages} pages) - progressive rendering with ${lowResSize}-page cache (no 4GB spike)`);
+                console.log(`[Cache Sizing] Large PDF (${numPages} pages) - bounded cache at ${lowResSize} pages (L0 tiles will be partial)`);
               }
             }
           }
