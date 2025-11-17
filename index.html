@@ -1423,6 +1423,10 @@
                   console.log('[TileStreamer] Forcing tile redraw after on-demand page renders');
                 }
                 window.viewer.forceRedraw();
+                // Also redraw navigator/minimap to show updated tiles
+                if (window.viewer.navigator) {
+                  window.viewer.navigator.forceRedraw();
+                }
               }
               this.redrawTimeout = null;
             }, 30);
@@ -2386,8 +2390,11 @@
 
             // Detect small phone and hide navigator on mobile
             const isSmallPhone = this.isTouchDevice();
-            const showNavigator = !isSmallPhone;
-            window.osdShowNavigator = showNavigator; // Store for later use
+            const shouldShowNavigator = !isSmallPhone;
+            window.osdShowNavigator = shouldShowNavigator; // Store for later use
+
+            // Use forceShowNavigator parameter if provided, otherwise use device detection
+            const showNavigator = forceShowNavigator !== undefined ? forceShowNavigator : shouldShowNavigator;
 
             // Adjust maxZoomPixelRatio for high DPI displays (Retina, etc.)
             // This ensures same zoom depth regardless of screen pixel density
@@ -2395,7 +2402,7 @@
 
             if (CONFIG.VERBOSE_LOGGING) {
               console.log(`Grid size: ${gridSize}×${gridSize}, minZoomImageRatio: ${minZoomImageRatio.toFixed(3)}`);
-              console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'enabled' : 'hidden (mobile)'}`);
+              console.log(`Small phone: ${isSmallPhone}, Navigator: ${showNavigator ? 'enabled' : 'deferred/hidden'}`);
               console.log(`Device pixel ratio: ${devicePixelRatio}`);
             }
 
@@ -2621,6 +2628,9 @@
             if (window.viewer && window.viewer.drawer) {
               window.viewer.drawer.debugMode = showTileBorders;
               window.viewer.forceRedraw();
+              if (window.viewer.navigator) {
+                window.viewer.navigator.forceRedraw();
+              }
             }
           }, [showTileBorders]);
 
@@ -3012,15 +3022,13 @@
                 }
               }
 
-              // Phase 2: Render low-res pages needed for initial viewport (calculated dynamically)
-              // v1.8: Calculate which pages are visible/needed in initial view
-              // Note: Separate low/high-res caches prevent eviction conflicts
-              let initialLowResCount = 0;
+              // Phase 2: Get page dimensions only (minimal blocking)
+              // All low-res rendering deferred to background for fast viewer init
               if (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual') {
-                // If we skipped Phase 1, we need to render at least one low-res page to get dimensions
+                // Only render page 1 if needed to get dimensions
                 if (!pageWidth) {
                   if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`Rendering page 1 (low-res) to get dimensions...`);
+                    console.log(`[Phase 2] Rendering page 1 (low-res) to get dimensions...`);
                   }
                   await pageStreamer.renderPage(1, 'low');
                   const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
@@ -3028,77 +3036,21 @@
                   pageHeight = firstLowRes.height;
                 }
 
-                setLoadingStatus('Rendering minimap...');
-                const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
-
                 if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`Rendering ${initialLowResPages.length} low-res pages for initial viewport coverage...`);
+                  console.log(`[Phase 2] Skipping initial viewport rendering - all low-res pages will render in background`);
                 }
-                initialLowResCount = initialLowResPages.length;
-                await pageStreamer.renderBatch(
-                  initialLowResPages,
-                  'low',
-                  20,
-                  (current, total) => {
-                    setPagesLoaded(current);
-                    setLoadingStatus(`Rendering minimap (${current}/${initialLowResCount})...`);
-                  }
-                );
               } else {
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[Resolution Mode] Skipping Phase 2 (low-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
                 }
               }
 
-              // Phase 3: Render ALL remaining pages BEFORE viewer initialization
-              // Complete all page rendering NOW to avoid L0 tile issues
-              // Use same fast batch approach as initial rendering
-              // PERFORMANCE: Skip for large PDFs (>100 pages) to avoid blocking viewer initialization
-              const shouldSkipPhase3 = pdf.numPages > CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD;
-
-              if (CONFIG.UPFRONT_RENDERING_ENABLED && !shouldSkipPhase3 && (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual')) {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Upfront Rendering] ENABLED - Rendering all remaining low-res pages before viewer starts`);
-                }
-                const remainingPages = [];
-                for (let i = 1; i <= pdf.numPages; i++) {
-                  if (!pageStreamer.hasPage(i, 'low')) {
-                    remainingPages.push(i);
-                  }
-                }
-
-                if (remainingPages.length > 0) {
-                  setLoadingStatus(`Rendering remaining ${remainingPages.length} pages...`);
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`  Rendering remaining ${remainingPages.length} low-res pages with fast batching...`);
-                  }
-                  await pageStreamer.renderBatch(
-                    remainingPages,
-                    'low',
-                    20,  // Same batch size as initial rendering (fast!)
-                    (current, total) => {
-                      setLoadingStatus(`Rendering minimap (${initialLowResCount + current}/${pdf.numPages})...`);
-                    }
-                  );
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`  All pages rendered!`);
-                  }
-                }
-              } else if (shouldSkipPhase3) {
-                console.log(`[Upfront Rendering] SKIPPED - PDF has ${pdf.numPages} pages (threshold: ${CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD})`);
-                console.log(`  Viewer will open immediately. Minimap pages will render on-demand as you pan/zoom.`);
-                console.log(`  This prevents ${pdf.numPages - initialLowResCount} pages from blocking initialization (~${((pdf.numPages - initialLowResCount) * 10 / 1000).toFixed(1)}s saved!)`);
-              } else if (!CONFIG.UPFRONT_RENDERING_ENABLED) {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Upfront Rendering] DISABLED - Skipping Phase 3 (remaining pages will render on-demand)`);
-                }
-              } else {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Upfront Rendering] Skipping Phase 3 - resolution mode is '${CONFIG.RESOLUTION_MODE}' (low-res not needed)`);
-                }
+              // Phase 3: SKIPPED - All low-res rendering moved to background after viewer init
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Phase 3] Skipped - all low-res rendering deferred to background for fast viewer initialization`);
               }
 
-              // Phase 4: Initialize viewer (user can interact, all pages ready!)
+              // Phase 4: Initialize viewer (user can interact immediately!)
               setLoadingStatus('Initializing viewer...');
 
               // CRITICAL: Clear tile cache before initializing viewer
@@ -3115,41 +3067,126 @@
                 }
               }
 
-              initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              // Initialize viewer WITH navigator (will recreate TiledImage when pages ready)
+              initializeViewer(pdf.numPages, pageWidth, pageHeight, true);
 
-              // CRITICAL: When Phase 3 is skipped (large PDFs), many pages are still rendering
-              // Wait for initial renders to complete, then invalidate tiles to ensure fresh display
-              if (shouldSkipPhase3) {
-                // Give renders time to complete (async, non-blocking)
-                setTimeout(async () => {
-                  // Wait up to 10 seconds for renderingInProgress to mostly clear
-                  const maxWait = 10000;
-                  const startTime = Date.now();
-                  let lastSize = pageStreamer.renderingInProgress.size;
+              // Background: Render remaining low-res pages, then add navigator when ready
+              setTimeout(async () => {
+                const shouldShowNavigator = window.osdShowNavigator;
 
-                  while (Date.now() - startTime < maxWait && pageStreamer.renderingInProgress.size > 10) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    const currentSize = pageStreamer.renderingInProgress.size;
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log('[Background] Starting low-res rendering for navigator/minimap...');
+                }
 
-                    // If no progress in 2 seconds, stop waiting
-                    if (currentSize === lastSize) {
-                      break;
-                    }
-                    lastSize = currentSize;
+                // Render all remaining low-res pages
+                const remainingPages = [];
+                for (let i = 1; i <= pdf.numPages; i++) {
+                  if (!pageStreamer.hasPage(i, 'low')) {
+                    remainingPages.push(i);
+                  }
+                }
+
+                // Create progress overlay on navigator
+                let overlayDiv = null;
+                const navigatorElement = document.querySelector('.navigator');
+                if (navigatorElement && remainingPages.length > 0) {
+                  overlayDiv = document.createElement('div');
+                  overlayDiv.style.cssText = `
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(31, 41, 55, 0.9);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-direction: column;
+                    gap: 8px;
+                    z-index: 1000;
+                    font-size: 12px;
+                    color: white;
+                  `;
+                  overlayDiv.innerHTML = `
+                    <div style="width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    <div id="nav-progress-text">Rendering minimap...</div>
+                  `;
+                  navigatorElement.appendChild(overlayDiv);
+
+                  // Add spinner animation
+                  const style = document.createElement('style');
+                  style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+                  document.head.appendChild(style);
+                }
+
+                if (remainingPages.length > 0) {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background] Rendering ${remainingPages.length} remaining low-res pages...`);
                   }
 
-                  // Clear tile cache and force redraw to show completed pages
-                  if (window.tileStreamerRef && window.viewer) {
-                    const clearedTiles = window.tileStreamerRef.tileCache.size;
-                    window.tileStreamerRef.tileCache.clear();
-                    window.viewer.forceRedraw();
+                  await pageStreamer.renderBatch(
+                    remainingPages,
+                    'low',
+                    20,
+                    (current, total) => {
+                      // Update progress overlay
+                      const progressText = document.getElementById('nav-progress-text');
+                      if (progressText) {
+                        const percent = Math.round((current / remainingPages.length) * 100);
+                        progressText.textContent = `Rendering minimap ${percent}%`;
+                      }
 
-                    if (CONFIG.VERBOSE_LOGGING) {
-                      console.log(`[Post-Init] Cleared ${clearedTiles} tiles and refreshed viewer after initial renders completed`);
+                      if (CONFIG.VERBOSE_LOGGING && current % 20 === 0) {
+                        console.log(`[Background] Progress: ${current}/${remainingPages.length} pages`);
+                      }
                     }
+                  );
+                }
+
+                if (CONFIG.VERBOSE_LOGGING) {
+                  const finalCacheStats = pageStreamer.getCacheStats();
+                  console.log('[Background] All low-res pages rendered. Refreshing viewer...');
+                  console.log(`[Background] Cache status: low-res ${finalCacheStats.low}/${pdf.numPages} pages`);
+                }
+
+                // Recreate main viewer TiledImage (should cascade to navigator)
+                if (window.viewer && window.tileStreamerRef) {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log('[Background] Recreating viewer TiledImage with complete grid...');
                   }
-                }, 100);
-              }
+
+                  // Save current viewport state
+                  const currentBounds = window.viewer.viewport.getBounds();
+
+                  // Remove old TiledImage from main viewer
+                  window.viewer.world.removeAll();
+
+                  // Add fresh TiledImage with complete page coverage
+                  window.viewer.addTiledImage({
+                    tileSource: window.tileStreamerRef.getOSDConfig(),
+                    success: () => {
+                      // Restore viewport position
+                      window.viewer.viewport.fitBounds(currentBounds, true);
+
+                      // Remove progress overlay
+                      if (overlayDiv && overlayDiv.parentNode) {
+                        overlayDiv.parentNode.removeChild(overlayDiv);
+                      }
+
+                      if (CONFIG.VERBOSE_LOGGING) {
+                        console.log('[Background] Viewer TiledImage recreated with complete grid!');
+                      }
+                    },
+                    error: (event) => {
+                      console.error('[Background] Failed to recreate viewer TiledImage:', event);
+                      // Remove overlay even on error
+                      if (overlayDiv && overlayDiv.parentNode) {
+                        overlayDiv.parentNode.removeChild(overlayDiv);
+                      }
+                    }
+                  });
+                }
+              }, 100);
 
               // Note: window.viewerReady is set in the viewer's 'open' event handler
               setLoadingStatus('');
@@ -3159,8 +3196,8 @@
                 const cacheStats = pageStreamer.getCacheStats();
                 console.log(`Initial rendering complete:`);
                 console.log(`  High-res: ${priorityPages.length}/${pdf.numPages} pages (priority for detail)`);
-                console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages (ALL pages rendered!)`);
-                console.log(`  Navigator: shown with complete grid`);
+                console.log(`  Low-res: ${cacheStats.low}/${pdf.numPages} pages`);
+                console.log(`  Navigator: deferred (will appear when all low-res pages ready)`);
               }
 
             } catch (error) {
@@ -4438,6 +4475,9 @@
                               if (window.viewer) {
                                 console.log('[Debug] Forcing tile redraw...');
                                 window.viewer.forceRedraw();
+                                if (window.viewer.navigator) {
+                                  window.viewer.navigator.forceRedraw();
+                                }
                               }
                             }}
                             className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-blue-600 hover:bg-blue-700 text-white"
