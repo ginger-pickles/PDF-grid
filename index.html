@@ -491,6 +491,12 @@
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
+              // Release canvas memory before evicting
+              const evictedCanvas = this.cache.get(firstKey);
+              if (evictedCanvas) {
+                evictedCanvas.width = 0;
+                evictedCanvas.height = 0;
+              }
               this.cache.delete(firstKey);
             }
             this.cache.set(key, value);
@@ -513,6 +519,18 @@
           }
 
           clear() {
+            // Release canvas pixel buffers before clearing cache
+            let canvasCount = 0;
+            for (const canvas of this.cache.values()) {
+              if (canvas && canvas.width !== undefined) {
+                canvas.width = 0;
+                canvas.height = 0;
+                canvasCount++;
+              }
+            }
+            if (CONFIG.VERBOSE_LOGGING && canvasCount > 0) {
+              console.log(`[PageCache] Released ${canvasCount} canvas pixel buffers`);
+            }
             this.cache.clear();
           }
 
@@ -1088,6 +1106,8 @@
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[TileCache] EVICT: ${evictKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
+              // Explicitly null the data URL to help GC
+              this.cache.set(evictKey, null);
               this.cache.delete(evictKey);
             }
             this.cache.set(key, value);
@@ -1144,6 +1164,15 @@
           }
 
           clear() {
+            // Explicitly null all data URLs to help GC release memory
+            let tileCount = 0;
+            for (const key of this.cache.keys()) {
+              this.cache.set(key, null);
+              tileCount++;
+            }
+            if (CONFIG.VERBOSE_LOGGING && tileCount > 0) {
+              console.log(`[TileCache] Nulled ${tileCount} data URLs before clearing`);
+            }
             this.cache.clear();
           }
         }
