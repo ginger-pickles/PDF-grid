@@ -1119,6 +1119,9 @@
 
             debug('URLManager.pushState:', { type, value, newUrl });
             window.history.pushState(state, '', newUrl);
+
+            // Dispatch custom event to notify listeners of URL change
+            window.dispatchEvent(new Event('urlchange'));
           },
 
           /**
@@ -1132,6 +1135,9 @@
 
             debug('URLManager.replaceState:', { type, value, newUrl });
             window.history.replaceState(state, '', newUrl);
+
+            // Dispatch custom event to notify listeners of URL change
+            window.dispatchEvent(new Event('urlchange'));
           },
 
           /**
@@ -2830,7 +2836,9 @@
             localStorage.setItem('pdfgrid_tile_borders', JSON.stringify(showTileBorders));
           }, [showTileBorders]);
 
-          // Sync debug panel state with URL parameter
+          // Bidirectional sync: state ↔ URL parameter (URL is authoritative source of truth)
+
+          // 1. State changes → update URL (user toggles debug panel)
           React.useEffect(() => {
             const params = new URLSearchParams(window.location.search);
             const currentDebugParam = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
@@ -2847,6 +2855,30 @@
               window.history.replaceState({}, '', newUrl);
             }
           }, [showDebug]);
+
+          // 2. URL changes → update state (browser navigation, PDF loads, external URL changes)
+          React.useEffect(() => {
+            const syncStateFromURL = () => {
+              const params = new URLSearchParams(window.location.search);
+              const currentDebugParam = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
+
+              // Update state to match URL if they differ
+              if (showDebug !== currentDebugParam) {
+                setShowDebug(currentDebugParam);
+              }
+            };
+
+            // Listen for popstate (browser back/forward) and URLManager updates
+            window.addEventListener('popstate', syncStateFromURL);
+
+            // Custom event for when URLManager updates the URL
+            window.addEventListener('urlchange', syncStateFromURL);
+
+            return () => {
+              window.removeEventListener('popstate', syncStateFromURL);
+              window.removeEventListener('urlchange', syncStateFromURL);
+            };
+          }, [showDebug]); // Re-establish listener if showDebug changes
 
           // Auto-load PDF on mount
           // Separated concerns: URL parameters always work, config auto-load is optional
