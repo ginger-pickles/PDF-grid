@@ -151,6 +151,7 @@
           OSD_MAX_ZOOM: 100, // Allow very deep zoom into page details
           OSD_MAX_ZOOM_PIXEL_RATIO: 256.0, // Allow extremely deep zoom (will show pixelation but enables detailed exploration)
           OSD_VISIBILITY_RATIO: 0.01, // 1% of grid must remain visible (allows very deep zoom even in large documents)
+          OSD_MAX_IMAGE_CACHE: 0, // Disable OSD's image cache to prevent stale tiles (0 = disabled, 20 = default)
 
           // Storage
           STORAGE_EXPIRY_DAYS: 0.042, // Auto-delete stored local PDFs after N days (~1 hour for refresh persistence)
@@ -2920,10 +2921,7 @@
               homeFillsViewer: false,
               immediateRender: true,
               preload: true,
-              maxImageCacheCount: 20, // Small cache to preserve successful tiles, prevent serving degraded regenerations
-              // Fallback options if this doesn't work:
-              // - Option 2: Throttle/dedupe L0 tile generation requests
-              // - Option 3: Delay L0 generation until page cache is complete
+              maxImageCacheCount: CONFIG.OSD_MAX_IMAGE_CACHE, // 0 = disabled to prevent stale tiles after healing
               zoomPerScroll: 1.5, // Increase scroll wheel sensitivity (default: 1.2)
               // Ensure touch gestures have same zoom limits as desktop
               gestureSettingsMouse: {
