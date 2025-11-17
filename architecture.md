@@ -1,6 +1,23 @@
 # PDF Grid Viewer - Architecture
 
-## System Overview
+⚠️ **WARNING: This document is OUTDATED (last updated v1.7.1, current version is v1.9.6+)**
+
+**This architecture document describes an older version of the system. Many implementation details have changed:**
+- PageStreamer/TileStreamer architecture has evolved significantly
+- Rendering strategies have been updated (see CHANGELOG.md for v1.8.0-v1.9.6 changes)
+- Memory management and caching strategies have been enhanced
+- New features added: on-demand rendering, predictive rendering, parallel rendering
+
+**For current implementation details, refer to:**
+- `CLAUDE.md` - Comprehensive guide with current bug analysis
+- `CHANGELOG.md` - Complete version history with implementation details
+- `index.html` - Source of truth for current architecture
+
+**This document is preserved for historical reference only.**
+
+---
+
+## System Overview (as of v1.7.1)
 
 The PDF Grid Viewer is a single-page application that renders PDF pages in a staggered diagonal grid pattern, enabling users to explore document structure and patterns through deep zoom navigation.
 

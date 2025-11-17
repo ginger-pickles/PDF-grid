@@ -8,7 +8,6 @@
 
 ## INTERFACE
 
-Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
 
 Debug Panel should be shown if button clicked, even when no PDF loaded
 
@@ -49,7 +48,6 @@ Render low-res tiles for minimap (0.X scale) in clever order; and substitute nea
 
 Render screen-res tiles for deep zoom (X.0 scale)) more cleverly. OSD view-aware rendering.
 
-Optimize or add distinct caches for distinct tasks, as improves performance.
 
 **Investigate tile cache generation mechanism effectiveness** - Current implementation invalidates entire tile cache every 5 pages during background loading by incrementing cacheGeneration counter. This forces regeneration of ALL tiles (even unaffected ones) and leaves stale generation tiles in cache until LRU eviction. Investigate: (1) Add diagnostics to measure tiles regenerated per invalidation cycle, (2) Track cache memory usage (stale vs active generation tiles), (3) Compare full cache invalidation vs selective invalidation (only tiles affected by newly loaded pages), (4) Determine optimal invalidation frequency (currently every 5 pages). Goal: Determine if generation counter improves progressive loading or just creates unnecessary churn. See index.html:1024, 1128, 1846-1850 for implementation.
 
@@ -76,7 +74,7 @@ Incorporate external libraries somehow rather than pulling from wherever they co
 ## FUNCTIONALITY
 
 **Improve grid layout for even-numbered page counts** 
-For an even-number of pages, an extra row and column as follows:
+For an even-number of pages, an extra column as follows:
 0 0 1 2 3
 0 1 2 3 4
 1 2 3 4 0
@@ -106,5 +104,10 @@ Support annotating PDFs (long horizon)
 
 ## DOCUMENTATION
 
-Review and purge obsolete content from documentation - Go through TODO.md, notes.md, and code comments to remove outdated items, completed tasks not marked done, and superseded implementation details. Update version references, remove dead links, consolidate duplicate information.
+**[COMPLETED 2025-11-17]** Documentation cleanup and consolidation:
+- ✅ Purged obsolete files: PROGRESSIVE_LOADING_NOTES.md, SELECTIVE_INVALIDATION_ATTEMPTS.md, PLAN.md
+- ✅ Added OUTDATED warning to architecture.md (v1.7.1 content, current is v1.9.6+)
+- ✅ Updated CLAUDE.md with comprehensive bug/optimization analysis (25 bugs, 23 optimizations)
+- ✅ Pruned notes.md to remove obsolete sections and update implementation status
+- ✅ Verified README.md, CHANGELOG.md, TESTING.md are current
 
