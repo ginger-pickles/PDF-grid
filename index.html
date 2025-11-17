@@ -290,48 +290,10 @@
           },
 
           /**
-           * Render a single PDF page to canvas with smart scaling for mixed-size PDFs
-           *
-           * @param {Object} page - PDF.js page object
-           * @param {number} scale - Base render scale (e.g., CONFIG.PDF_RENDER_SCALE)
-           * @param {number} targetWidth - Target width for grid layout (modal dimension)
-           * @param {number} targetHeight - Target height for grid layout (modal dimension)
-           * @returns {Canvas} Rendered canvas scaled to fit target dimensions
+           * Render a single PDF page to canvas
            */
-          async renderPageToCanvas(page, scale = CONFIG.PDF_RENDER_SCALE, targetWidth = null, targetHeight = null) {
-            const baseViewport = page.getViewport({ scale: 1.0 });
-            const actualWidth = baseViewport.width;
-            const actualHeight = baseViewport.height;
-
-            let renderScale = scale;
-
-            // If target dimensions provided, check if page needs scaling to fit
-            if (targetWidth && targetHeight) {
-              const widthRatio = actualWidth / targetWidth;
-              const heightRatio = actualHeight / targetHeight;
-
-              // Only scale down if page is significantly larger (>10% in either dimension)
-              const needsScaling = widthRatio > 1.1 || heightRatio > 1.1;
-
-              if (needsScaling) {
-                // Scale down to fit grid cell, preserving aspect ratio
-                // Use the more restrictive dimension to ensure entire page fits
-                const scaleFactor = Math.min(targetWidth / actualWidth, targetHeight / actualHeight);
-                renderScale = scale * scaleFactor;
-
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Smart Scaling] Page ${page.pageNumber}: ${actualWidth.toFixed(0)}×${actualHeight.toFixed(0)} → scaled by ${scaleFactor.toFixed(2)}× to fit ${targetWidth.toFixed(0)}×${targetHeight.toFixed(0)} grid cell`);
-                }
-              } else if (widthRatio < 0.9 || heightRatio < 0.9) {
-                // Page is smaller than modal - could scale up, but for now just log it
-                if (CONFIG.DEBUG_MODE) {
-                  console.log(`[Smart Scaling] Page ${page.pageNumber}: ${actualWidth.toFixed(0)}×${actualHeight.toFixed(0)} is smaller than modal ${targetWidth.toFixed(0)}×${targetHeight.toFixed(0)} (kept at original size)`);
-                }
-              }
-            }
-
-            // Render at calculated scale
-            const viewport = page.getViewport({ scale: renderScale });
+          async renderPageToCanvas(page, scale = CONFIG.PDF_RENDER_SCALE) {
+            const viewport = page.getViewport({ scale });
 
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
@@ -484,91 +446,6 @@
             }
 
             return { lowResCanvases, highResCanvases };
-          },
-
-          /**
-           * Detect modal (most common) page dimensions by sampling representative pages
-           * Handles PDFs with mixed page sizes (e.g., fold-outs, covers, etc.)
-           *
-           * @param {Object} pdf - PDF.js document object
-           * @returns {Object} { width, height, sampleCount, dimensionMap }
-           */
-          async detectModalDimensions(pdf) {
-            const totalPages = pdf.numPages;
-
-            // Sample representative pages across the document
-            // For small PDFs, sample all pages; for large PDFs, sample strategically
-            const samplePages = new Set([1]); // Always include page 1
-
-            if (totalPages <= 10) {
-              // Small PDF: sample all pages
-              for (let i = 1; i <= totalPages; i++) {
-                samplePages.add(i);
-              }
-            } else {
-              // Large PDF: sample at quartiles and a few extras
-              samplePages.add(Math.floor(totalPages * 0.25));
-              samplePages.add(Math.floor(totalPages * 0.50));
-              samplePages.add(Math.floor(totalPages * 0.75));
-              samplePages.add(totalPages);
-
-              // Add a few random samples for better coverage
-              const randomCount = Math.min(5, totalPages - samplePages.size);
-              for (let i = 0; i < randomCount; i++) {
-                const randomPage = Math.floor(Math.random() * totalPages) + 1;
-                samplePages.add(randomPage);
-              }
-            }
-
-            // Get dimensions for each sample page
-            const dimensions = new Map(); // "{width}x{height}" -> { count, width, height }
-
-            for (const pageNum of samplePages) {
-              const page = await pdf.getPage(pageNum);
-              const viewport = page.getViewport({ scale: 1.0 });
-
-              // Round to nearest pixel to avoid floating-point variations
-              const width = Math.round(viewport.width);
-              const height = Math.round(viewport.height);
-              const key = `${width}x${height}`;
-
-              if (dimensions.has(key)) {
-                dimensions.get(key).count++;
-              } else {
-                dimensions.set(key, { count: 1, width, height });
-              }
-            }
-
-            // Find modal (most common) dimensions
-            let modalDims = null;
-            let maxCount = 0;
-
-            for (const [key, dims] of dimensions.entries()) {
-              if (dims.count > maxCount) {
-                maxCount = dims.count;
-                modalDims = dims;
-              }
-            }
-
-            if (CONFIG.VERBOSE_LOGGING) {
-              console.log(`[Modal Detection] Sampled ${samplePages.size} pages from ${totalPages}-page PDF`);
-              console.log(`  Modal dimensions: ${modalDims.width}×${modalDims.height} (${modalDims.count}/${samplePages.size} samples)`);
-
-              if (dimensions.size > 1) {
-                console.log(`  Found ${dimensions.size} different page sizes:`);
-                for (const [key, dims] of dimensions.entries()) {
-                  const pct = ((dims.count / samplePages.size) * 100).toFixed(0);
-                  console.log(`    ${key}: ${dims.count} pages (${pct}%)`);
-                }
-              }
-            }
-
-            return {
-              width: modalDims.width,
-              height: modalDims.height,
-              sampleCount: samplePages.size,
-              dimensionMap: dimensions
-            };
           }
         };
 
@@ -737,16 +614,12 @@
          * Cache sizes are calculated dynamically based on PDF page count
          */
         class PageStreamer {
-          constructor(pdfDoc, modalWidth = null, modalHeight = null) {
+          constructor(pdfDoc) {
             this.pdfDoc = pdfDoc;
             // Separate caches for low-res and high-res to prevent eviction conflicts
             this.lowResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_LOW);
             this.highResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH);
             this.renderingInProgress = new Map(); // Key: "pageNum_resolution" → Promise
-
-            // Modal dimensions for smart scaling of mixed-size PDFs
-            this.modalWidth = modalWidth;
-            this.modalHeight = modalHeight;
           }
 
           /**
@@ -790,7 +663,7 @@
             const renderPromise = (async () => {
               try {
                 const page = await this.pdfDoc.getPage(pageNum);
-                const canvas = await PDFUtils.renderPageToCanvas(page, scale, this.modalWidth, this.modalHeight);
+                const canvas = await PDFUtils.renderPageToCanvas(page, scale);
                 pageCache.set(key, canvas);
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
@@ -2221,7 +2094,19 @@
           _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
             const { pageWidth, pageHeight, spacing } = this.gridDims;
 
-            // Get page canvas first to determine actual dimensions
+            // Calculate page position in grid
+            const pageLeft = col * (pageWidth + spacing);
+            const pageTop = row * (pageHeight + spacing);
+            const pageRight = pageLeft + pageWidth;
+            const pageBottom = pageTop + pageHeight;
+
+            // Check intersection
+            if (pageRight <= tileLeft || pageLeft >= tileRight ||
+                pageBottom <= tileTop || pageTop >= tileBottom) {
+              return false;
+            }
+
+            // Get page canvas
             const pageNum = this.pattern[row][col];
 
             // Skip blank cells in staggered grid pattern
@@ -2229,13 +2114,9 @@
               return false;
             }
 
-            // Get canvas from PageStreamer cache
+            // Get canvas from PageStreamer cache with conditional fallback
             const pageCache = this.pageStreamer._getPageCache(resolution);
             let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
-
-            // Calculate base grid cell position (modal dimensions)
-            const cellLeft = col * (pageWidth + spacing);
-            const cellTop = row * (pageHeight + spacing);
 
             // Track cache misses and trigger on-demand rendering
             if (!pageCanvas) {
@@ -2350,38 +2231,15 @@
 
             // Debug: Disabled per-page canvas validation
 
-            // Calculate actual page dimensions by fitting canvas aspect ratio within modal bounds
-            // This preserves aspect ratio for odd-sized pages (fold-outs, narrow pages, etc.)
-            const canvasAspectRatio = pageCanvas.width / pageCanvas.height;
-
-            // Fit canvas aspect ratio within modal dimensions
-            // Try width-constrained fit
-            let actualPageWidth = pageWidth;
-            let actualPageHeight = pageWidth / canvasAspectRatio;
-
-            // If height exceeds modal, use height-constrained fit instead
-            if (actualPageHeight > pageHeight) {
-              actualPageHeight = pageHeight;
-              actualPageWidth = pageHeight * canvasAspectRatio;
-            }
-
-            // Calculate canvas scale factor from actual dimensions
-            const canvasScaleFactor = pageCanvas.width / actualPageWidth;
-
-            // Center page within grid cell if dimensions differ from modal
-            const offsetX = (pageWidth - actualPageWidth) / 2;
-            const offsetY = (pageHeight - actualPageHeight) / 2;
-
-            const pageLeft = cellLeft + offsetX;
-            const pageTop = cellTop + offsetY;
-            const pageRight = pageLeft + actualPageWidth;
-            const pageBottom = pageTop + actualPageHeight;
-
             // Calculate intersection rectangle
             const intersectLeft = Math.max(tileLeft, pageLeft);
             const intersectTop = Math.max(tileTop, pageTop);
             const intersectRight = Math.min(tileRight, pageRight);
             const intersectBottom = Math.min(tileBottom, pageBottom);
+
+            // Calculate canvas scale factor
+            // Grid dimensions are based on high-res, but canvas might be low-res
+            const canvasScaleFactor = pageCanvas.width / pageWidth;
 
             // Diagnostic: Warn if scale factor is unexpectedly small (indicates wrong resolution)
             if (CONFIG.DEBUG_MODE && level > this.minimapMaxLevel && canvasScaleFactor < 0.5) {
@@ -3114,14 +2972,8 @@
               // Allow UI to update (show spinner) before heavy rendering starts
               await new Promise(resolve => setTimeout(resolve, 100));
 
-              // Detect modal (most common) page dimensions for smart scaling
-              setLoadingStatus('Analyzing page dimensions...');
-              const modalDims = await PDFUtils.detectModalDimensions(pdf);
-              const pageWidth = modalDims.width;
-              const pageHeight = modalDims.height;
-
-              // Create PageStreamer instance with modal dimensions for smart scaling
-              const pageStreamer = new PageStreamer(pdf, pageWidth, pageHeight);
+              // Create PageStreamer instance
+              const pageStreamer = new PageStreamer(pdf);
               window.pageStreamerRef = pageStreamer; // Store globally for TileStreamer access
 
               // Update cache sizes based on PDF page count
@@ -3132,6 +2984,7 @@
               }
 
               // Phase 1: Render priority high-res pages FIRST
+              let pageWidth, pageHeight;
               let priorityPages = [];
               if (CONFIG.RESOLUTION_MODE === 'high' || CONFIG.RESOLUTION_MODE === 'dual') {
                 priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
@@ -3148,6 +3001,11 @@
                     setLoadingStatus(`Rendering initial view (${current}/${priorityPages.length})...`);
                   }
                 );
+
+                // Get page dimensions from first rendered high-res page
+                const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
+                pageWidth = firstHighRes.width;
+                pageHeight = firstHighRes.height;
               } else {
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
@@ -3159,6 +3017,17 @@
               // Note: Separate low/high-res caches prevent eviction conflicts
               let initialLowResCount = 0;
               if (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual') {
+                // If we skipped Phase 1, we need to render at least one low-res page to get dimensions
+                if (!pageWidth) {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`Rendering page 1 (low-res) to get dimensions...`);
+                  }
+                  await pageStreamer.renderPage(1, 'low');
+                  const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
+                  pageWidth = firstLowRes.width;
+                  pageHeight = firstLowRes.height;
+                }
+
                 setLoadingStatus('Rendering minimap...');
                 const initialLowResPages = GridPattern.calculateInitialViewportPages(pdf.numPages, pageWidth, pageHeight);
 
