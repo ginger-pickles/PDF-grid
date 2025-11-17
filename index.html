@@ -1894,6 +1894,21 @@
               this.stats.tilesRenderedFallback++;
             }
 
+            // CRITICAL: Track tile render status for viewport-based healing
+            // This allows us to query what the user actually sees, not just what's cached
+            if (!this.tileRenderRegistry) this.tileRenderRegistry = new Map();
+            const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, resolution));
+            this.tileRenderRegistry.set(key, {
+              status: allPagesCached ? 'full' : 'fallback',
+              level,
+              x,
+              y,
+              resolution,
+              neededPages,
+              missingPages,
+              timestamp: Date.now()
+            });
+
             if (CONFIG.VERBOSE_LOGGING) {
               const status = allPagesCached ? 'FULL' : 'FALLBACK';
               const cacheStatus = allPagesCached ? 'cached' : 'not cached (will regenerate)';
@@ -2064,6 +2079,86 @@
           }
 
           /**
+           * Query what tiles are currently visible in the viewport
+           * Returns tiles that the user is actually seeing (not just cached)
+           * @returns {Array} Visible tiles with their render status
+           */
+          getVisibleTiles() {
+            if (!window.osdViewerRef) {
+              console.warn('[Viewport Query] OSD viewer not available');
+              return [];
+            }
+
+            const viewer = window.osdViewerRef;
+            const viewport = viewer.viewport;
+
+            // Get current viewport bounds in viewport coordinates
+            const bounds = viewport.getBounds(true);
+            const zoom = viewport.getZoom(true);
+
+            // Convert to image coordinates (our grid coordinates)
+            const tiledImage = viewer.world.getItemAt(0);
+            if (!tiledImage) {
+              console.warn('[Viewport Query] No TiledImage available');
+              return [];
+            }
+
+            const viewportRect = tiledImage.viewportToImageRectangle(bounds);
+
+            // Calculate which zoom level OSD is currently using
+            const containerSize = viewport.getContainerSize();
+            const imageSize = tiledImage.getContentSize();
+            const viewportZoom = viewport.getZoom(true);
+            const currentLevel = Math.max(0, Math.floor(Math.log2(viewportZoom * containerSize.x / imageSize.x)) + this.maxLevel);
+
+            // Determine which tiles cover the visible area at current level
+            const visibleTiles = [];
+            const scale = Math.pow(2, currentLevel);
+            const tileWidth = this.tileSize * scale;
+            const tileHeight = this.tileSize * scale;
+
+            const startX = Math.max(0, Math.floor(viewportRect.x / tileWidth));
+            const startY = Math.max(0, Math.floor(viewportRect.y / tileHeight));
+            const endX = Math.min(Math.ceil((viewportRect.x + viewportRect.width) / tileWidth), Math.ceil(this.gridDims.totalWidth / tileWidth));
+            const endY = Math.min(Math.ceil((viewportRect.y + viewportRect.height) / tileHeight), Math.ceil(this.gridDims.totalHeight / tileHeight));
+
+            // Check render status for each visible tile
+            for (let x = startX; x <= endX; x++) {
+              for (let y = startY; y <= endY; y++) {
+                const tileLeft = x * tileWidth;
+                const tileTop = y * tileHeight;
+                const tileRight = Math.min(tileLeft + tileWidth, this.gridDims.totalWidth);
+                const tileBottom = Math.min(tileTop + tileHeight, this.gridDims.totalHeight);
+
+                const neededPages = this._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
+                const firstPage = Math.min(...neededPages);
+                const lastPage = Math.max(...neededPages);
+                const resolution = currentLevel < 4 ? 'low' : 'high';
+                const key = `${currentLevel}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+
+                // Get render status from registry
+                const renderStatus = this.tileRenderRegistry?.get(key) || {
+                  status: 'unknown',
+                  level: currentLevel,
+                  x, y,
+                  resolution,
+                  neededPages,
+                  missingPages: [],
+                  timestamp: null
+                };
+
+                visibleTiles.push({
+                  key,
+                  ...renderStatus,
+                  isVisible: true
+                });
+              }
+            }
+
+            return visibleTiles;
+          }
+
+          /**
            * Heal incomplete tiles by detecting missing pages and forcing completion
            * This addresses cache pressure scenarios where tiles can't hold all needed pages
            * @param {number[]|null} levels - Which levels to check (default: null = all levels 0 to maxLevel)
@@ -2162,8 +2257,38 @@
               }
             }
 
-            // Trigger viewer refresh if tiles were healed
-            if (report.healed.length > 0) {
+            // CRITICAL: Force OSD to refresh and display new tiles (not stale cached ones)
+            if (report.healed.length > 0 && window.osdViewerRef) {
+              console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
+
+              const viewer = window.osdViewerRef;
+              const tiledImage = viewer.world.getItemAt(0);
+
+              if (tiledImage) {
+                // Strategy 1: Reset coverage (forces OSD to re-request tiles)
+                tiledImage.resetCoverage();
+
+                // Strategy 2: Force immediate redraw
+                viewer.forceRedraw();
+
+                // Strategy 3: Clear OSD's internal tile cache for healed tiles
+                // OSD caches tiles internally and may show stale versions
+                if (tiledImage._tileCache) {
+                  // Access OSD's internal tile cache and remove healed tiles
+                  const cache = tiledImage._tileCache;
+                  if (cache._cachesLoaded) {
+                    for (const healedKey of report.healed) {
+                      // OSD uses different key format - clear entire cache for safety
+                      cache._cachesLoaded = {}; // Nuclear: clear all cached tiles
+                      break; // Only need to do this once
+                    }
+                  }
+                }
+
+                console.log('[Tile Healing] OSD refresh triggered - new tiles should display');
+              }
+
+              // Also schedule our own redraw (debounced)
               this.scheduleRedraw();
             }
 
@@ -4687,6 +4812,23 @@
                   return { error: 'TileStreamer not initialized' };
                 }
                 return await tileStreamer.healIncompleteTiles(levels);
+              },
+              // Query what tiles are currently visible in viewport
+              getVisibleTiles: () => {
+                if (!tileStreamer) {
+                  console.error('[Viewport Query] TileStreamer not available');
+                  return [];
+                }
+                const visible = tileStreamer.getVisibleTiles();
+                console.log(`[Viewport Query] Found ${visible.length} visible tiles`);
+                const incomplete = visible.filter(t => t.status === 'fallback');
+                if (incomplete.length > 0) {
+                  console.log(`[Viewport Query] ${incomplete.length} tiles have missing pages:`);
+                  incomplete.forEach(t => {
+                    console.log(`  ${t.key}: missing ${t.missingPages.length} pages: [${t.missingPages.join(',')}]`);
+                  });
+                }
+                return visible;
               }
             };
 
