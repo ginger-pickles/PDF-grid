@@ -2570,10 +2570,14 @@
               // Signal viewer is fully initialized and ready for testing
               window.viewerReady = true;
 
-              // Apply persisted tile borders setting from localStorage
-              const persistedTileBorders = localStorage.getItem('pdfgrid_tile_borders');
-              if (viewer.drawer && persistedTileBorders) {
-                viewer.drawer.debugMode = JSON.parse(persistedTileBorders);
+              // Apply persisted tile borders setting from localStorage (only if debug panel visible)
+              const urlParams = new URLSearchParams(window.location.search);
+              const isDebugVisible = urlParams.has('debug') && urlParams.get('debug') !== 'false' && urlParams.get('debug') !== '0';
+              if (isDebugVisible) {
+                const persistedTileBorders = localStorage.getItem('pdfgrid_tile_borders');
+                if (viewer.drawer && persistedTileBorders) {
+                  viewer.drawer.debugMode = JSON.parse(persistedTileBorders);
+                }
               }
 
               if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
@@ -2695,10 +2699,20 @@
           });
           const [showVerboseLogging, setShowVerboseLogging] = useState(false);
           const [showTileLabels, setShowTileLabels] = useState(() => {
+            // Only restore from localStorage if debug panel is visible
+            const params = new URLSearchParams(window.location.search);
+            const debugVisible = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
+            if (!debugVisible) return false;
+
             const stored = localStorage.getItem('pdfgrid_tile_labels');
             return stored ? JSON.parse(stored) : false;
           });
           const [showTileBorders, setShowTileBorders] = useState(() => {
+            // Only restore from localStorage if debug panel is visible
+            const params = new URLSearchParams(window.location.search);
+            const debugVisible = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
+            if (!debugVisible) return false;
+
             const stored = localStorage.getItem('pdfgrid_tile_borders');
             return stored ? JSON.parse(stored) : false;
           });
