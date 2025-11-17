@@ -10,7 +10,7 @@
 
 Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
 
-
+Debug Panel should be shown if button clicked, even when no PDF loaded
 
 On mobile, increase pan inertia (flickMomentum)
 
