@@ -16,6 +16,8 @@ On mobile, increase pan inertia (flickMomentum)
 
 Handle draw errors gracefully - improve error handling for canvas draw operations that fail
 
+Continue with canvas compression - explore methods to reduce memory footprint of stored canvases
+
 Smartly harmonize home screen text with help screen text to include attribution, and do not display "drag & drop" on mobile
 
 When demo PDF fails to load (file not present when served), remove ?pdf URL parameter after elegant failure
