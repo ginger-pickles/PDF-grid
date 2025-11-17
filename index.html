@@ -701,6 +701,34 @@
               return await inProgress;
             }
 
+            // CRITICAL THROTTLE: Limit concurrent high-res renders to prevent memory spikes
+            // High-res pages can be 100MB+ each - rendering 50 in parallel = 5GB spike!
+            const MAX_CONCURRENT_HIGHRES = 5; // Max 5 × 100MB = 500MB in-flight
+            if (resolution === 'high') {
+              // Count how many high-res pages are currently rendering
+              let highResInProgress = 0;
+              for (const [k, v] of this.renderingInProgress.entries()) {
+                if (k.endsWith('_high')) {
+                  highResInProgress++;
+                }
+              }
+
+              // If at limit, skip this render (tile will use fallback, retry later)
+              if (highResInProgress >= MAX_CONCURRENT_HIGHRES) {
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[PageStreamer] THROTTLE: Skipping page ${pageNum} high-res (${highResInProgress} already rendering)`);
+                }
+                // Return existing low-res as fallback if available
+                const lowResKey = this._getCacheKey(pageNum, 'low');
+                const lowResCanvas = this.lowResPageCache.get(lowResKey);
+                if (lowResCanvas) {
+                  return lowResCanvas;
+                }
+                // No fallback available - return null (tile will show black)
+                return null;
+              }
+            }
+
             // Start rendering - MUST add to map BEFORE starting async work
             // to avoid race condition where fast renders complete before map.set()
             const scale = resolution === 'low' ? CONFIG.PDF_LOWRES_SCALE : CONFIG.PDF_RENDER_SCALE;
