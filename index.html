@@ -2562,6 +2562,11 @@
               // Signal viewer is fully initialized and ready for testing
               window.viewerReady = true;
 
+              // Apply persisted tile borders setting from localStorage
+              if (viewer.drawer && showTileBorders) {
+                viewer.drawer.debugMode = showTileBorders;
+              }
+
               if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
                 // Debug mode: Show the entire grid at once (fills ~90% of viewport per minZoomImageRatio)
                 viewer.viewport.goHome(true);
