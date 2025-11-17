@@ -1168,9 +1168,10 @@
          * Evicts least recently used tiles when full
          */
         class TileCache {
-          constructor(maxSize = CONFIG.MAX_CACHE_SIZE) {
+          constructor(maxSize = CONFIG.MAX_CACHE_SIZE, onEvict = null) {
             this.cache = new Map();
             this.maxSize = maxSize;
+            this.onEvict = onEvict; // Callback when tiles are evicted
           }
 
           get(key) {
@@ -1205,6 +1206,11 @@
               // Explicitly null the data URL to help GC
               this.cache.set(evictKey, null);
               this.cache.delete(evictKey);
+
+              // Notify registry of eviction
+              if (this.onEvict) {
+                this.onEvict(evictKey);
+              }
             }
             this.cache.set(key, value);
             if (CONFIG.VERBOSE_LOGGING) {
@@ -1478,7 +1484,16 @@
             this.pattern = pattern;
             this.pageStreamer = pageStreamer;
             this.numPages = numPages;
-            this.tileCache = new TileCache();
+
+            // Tile render registry: Track every tile generation for quality inspection
+            // Fresh registry for each PDF - prevents stale entries from previous documents
+            this.tileRenderRegistry = new Map();
+
+            // TileCache with eviction callback to keep registry in sync
+            this.tileCache = new TileCache(CONFIG.MAX_CACHE_SIZE, (evictedKey) => {
+              // Remove evicted tiles from registry to prevent memory leak
+              this.tileRenderRegistry.delete(evictedKey);
+            });
             this.checkedCanvases = new Set(); // Track which pages we've already validated
 
             // Debounced tile refresh: Batch forceRedraw() calls to avoid excessive redraws
@@ -1897,7 +1912,6 @@
 
             // CRITICAL: Track tile render status for viewport-based healing
             // This allows us to query what the user actually sees, not just what's cached
-            if (!this.tileRenderRegistry) this.tileRenderRegistry = new Map();
             const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, resolution));
             this.tileRenderRegistry.set(key, {
               status: allPagesCached ? 'full' : 'fallback',
@@ -2328,6 +2342,17 @@
                       report.healed.push(key);
                       report.byLevel[level].healed++;
                       console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+
+                      // Update registry to reflect successful healing
+                      const registryEntry = this.tileRenderRegistry.get(key);
+                      if (registryEntry && registryEntry.status === 'fallback') {
+                        this.tileRenderRegistry.set(key, {
+                          ...registryEntry,
+                          status: 'full',
+                          missingPages: [],
+                          timestamp: Date.now() // Update timestamp to mark when it was healed
+                        });
+                      }
                     } else {
                       report.failed.push({ key, reason: 'still_not_cached' });
                       report.byLevel[level].failed++;
