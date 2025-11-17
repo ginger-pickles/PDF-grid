@@ -1086,23 +1086,32 @@
 
           /**
            * Generate URL string for given type and value
+           * Preserves existing query parameters (like ?debug) when updating
            * @param {string} type - 'url', 'pdf', or 'clear'
            * @param {string} value - Parameter value
            * @returns {string} Generated URL
            */
           buildURL(type, value) {
             const base = window.location.pathname;
+            const params = new URLSearchParams(window.location.search);
 
             if (type === 'clear' || !value) {
-              return base;
+              // Remove pdf/url but preserve other params (e.g., debug)
+              params.delete('pdf');
+              params.delete('url');
+              return base + (params.toString() ? '?' + params.toString() : '');
             }
 
             if (type === 'url') {
-              return `${base}?url=${encodeURIComponent(value)}`;
+              params.delete('pdf'); // Can't have both url and pdf
+              params.set('url', value);
+              return `${base}?${params.toString()}`;
             }
 
             if (type === 'pdf') {
-              return `${base}?pdf=${encodeURIComponent(value)}`;
+              params.delete('url'); // Can't have both url and pdf
+              params.set('pdf', encodeURIComponent(value));
+              return `${base}?${params.toString()}`;
             }
 
             return base;
