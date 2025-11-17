@@ -2739,6 +2739,7 @@
           const tileStreamerRef = useRef(null);
           const loadingCancelledRef = useRef(false);
           const pdfFileSizeRef = useRef(0); // Track PDF file size in bytes
+          const backgroundTimersRef = useRef([]); // Track background rendering timeouts for cleanup
 
           // Detect touch device using OSDManager
           const isTouchDevice = React.useMemo(() => OSDManager.isTouchDevice(), []);
@@ -2978,6 +2979,12 @@
             // Cleanup function - mark component as unmounted
             return () => {
               mounted = false;
+              // Cancel all background rendering timers on unmount
+              if (backgroundTimersRef.current && backgroundTimersRef.current.length > 0) {
+                console.log(`[Cleanup] Cancelling ${backgroundTimersRef.current.length} background timers on unmount`);
+                backgroundTimersRef.current.forEach(timer => clearTimeout(timer));
+                backgroundTimersRef.current = [];
+              }
             };
           }, []);
 
@@ -3142,6 +3149,13 @@
           const loadPDF = async (pdf, filename = 'PDF', suppressAlerts = false) => {
             try {
               // CRITICAL: Clean up old instances BEFORE loading new PDF to prevent memory leaks
+
+              // 0. Cancel all background rendering timers
+              if (backgroundTimersRef.current && backgroundTimersRef.current.length > 0) {
+                console.log(`[Memory] Cancelling ${backgroundTimersRef.current.length} background timers`);
+                backgroundTimersRef.current.forEach(timer => clearTimeout(timer));
+                backgroundTimersRef.current = [];
+              }
 
               // 1. Destroy old OpenSeadragon viewer
               if (osdViewerRef.current) {
@@ -3480,8 +3494,8 @@
                       // This ensures minimap eventually becomes complete without memory spikes
                       if (pagesDeferred > 0) {
                         // Wait 3 seconds for user to settle, then start slow rendering
-                        setTimeout(() => {
-                          if (!pageStreamer) return; // Component may have unmounted
+                        const initialTimer = setTimeout(() => {
+                          if (!pageStreamer || !backgroundTimersRef.current) return; // Component may have unmounted
 
                           // Collect all pages not yet cached
                           const stillMissing = [];
@@ -3508,7 +3522,7 @@
                           const batchDelay = 2000; // 2 seconds between batches
 
                           const renderNextBatch = async () => {
-                            if (!pageStreamer) return; // Check if still valid
+                            if (!pageStreamer || !backgroundTimersRef.current) return; // Check if still valid
 
                             const startIdx = batchIndex * batchSize;
                             const batch = stillMissing.slice(startIdx, startIdx + batchSize);
@@ -3530,7 +3544,11 @@
                               }
 
                               batchIndex++;
-                              setTimeout(renderNextBatch, batchDelay);
+                              // Store timer ID so it can be cancelled on unmount
+                              const nextTimer = setTimeout(renderNextBatch, batchDelay);
+                              if (backgroundTimersRef.current) {
+                                backgroundTimersRef.current.push(nextTimer);
+                              }
                             } catch (error) {
                               console.error('[Background Continuation] Error rendering batch:', error);
                             }
@@ -3539,6 +3557,9 @@
                           // Start slow rendering
                           renderNextBatch();
                         }, 3000); // Wait 3 seconds before starting
+
+                        // Store initial timer ID for cleanup
+                        backgroundTimersRef.current.push(initialTimer);
                       }
                     },
                     error: (event) => {
