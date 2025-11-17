@@ -485,9 +485,9 @@
             const isUpdate = this.cache.has(key);
             if (isUpdate) {
               this.cache.delete(key);
-            } else if (this.cache.size >= this.maxSize * 0.85) {
-              // Start evicting at 85% capacity to prevent memory spikes during zoom/pan
-              // When many pages are requested at once, this prevents temporary overshoot
+            } else if (this.cache.size >= this.maxSize * 0.95) {
+              // Start evicting at 95% capacity to prevent memory spikes during zoom/pan
+              // Raised from 85% to reduce thrashing - cache sizes now account for full viewport
               // Remove least recently used (first in Map)
               const firstKey = this.cache.keys().next().value;
               if (CONFIG.VERBOSE_LOGGING) {
@@ -623,7 +623,15 @@
           // Calculate high-res cache size
           // Goal: Hold viewport + ahead-of-motion buffer
           // Typically 50-100 pages sufficient for smooth navigation
-          let highResSize = Math.min(100, Math.ceil(numPages * 0.3)); // 30% of pages or 100, whichever is smaller
+          let highResSize;
+          if (numPages <= 20) {
+            // Small PDF in grid layout: ALL pages visible simultaneously at deep zoom
+            // Must cache all pages + buffer to prevent thrashing
+            highResSize = numPages + 5; // +5 buffer for smooth panning
+          } else {
+            // Large PDF: viewport-based caching (user zooms into sections)
+            highResSize = Math.min(100, Math.ceil(numPages * 0.3)); // 30% of pages or 100, whichever is smaller
+          }
 
           // Apply device-specific limits
           if (isIOS) {
