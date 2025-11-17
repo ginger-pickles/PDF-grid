@@ -2513,6 +2513,60 @@
         };
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                           ERROR BOUNDARY                                 ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
+
+        class ErrorBoundary extends React.Component {
+          constructor(props) {
+            super(props);
+            this.state = { hasError: false, error: null, errorInfo: null };
+          }
+
+          static getDerivedStateFromError(error) {
+            return { hasError: true };
+          }
+
+          componentDidCatch(error, errorInfo) {
+            console.error('Error caught by boundary:', error, errorInfo);
+            this.state = { hasError: true, error, errorInfo };
+          }
+
+          render() {
+            if (this.state.hasError) {
+              return (
+                <div className="w-full h-full bg-gray-900 flex items-center justify-center p-4">
+                  <div className="max-w-2xl bg-gray-800 border border-red-500 rounded-lg p-6">
+                    <h1 className="text-2xl font-bold text-red-500 mb-4">Something went wrong</h1>
+                    <p className="text-gray-300 mb-4">
+                      The application encountered an unexpected error. Please refresh the page to try again.
+                    </p>
+                    {CONFIG.DEBUG_MODE && this.state.error && (
+                      <details className="mt-4">
+                        <summary className="cursor-pointer text-gray-400 hover:text-white mb-2">
+                          Error Details (Debug Mode)
+                        </summary>
+                        <pre className="bg-gray-900 p-4 rounded overflow-auto text-xs text-red-400 max-h-64">
+                          {this.state.error.toString()}
+                          {this.state.errorInfo && this.state.errorInfo.componentStack}
+                        </pre>
+                      </details>
+                    )}
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                    >
+                      Refresh Page
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
+            return this.props.children;
+          }
+        }
+
+        // ╔══════════════════════════════════════════════════════════════════════════╗
         // ║                            MAIN COMPONENT                                ║
         // ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -4858,7 +4912,12 @@
           );
         };
 
-        ReactDOM.render(<PDFGridViewer />, document.getElementById('root'));
+        ReactDOM.render(
+          <ErrorBoundary>
+            <PDFGridViewer />
+          </ErrorBoundary>,
+          document.getElementById('root')
+        );
     </script>
 </body>
 </html>
