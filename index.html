@@ -2066,25 +2066,33 @@
           /**
            * Heal incomplete tiles by detecting missing pages and forcing completion
            * This addresses cache pressure scenarios where tiles can't hold all needed pages
-           * @param {number[]} levels - Which levels to check (default: [0, 1, 2, 3])
+           * @param {number[]|null} levels - Which levels to check (default: null = all levels 0 to maxLevel)
            * @returns {Promise<Object>} Healing report with successes and failures
            */
-          async healIncompleteTiles(levels = [0, 1, 2, 3]) {
-            console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')}`);
+          async healIncompleteTiles(levels = null) {
+            // Default to ALL levels if not specified
+            if (!levels) {
+              levels = Array.from({ length: this.maxLevel + 1 }, (_, i) => i);
+            }
+
+            console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.maxLevel})`);
 
             const report = {
               scanned: 0,
               incomplete: [],
               healed: [],
-              failed: []
+              failed: [],
+              byLevel: {} // Track stats per level
             };
 
             // For each level, identify which tiles should exist
             for (const level of levels) {
+              report.byLevel[level] = { scanned: 0, incomplete: 0, healed: 0, failed: 0 };
               const tilesAtLevel = this._identifyRequiredTiles(level);
 
               for (const tileSpec of tilesAtLevel) {
                 report.scanned++;
+                report.byLevel[level].scanned++;
                 const { x, y, key, neededPages, resolution } = tileSpec;
 
                 // Check if tile is cached (complete) or missing (incomplete)
@@ -2105,6 +2113,7 @@
                     missingPages,
                     missingCount: missingPages.length
                   });
+                  report.byLevel[level].incomplete++;
 
                   console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
 
@@ -2124,13 +2133,16 @@
 
                     if (isNowCached) {
                       report.healed.push(key);
+                      report.byLevel[level].healed++;
                       console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
                     } else {
                       report.failed.push({ key, reason: 'still_not_cached' });
+                      report.byLevel[level].failed++;
                       console.warn(`[Tile Healing] ✗ FAILED: ${key} still incomplete after healing attempt`);
                     }
                   } catch (error) {
                     report.failed.push({ key, reason: error.message });
+                    report.byLevel[level].failed++;
                     console.error(`[Tile Healing] ✗ ERROR healing ${key}:`, error);
                   }
                 }
@@ -2138,6 +2150,17 @@
             }
 
             console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
+
+            // Log per-level breakdown
+            if (Object.keys(report.byLevel).length > 0) {
+              console.log('[Tile Healing] Per-level breakdown:');
+              for (const level of levels) {
+                const stats = report.byLevel[level];
+                if (stats.incomplete > 0 || stats.healed > 0 || stats.failed > 0) {
+                  console.log(`  L${level}: scanned=${stats.scanned}, incomplete=${stats.incomplete}, healed=${stats.healed}, failed=${stats.failed}`);
+                }
+              }
+            }
 
             // Trigger viewer refresh if tiles were healed
             if (report.healed.length > 0) {
@@ -4170,13 +4193,13 @@
                     viewer.viewport.panTo(currentCenter, true);
                     console.log('[Background] TiledImage recreation complete - all tiles have full content!');
 
-                    // CRITICAL: Heal any incomplete tiles
+                    // CRITICAL: Heal any incomplete tiles at ALL zoom levels
                     // On devices with limited cache, some tiles may still have missing pages
-                    // This ensures L0/L1/L2/L3 tiles become complete via feedback-driven detection
+                    // This ensures ALL tiles become complete via feedback-driven detection
                     if (window.tileStreamerRef) {
                       setTimeout(async () => {
                         try {
-                          const healingReport = await window.tileStreamerRef.healIncompleteTiles([0, 1, 2, 3]);
+                          const healingReport = await window.tileStreamerRef.healIncompleteTiles(); // Defaults to ALL levels
                           if (healingReport.incomplete.length > 0) {
                             console.log(`[Tile Healing] Found ${healingReport.incomplete.length} incomplete tiles`);
                             console.log(`[Tile Healing] Healed: ${healingReport.healed.length}, Failed: ${healingReport.failed.length}`);
@@ -4657,7 +4680,8 @@
                 };
               },
               // Heal incomplete tiles by detecting and fixing missing pages
-              healIncompleteTiles: async (levels = [0, 1, 2, 3]) => {
+              // Defaults to ALL levels (0 to maxLevel) if not specified
+              healIncompleteTiles: async (levels = null) => {
                 if (!tileStreamer) {
                   console.error('[Tile Healing] TileStreamer not available');
                   return { error: 'TileStreamer not initialized' };
