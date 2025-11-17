@@ -18,6 +18,8 @@ Handle draw errors gracefully - improve error handling for canvas draw operation
 
 Continue with canvas compression - explore methods to reduce memory footprint of stored canvases
 
+Handle poor low-hi res fallback performance - improve resolution switching and fallback behavior
+
 Smartly harmonize home screen text with help screen text to include attribution, and do not display "drag & drop" on mobile
 
 When demo PDF fails to load (file not present when served), remove ?pdf URL parameter after elegant failure
