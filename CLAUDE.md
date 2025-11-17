@@ -37,17 +37,24 @@ All dependencies loaded via CDN - no npm/package.json.
 
 ## File Structure
 
+**Current Branch (claude/incomplete-description-...):**
 ```
 /home/user/PDF-grid/
 ├── index.html              # MAIN APPLICATION (1597 lines)
 ├── demo.pdf                # Sample PDF (auto-loaded)
+├── CLAUDE.md               # AI assistant guide (this file)
 ├── README.md               # User-facing documentation
-├── VERSION_MANAGEMENT.md   # Version sync strategy
-├── RENDERING_ANALYSIS.md   # Deep technical analysis
 ├── TODO.md                 # Feature backlog
 ├── notes.md                # Development notes
 └── .gitignore              # Excludes deploy.sh and *.pdf
 ```
+
+**Development Branch (additional files):**
+- Testing infrastructure: `tests/`, `playwright.config.js`, `package.json`, `package-lock.json`
+- Additional documentation: `CHANGELOG.md`, `PLAN.md`, `TESTING.md`, `architecture.md`, `lessons.md`, `SCALABILITY.md`, `PROGRESSIVE_LOADING_NOTES.md`, `SELECTIVE_INVALIDATION_ATTEMPTS.md`
+- Deployment: `deploy.sh`, `demo/` directory
+
+Note: Current branch follows minimal documentation philosophy. Development branch has expanded testing and documentation not present here.
 
 ## Code Organization in index.html
 
@@ -353,6 +360,149 @@ Two URL parameters supported:
 
 Don't mix them or create protocol mismatches.
 
+## Known Issues and Technical Debt
+
+This section documents bugs, code quality issues, and optimization opportunities identified through code analysis. Items are prioritized by severity.
+
+### Critical Bugs (Fix Recommended)
+
+**1. React 18 API Deprecation (index.html:1594)**
+- **Issue**: Using deprecated `ReactDOM.render()` instead of `createRoot()`
+- **Impact**: Console warnings, missing React 18 concurrent features
+- **Fix**: Replace with `const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<PDFGridViewer />);`
+- **Priority**: Medium (works but generates warnings)
+
+**2. Missing useEffect Import (index.html:56)**
+- **Issue**: Only imports `useState` and `useRef`, but uses `React.useEffect` throughout
+- **Impact**: Inconsistent - should destructure `useEffect` from React like other hooks
+- **Fix**: Change to `const { useState, useRef, useEffect } = React;`
+- **Priority**: Low (works via React.useEffect prefix)
+
+**3. Potential Race Condition in Tile Caching (index.html:688-696)**
+- **Issue**: `allPagesLoaded` check could be stale if pageCanvases modified during concurrent tile generation
+- **Impact**: Incomplete tiles might be cached if pages are still loading
+- **Fix**: Use atomic check or lock mechanism
+- **Priority**: Medium (rarely occurs in practice)
+
+**4. Memory Leak in popstate Handler (index.html:1090-1127)**
+- **Issue**: Event listener added in useEffect without proper dependency array for cleanup
+- **Impact**: Handler stays attached even after component unmounts, references stale closures
+- **Fix**: Add proper dependencies or use functional state updates
+- **Priority**: High (causes memory leaks on repeated navigation)
+
+### Minor Bugs
+
+**5. Weak File Type Validation (index.html:165)**
+- **Issue**: Only checks MIME type `file.type === 'application/pdf'`
+- **Impact**: Some systems don't set correct MIME types, could reject valid PDFs
+- **Fix**: Add fallback check for `.pdf` extension
+- **Workaround**: Rename file or set correct MIME type
+- **Priority**: Low (rare edge case)
+
+**6. Incomplete URL Validation (index.html:1270-1273)**
+- **Issue**: Allows relative URLs ending in `.pdf` without `http://` or `https://`
+- **Impact**: Confusing behavior - looks like validation passed but might fail to load
+- **Fix**: Clarify validation logic or improve error messages
+- **Priority**: Low (users typically provide full URLs)
+
+**7. Potential Division by Zero (index.html:656-657)**
+- **Issue**: If `maxDimension < tileSize`, `Math.log2(maxDimension / tileSize)` returns negative
+- **Impact**: Could cause negative maxLevel, breaking tile generation
+- **Fix**: Enforce `maxLevel = Math.max(0, Math.ceil(Math.log2(...)))`
+- **Priority**: Low (extremely rare - only for tiny PDFs)
+
+**8. Missing Ref Cleanup (index.html:1321)**
+- **Issue**: `osdViewerRef.current.destroy()` called but ref not nulled afterward
+- **Impact**: Could cause issues if destroy() called multiple times
+- **Fix**: Add `osdViewerRef.current = null;` after destroy
+- **Priority**: Low (destroy checks are in place)
+
+### Performance Optimization Opportunities
+
+**9. Inefficient Storage Serialization (index.html:467-470, 505)**
+- **Issue**: Converts `Uint8Array → Array → JSON → String` for storage
+- **Impact**: ~33% size increase, slower serialization/deserialization
+- **Optimization**: Use base64 encoding instead: `btoa(String.fromCharCode(...new Uint8Array(pdfData)))`
+- **Gain**: Smaller storage size, faster load times
+- **Priority**: Medium (noticeable for large PDFs)
+
+**10. Console.log in Hot Path (index.html:722-746)**
+- **Issue**: Debug logging inside `_renderTile()` called hundreds of times per PDF
+- **Impact**: Performance overhead even when not needed
+- **Optimization**: Guard all logging with `if (CONFIG.DEBUG_MODE)` check
+- **Gain**: Faster tile generation, cleaner console
+- **Priority**: High (easy fix, immediate benefit)
+
+**11. Missing Function Memoization (index.html:1227-1303)**
+- **Issue**: Event handlers like `handleFileUpload`, `handleUrlLoad` recreated on every render
+- **Impact**: Unnecessary re-renders, lost React optimizations
+- **Optimization**: Wrap handlers in `useCallback` with proper dependencies
+- **Gain**: Better React performance, fewer re-renders
+- **Priority**: Medium (minor impact for this app)
+
+**12. DOM Query in Initialization (index.html:1325)**
+- **Issue**: Uses `document.getElementById('openseadragon-viewer')` instead of existing `viewerRef`
+- **Impact**: Unnecessary DOM query, could return null
+- **Optimization**: Use `viewerRef.current` directly
+- **Gain**: Faster, more React-idiomatic
+- **Priority**: Low (works fine as-is)
+
+**13. Inefficient Yielding Strategy (index.html:255)**
+- **Issue**: Uses `setTimeout(resolve, 0)` for yielding to browser during rendering
+- **Impact**: Not optimal for browser's idle time management
+- **Optimization**: Use `requestIdleCallback` when available, fallback to setTimeout
+- **Gain**: Better browser responsiveness during loading
+- **Priority**: Medium (noticeable for large PDFs)
+
+**14. No Request Cancellation (index.html:177-194)**
+- **Issue**: Fetch requests can't be aborted mid-flight
+- **Impact**: Can't cancel downloads, wasted bandwidth
+- **Optimization**: Use `AbortController` with fetch
+- **Gain**: Better UX, ability to cancel slow loads
+- **Priority**: High (important for UX)
+
+**15. Missing React Error Boundary**
+- **Issue**: No error boundary wrapping main component
+- **Impact**: Errors crash entire app with blank screen
+- **Optimization**: Add error boundary component to catch and display errors gracefully
+- **Gain**: Better error UX, app doesn't completely break
+- **Priority**: High (improves robustness)
+
+### Code Quality Issues
+
+**16. Duplicate PDF Loading Logic**
+- **Issue**: Similar loading code in auto-load (line 981-1087), URL load (line 1182), file upload (line 1227)
+- **Impact**: Harder to maintain, bug fixes need multiple places
+- **Refactor**: Extract common logic into unified flow
+- **Priority**: Medium (maintenance concern)
+
+**17. No TypeScript or JSDoc**
+- **Issue**: No type information for complex objects (gridDims, tileSource, etc.)
+- **Impact**: Harder to maintain, easy to pass wrong parameters
+- **Improvement**: Add JSDoc comments for complex functions and objects
+- **Priority**: Low (single-file app is manageable without)
+
+**18. Missing Input Debouncing**
+- **Issue**: URL input triggers re-renders on every keystroke
+- **Impact**: Minor performance overhead
+- **Optimization**: Debounce input changes
+- **Priority**: Low (not noticeable)
+
+### Architecture Notes
+
+The codebase is generally well-structured and follows good patterns:
+- ✅ Clear module separation with comment dividers
+- ✅ Consistent error handling with ErrorCodes enum
+- ✅ Good use of refs to avoid unnecessary re-renders
+- ✅ Proper async/await throughout
+- ✅ Reasonable performance optimizations (FIFO cache, batch rendering)
+
+Most issues are minor and don't significantly impact functionality. The main priorities would be:
+1. Fix console.log in hot path (easy, high impact)
+2. Add AbortController for fetch (better UX)
+3. Add React error boundary (robustness)
+4. Fix popstate memory leak (correctness)
+
 ## Debugging Tips
 
 ### Enable Debug Mode
@@ -555,4 +705,5 @@ The codebase is well-organized despite being monolithic. Each module has clear r
 
 ---
 
-**Last Updated**: 2025-11-15 (for v1.5.4)
+**Last Updated**: 2025-11-17 (for v1.5.4)
+**Latest Analysis**: Code review completed identifying 18 issues (4 critical bugs, 4 minor bugs, 7 optimization opportunities, 3 code quality issues)
