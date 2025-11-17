@@ -2680,8 +2680,14 @@
             return params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
           });
           const [showVerboseLogging, setShowVerboseLogging] = useState(false);
-          const [showTileLabels, setShowTileLabels] = useState(false);
-          const [showTileBorders, setShowTileBorders] = useState(false);
+          const [showTileLabels, setShowTileLabels] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_tile_labels');
+            return stored ? JSON.parse(stored) : false;
+          });
+          const [showTileBorders, setShowTileBorders] = useState(() => {
+            const stored = localStorage.getItem('pdfgrid_tile_borders');
+            return stored ? JSON.parse(stored) : false;
+          });
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
           const [storageMB, setStorageMB] = useState(0); // Track storage usage
@@ -2773,6 +2779,7 @@
 
           React.useEffect(() => {
             CONFIG.TILE_LABELS = showTileLabels;
+            localStorage.setItem('pdfgrid_tile_labels', JSON.stringify(showTileLabels));
           }, [showTileLabels]);
 
           React.useEffect(() => {
@@ -2783,6 +2790,7 @@
                 window.viewer.navigator.forceRedraw();
               }
             }
+            localStorage.setItem('pdfgrid_tile_borders', JSON.stringify(showTileBorders));
           }, [showTileBorders]);
 
           // Sync debug panel state with URL parameter
@@ -4259,6 +4267,15 @@
                   };
                 }
               },
+              getMemoryEstimate: () => {
+                // Alias for getMemoryStats() - returns memory estimate in MB
+                // Tests expect this method with estimatedMB property
+                const stats = window.__PDFGridDiagnostics.getMemoryStats();
+                return {
+                  estimatedMB: stats.totalMB,
+                  ...stats
+                };
+              },
               clearCaches: () => {
                 pageStreamer?.clear();
                 tileStreamer?.tileCache.cache.clear();
@@ -4561,7 +4578,7 @@
                   <button
                     onClick={() => setShowHelp(!showHelp)}
                     className="w-8 h-8 md:w-10 md:h-10 flex items-center justify-center bg-gray-700 hover:bg-gray-600 active:bg-gray-500 text-white rounded cursor-pointer transition-colors text-lg font-bold"
-                    title="Help & About"
+                    title="Help"
                   >
                     ?
                   </button>
