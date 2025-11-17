@@ -590,29 +590,28 @@
           const deviceMemoryGB = navigator.deviceMemory || 4; // Default to 4GB if not available
 
           // Calculate low-res cache size
-          // Goal: Hold ALL pages for complete minimap/overview coverage
-          let lowResSize = numPages;
+          // CRITICAL: Respect configured limits to prevent memory bloat
+          // Goal: Cache enough pages for minimap, but not ALL pages
+          let lowResSize;
 
           // Apply device-specific limits
           if (isIOS) {
             // iOS: Conservative limit due to memory constraints
-            // Still try to hold all pages, but cap at mobile limit
             lowResSize = Math.min(numPages, CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW);
           } else {
-            // Desktop: Scale with device memory
-            // Rough heuristic: 500KB per low-res page
-            // Allow up to 200MB for low-res cache on 4GB device, scale up/down
-            const maxLowResMB = Math.min(200 * (deviceMemoryGB / 4), 500); // Cap at 500MB
-            const estimatedLowResMB = numPages * 0.5; // 500KB per page
+            // Desktop: Start with configured limit, only increase if memory allows
+            lowResSize = CONFIG.PAGE_CACHE_MAX_SIZE_LOW;
 
-            if (estimatedLowResMB > maxLowResMB) {
-              // Would exceed memory budget, cap it
-              lowResSize = Math.floor(maxLowResMB / 0.5);
-              console.warn(`[Cache Sizing] Low-res cache limited to ${lowResSize} pages (${maxLowResMB}MB) for ${numPages}-page PDF`);
+            // For small PDFs, allow caching all pages
+            if (numPages <= CONFIG.PAGE_CACHE_MAX_SIZE_LOW) {
+              lowResSize = numPages;
+            } else {
+              // For large PDFs, respect the configured limit
+              // Don't try to cache all pages - use on-demand rendering instead
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Sizing] Large PDF (${numPages} pages) - capping low-res cache at ${lowResSize} pages`);
+              }
             }
-
-            // Absolute maximum for safety
-            lowResSize = Math.min(lowResSize, 1000);
           }
 
           // Calculate high-res cache size
