@@ -107,9 +107,9 @@
           IMAGE_SMOOTHING_THRESHOLD_LEVEL: 4,  // Level at which to switch from smooth to crisp
 
           // Caching
-          MAX_CACHE_SIZE: 300,           // Max tiles in TileCache (LRU eviction)
+          MAX_CACHE_SIZE: 200,           // Max tiles in TileCache (reduced from 300 to limit memory)
           PAGE_CACHE_MAX_SIZE_LOW: 100,  // Max low-res pages in PageCache (separate from high-res)
-          PAGE_CACHE_MAX_SIZE_HIGH: 100, // Max high-res pages in PageCache (separate from low-res)
+          PAGE_CACHE_MAX_SIZE_HIGH: 50,  // Max high-res pages (reduced from 100 - each is 10-20MB!)
 
           // Mobile-specific limits (override above if on iOS)
           MOBILE_MAX_CACHE_SIZE: 150,          // TileCache for iOS - enough for deep zoom + pyramid + pan buffer
@@ -491,9 +491,19 @@
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
-              // Release canvas memory before evicting
+              // CRITICAL: Release canvas memory aggressively
               const evictedCanvas = this.cache.get(firstKey);
               if (evictedCanvas) {
+                // 1. Clear pixel data
+                try {
+                  const ctx = evictedCanvas.getContext('2d');
+                  if (ctx) {
+                    ctx.clearRect(0, 0, evictedCanvas.width, evictedCanvas.height);
+                  }
+                } catch (e) {
+                  // Ignore errors
+                }
+                // 2. Release buffer by resizing to 0
                 evictedCanvas.width = 0;
                 evictedCanvas.height = 0;
               }
@@ -519,10 +529,20 @@
           }
 
           clear() {
-            // Release canvas pixel buffers before clearing cache
+            // CRITICAL: Release canvas pixel buffers aggressively before clearing cache
             let canvasCount = 0;
             for (const canvas of this.cache.values()) {
               if (canvas && canvas.width !== undefined) {
+                // 1. Clear pixel data
+                try {
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                  }
+                } catch (e) {
+                  // Ignore errors
+                }
+                // 2. Release buffer by resizing to 0
                 canvas.width = 0;
                 canvas.height = 0;
                 canvasCount++;
