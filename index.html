@@ -2871,10 +2871,11 @@
               const params = new URLSearchParams(window.location.search);
               const currentDebugParam = params.has('debug') && params.get('debug') !== 'false' && params.get('debug') !== '0';
 
-              // Update state to match URL if they differ
-              if (showDebug !== currentDebugParam) {
-                setShowDebug(currentDebugParam);
-              }
+              // Always sync state from URL (use functional update to avoid stale closure)
+              setShowDebug(prevShowDebug => {
+                // Only trigger re-render if value actually changed
+                return prevShowDebug !== currentDebugParam ? currentDebugParam : prevShowDebug;
+              });
             };
 
             // Listen for popstate (browser back/forward) and URLManager updates
@@ -2887,7 +2888,7 @@
               window.removeEventListener('popstate', syncStateFromURL);
               window.removeEventListener('urlchange', syncStateFromURL);
             };
-          }, [showDebug]); // Re-establish listener if showDebug changes
+          }, []); // Empty deps - stable listener, uses functional update to avoid stale closure
 
           // Auto-load PDF on mount
           // Separated concerns: URL parameters always work, config auto-load is optional
