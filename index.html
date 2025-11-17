@@ -485,7 +485,9 @@
             const isUpdate = this.cache.has(key);
             if (isUpdate) {
               this.cache.delete(key);
-            } else if (this.cache.size >= this.maxSize) {
+            } else if (this.cache.size >= this.maxSize * 0.85) {
+              // Start evicting at 85% capacity to prevent memory spikes during zoom/pan
+              // When many pages are requested at once, this prevents temporary overshoot
               // Remove least recently used (first in Map)
               const firstKey = this.cache.keys().next().value;
               if (CONFIG.VERBOSE_LOGGING) {
@@ -1119,7 +1121,9 @@
             const isUpdate = this.cache.has(key);
             if (isUpdate) {
               this.cache.delete(key);
-            } else if (this.cache.size >= this.maxSize) {
+            } else if (this.cache.size >= this.maxSize * 0.85) {
+              // Start evicting at 85% capacity to prevent memory spikes during zoom/pan
+              // Multiple zoom levels can be requested simultaneously
               // Level-aware eviction: Prioritize keeping low-level (broad zoom) tiles
               // Evict deep zoom tiles first to preserve minimap coverage
               const evictKey = this._selectTileToEvict();
