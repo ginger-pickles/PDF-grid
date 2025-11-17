@@ -2160,13 +2160,14 @@
           }
 
           /**
-           * Detect incomplete tiles in viewport area across ALL zoom levels
+           * Inspect tile quality in viewport area across ALL zoom levels
+           * Detects incomplete tiles, blank pages, and (future) blurry tiles
            * Scans the current viewport bounds at every level (0 to maxLevel)
-           * @returns {Array} Incomplete tiles at all levels covering viewport
+           * @returns {Array} Quality issues found at all levels covering viewport
            */
-          detectIncompleteTilesAllLevels() {
+          inspectTileQuality() {
             if (!window.osdViewerRef) {
-              console.warn('[All-Levels Detector] OSD viewer not available');
+              console.warn('[Tile Inspector] OSD viewer not available');
               return [];
             }
 
@@ -2174,7 +2175,7 @@
             const viewport = viewer.viewport;
             const tiledImage = viewer.world.getItemAt(0);
             if (!tiledImage) {
-              console.warn('[All-Levels Detector] No TiledImage available');
+              console.warn('[Tile Inspector] No TiledImage available');
               return [];
             }
 
@@ -2182,19 +2183,19 @@
             const bounds = viewport.getBounds(true);
             const viewportRect = tiledImage.viewportToImageRectangle(bounds);
 
-            console.log(`[All-Levels Detector] Scanning viewport area at ALL levels (0-${this.maxLevel})`);
+            console.log(`[Tile Inspector] Scanning viewport area at ALL levels (0-${this.maxLevel})`);
             console.log(`  Viewport bounds: x=${viewportRect.x.toFixed(0)}, y=${viewportRect.y.toFixed(0)}, w=${viewportRect.width.toFixed(0)}, h=${viewportRect.height.toFixed(0)}`);
 
-            const incompleteTiles = [];
+            const issues = [];
             const stats = {
               totalScanned: 0,
-              incomplete: 0,
+              issuesFound: 0,
               byLevel: {}
             };
 
             // Scan ALL zoom levels (0 to maxLevel)
             for (let level = 0; level <= this.maxLevel; level++) {
-              stats.byLevel[level] = { scanned: 0, incomplete: 0 };
+              stats.byLevel[level] = { scanned: 0, issues: 0 };
 
               const scale = Math.pow(2, level);
               const tileWidth = this.tileSize * scale;
@@ -2226,12 +2227,12 @@
                   // Check tile render registry
                   const renderStatus = this.tileRenderRegistry?.get(key);
 
-                  // Tile is incomplete if: missing from registry, status=fallback, or has missing pages
+                  // Quality issue if: missing from registry, status=fallback, or has missing pages
                   if (!renderStatus || renderStatus.status === 'fallback' || renderStatus.missingPages?.length > 0) {
-                    stats.incomplete++;
-                    stats.byLevel[level].incomplete++;
+                    stats.issuesFound++;
+                    stats.byLevel[level].issues++;
 
-                    incompleteTiles.push({
+                    issues.push({
                       key,
                       level,
                       x, y,
@@ -2245,14 +2246,14 @@
               }
             }
 
-            console.log(`[All-Levels Detector] Scanned ${stats.totalScanned} tiles, found ${stats.incomplete} incomplete`);
+            console.log(`[Tile Inspector] Scanned ${stats.totalScanned} tiles, found ${stats.issuesFound} quality issues`);
             for (let level = 0; level <= this.maxLevel; level++) {
-              if (stats.byLevel[level].incomplete > 0) {
-                console.log(`  L${level}: ${stats.byLevel[level].incomplete}/${stats.byLevel[level].scanned} incomplete`);
+              if (stats.byLevel[level].issues > 0) {
+                console.log(`  L${level}: ${stats.byLevel[level].issues}/${stats.byLevel[level].scanned} with issues`);
               }
             }
 
-            return incompleteTiles;
+            return issues;
           }
 
           /**
@@ -2375,15 +2376,15 @@
             const tiledImage = viewer.world.getItemAt(0);
             if (!tiledImage) return;
 
-            // Helper: Check if tiles at ALL levels in viewport are now complete
+            // Helper: Check tile quality at ALL levels in viewport
             const checkAllLevels = () => {
-              const allLevelTiles = this.detectIncompleteTilesAllLevels();
-              const incomplete = allLevelTiles.filter(t => healedKeys.includes(t.key));
+              const qualityIssues = this.inspectTileQuality();
+              const stillIncomplete = qualityIssues.filter(t => healedKeys.includes(t.key));
               return {
-                total: allLevelTiles.length,
-                incomplete: incomplete.length,
-                incompleteKeys: incomplete.map(t => t.key),
-                byLevel: incomplete.reduce((acc, t) => {
+                total: qualityIssues.length,
+                incomplete: stillIncomplete.length,
+                incompleteKeys: stillIncomplete.map(t => t.key),
+                byLevel: stillIncomplete.reduce((acc, t) => {
                   acc[t.level] = (acc[t.level] || 0) + 1;
                   return acc;
                 }, {})
