@@ -2382,9 +2382,9 @@
 
           /**
            * Initialize OpenSeadragon viewer
-           * @param {boolean} forceShowNavigator - If true, show navigator immediately (used during recreation)
+           * @param {boolean} forceShowNavigator - If true, show navigator immediately; if undefined, auto-detect based on device
            */
-          initialize(tileStreamer, pageWidth, pageHeight, gridSize, forceShowNavigator = false) {
+          initialize(tileStreamer, pageWidth, pageHeight, gridSize, forceShowNavigator = undefined) {
             // Set fixed minZoomImageRatio - grid should fill ~90% of viewport when fully zoomed out
             const minZoomImageRatio = 0.9;
 
@@ -3778,7 +3778,7 @@
             setPdfFile(null);
           };
 
-          const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = false) => {
+          const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = undefined) => {
             // Clean up existing viewer
             if (osdViewerRef.current) {
               osdViewerRef.current.destroy();
