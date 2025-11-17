@@ -3380,10 +3380,20 @@
                   }
                 }
 
-                // Recreate main viewer TiledImage (should cascade to navigator)
+                // Recreate main viewer TiledImage with fresh tiles
                 if (window.viewer && window.tileStreamerRef) {
                   if (CONFIG.VERBOSE_LOGGING) {
                     console.log('[Background] Recreating viewer TiledImage with initial page batch...');
+                  }
+
+                  // CRITICAL: Clear tile cache before recreation
+                  // Old L0/L1/L2 tiles were generated before background rendering → incomplete pages
+                  const tileCount = window.tileStreamerRef.tileCache.cache.size;
+                  if (tileCount > 0) {
+                    window.tileStreamerRef.tileCache.clear();
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log(`[Background] Cleared ${tileCount} old tiles (rendered before batch complete)`);
+                    }
                   }
 
                   // Save current viewport state
@@ -3399,6 +3409,14 @@
                     success: () => {
                       // Restore viewport position
                       window.viewer.viewport.fitBounds(currentBounds, true);
+
+                      // CRITICAL: Force navigator to regenerate tiles with new pages
+                      if (window.viewer.navigator) {
+                        window.viewer.navigator.forceRedraw();
+                        if (CONFIG.VERBOSE_LOGGING) {
+                          console.log('[Background] Forced navigator redraw with updated pages');
+                        }
+                      }
 
                       // Remove progress overlay
                       if (overlayDiv && overlayDiv.parentNode) {
