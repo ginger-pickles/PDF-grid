@@ -2315,14 +2315,40 @@
             }
             console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete`);
 
-            // Level 3: Aggressive - Clear OSD internal cache
-            console.log('[Tickle L3] Trying OSD cache clear...');
-            if (tiledImage._tileCache?._cachesLoaded) {
+            // Level 3: Aggressive - NUCLEAR clear of ALL OSD internal caches
+            console.log('[Tickle L3] AGGRESSIVE - Clearing ALL OSD caches...');
+
+            // Clear TiledImage tile cache (all tiles OSD has cached)
+            if (tiledImage._tileCache) {
               tiledImage._tileCache._cachesLoaded = {};
+              tiledImage._tileCache._imagesLoaded = [];
+              tiledImage._tileCache._imagesLoading = {};
             }
-            tiledImage.resetCoverage();
+
+            // Clear individual tiles
+            if (tiledImage._tiles) {
+              // Reset all cached tiles
+              for (const key in tiledImage._tiles) {
+                const tile = tiledImage._tiles[key];
+                if (tile && tile.loaded) {
+                  tile.loaded = false; // Force reload
+                  if (tile.image) {
+                    tile.image = null; // Clear cached image
+                  }
+                }
+              }
+            }
+
+            // Clear viewer-level image cache
+            if (viewer.imageLoader) {
+              viewer.imageLoader.clear(); // Clear all cached images
+            }
+
+            // Force complete reset
+            tiledImage.reset();  // More aggressive than resetCoverage
             viewer.forceRedraw();
-            await new Promise(resolve => setTimeout(resolve, 300)); // Let it settle
+
+            await new Promise(resolve => setTimeout(resolve, 500)); // Longer settle time
 
             status = checkVisibleTiles();
             if (status.incomplete === 0) {
