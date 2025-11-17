@@ -302,9 +302,14 @@ git push -u origin branch-name
 
 1. **OpenSeadragon API changes** - Tightly coupled with CustomTileSource
 2. **React hooks dependencies** - useEffect dependencies must be complete
+   - **Known Issue**: Popstate handler (line ~1090) has stale closure risk
+   - Functions referenced in effect should use useCallback or be included in deps
 3. **Canvas memory** - Large PDFs can exhaust memory (monitor MAX_CACHE_SIZE)
 4. **Storage quota** - sessionStorage varies by browser (handle gracefully)
+   - **Known Issue**: Binary-to-JSON conversion (line ~467) is memory-intensive
+   - Consider IndexedDB-first for files >5MB
 5. **CORS proxy reliability** - Third-party service, may have downtime
+6. **Component unmount during async loads** - Auto-load effect (line ~981) doesn't cleanup properly
 
 ## Common Pitfalls
 
@@ -352,6 +357,15 @@ Two URL parameters supported:
 - `?pdf=` - Filename for stored PDF
 
 Don't mix them or create protocol mismatches.
+
+### 6. Double URL Encoding
+When using CORS proxy (line ~180), already-encoded URLs may get double-encoded.
+Check if URL is encoded before calling `encodeURIComponent()`.
+
+### 7. Stale Closures in Effects
+The popstate event handler (line ~1090) references functions without proper dependencies.
+This can cause browser back/forward navigation to use outdated function versions.
+Wrap callback functions in `useCallback` or ensure proper cleanup/re-registration.
 
 ## Debugging Tips
 
@@ -469,6 +483,20 @@ Use various PDFs:
 - Viewport-aware prioritization
 - Worker thread tile generation
 
+**Known Performance Issues** (identified 2025-11-17):
+- Blank cell check happens AFTER intersection calculation (line ~773)
+  - Fix: Move `pageNum === 0` check before line 764 intersection logic
+  - Impact: ~50% fewer calculations in staggered grid
+- Binary storage uses JSON serialization (line ~467)
+  - Fix: Store directly in IndexedDB, skip sessionStorage for large files
+  - Impact: 2-4x memory savings, faster serialization
+- Grid pattern regenerated unnecessarily (line ~280)
+  - Fix: Memoize pattern for same page count
+  - Impact: Eliminates O(N²) recalculation on viewer re-init
+- Debug logging in hot path (lines ~723, ~780, ~744)
+  - Fix: Guard entire function with CONFIG.DEBUG_MODE check
+  - Impact: Minor but unnecessary overhead in production
+
 ## Browser Compatibility
 
 **Tested and Working:**
@@ -555,4 +583,5 @@ The codebase is well-organized despite being monolithic. Each module has clear r
 
 ---
 
-**Last Updated**: 2025-11-15 (for v1.5.4)
+**Last Updated**: 2025-11-17 (for v1.5.4)
+**Latest Analysis**: Comprehensive bug and performance audit completed 2025-11-17
