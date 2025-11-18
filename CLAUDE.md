@@ -145,7 +145,7 @@ http://localhost:8000/
 - Babel transpiles JSX in-browser automatically
 
 ### Testing Checklist
-When making changes, manually test:
+When making changes, automatically test:
 - [ ] File upload (drag-drop and button)
 - [ ] URL loading with `?url=` parameter
 - [ ] URL loading with `?pdf=` parameter

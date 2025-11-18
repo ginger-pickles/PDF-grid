@@ -51,7 +51,7 @@ After each change:
 npm test  # Run full Playwright test suite
 ```
 
-### Manual Testing Checklist
+### Automated Testing Checklist
 
 - [ ] Load demo.pdf (small file)
 - [ ] Load 100+ page PDF (stress test)
