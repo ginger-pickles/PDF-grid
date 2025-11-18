@@ -4391,7 +4391,7 @@
               }
 
               // Initialize viewer (navigator auto-hidden on touch devices)
-              initializeViewer(pdf.numPages, pageWidth, pageHeight);
+              initializeViewer(pdf.numPages, pageWidth, pageHeight, undefined, filename);
 
               // Background: Render remaining low-res pages, then add navigator when ready
               setTimeout(async () => {
@@ -5174,7 +5174,7 @@
             setPdfFile(null);
           };
 
-          const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = undefined) => {
+          const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = undefined, filename = 'PDF') => {
             // Clean up existing viewer
             if (osdViewerRef.current) {
               osdViewerRef.current.destroy();
