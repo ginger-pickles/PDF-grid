@@ -1500,6 +1500,19 @@
             this.redrawTimeout = null;
             this.redrawPending = false;
 
+            // Background rendering queue: Bidirectional strategy (viewport-first + L0-down)
+            // Solves cache thrashing by rendering low levels (few tiles) first
+            this.backgroundQueue = {
+              enabled: false,        // Start disabled, enable after OSD init
+              currentLevel: 0,       // Current level being rendered (0 = L0)
+              tilesInLevel: [],      // Tiles to render at current level
+              levelIndex: 0,         // Index within current level's tiles
+              isRunning: false,      // Is background rendering active
+              stopRequested: false,  // Signal to stop background rendering
+              batchSize: 10,         // Tiles to render per batch before yielding
+              delayMs: 50            // Delay between batches (ms) - keeps UI responsive
+            };
+
             // Diagnostics: Track fallback tiles vs full tiles
             this.stats = {
               tilesRenderedFull: 0,      // Tiles rendered with all pages at correct resolution
@@ -1570,6 +1583,193 @@
               }
               this.redrawTimeout = null;
             }, 30);
+          }
+
+          /**
+           * Start background rendering from L0, progressively rendering each level
+           * Bidirectional strategy: L0-down (background) meets viewport-first (immediate)
+           * Solves cache thrashing by rendering low levels (few tiles, need all pages) first
+           */
+          startBackgroundRendering() {
+            if (!this.backgroundQueue.enabled) {
+              console.log('[Background Rendering] Not enabled yet - waiting for OSD init');
+              return;
+            }
+
+            if (this.backgroundQueue.isRunning) {
+              console.log('[Background Rendering] Already running');
+              return;
+            }
+
+            console.log('[Background Rendering] Starting L0-down progressive rendering');
+            this.backgroundQueue.isRunning = true;
+            this.backgroundQueue.stopRequested = false;
+            this.backgroundQueue.currentLevel = 0;
+            this.backgroundQueue.levelIndex = 0;
+
+            // Start processing from L0
+            this._processBackgroundQueue();
+          }
+
+          /**
+           * Stop background rendering (e.g., user interaction, viewport change)
+           */
+          stopBackgroundRendering() {
+            if (this.backgroundQueue.isRunning) {
+              console.log('[Background Rendering] Stopping at level', this.backgroundQueue.currentLevel);
+              this.backgroundQueue.stopRequested = true;
+              this.backgroundQueue.isRunning = false;
+            }
+          }
+
+          /**
+           * Resume background rendering from where it left off
+           */
+          resumeBackgroundRendering() {
+            if (!this.backgroundQueue.enabled || this.backgroundQueue.isRunning) {
+              return;
+            }
+
+            console.log('[Background Rendering] Resuming from level', this.backgroundQueue.currentLevel);
+            this.backgroundQueue.isRunning = true;
+            this.backgroundQueue.stopRequested = false;
+            this._processBackgroundQueue();
+          }
+
+          /**
+           * Process the background rendering queue
+           * Renders tiles level-by-level from L0 upward
+           */
+          async _processBackgroundQueue() {
+            const queue = this.backgroundQueue;
+
+            // Check if we should stop
+            if (queue.stopRequested || !queue.enabled) {
+              queue.isRunning = false;
+              return;
+            }
+
+            // Check if we've reached the max level
+            if (queue.currentLevel > this.maxLevel) {
+              console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+              queue.isRunning = false;
+              return;
+            }
+
+            // If starting a new level, calculate all tiles for this level
+            if (queue.levelIndex === 0) {
+              queue.tilesInLevel = this._getTilesForLevel(queue.currentLevel);
+
+              // For L2+, sort tiles by page-locality to minimize cache thrashing
+              if (queue.currentLevel >= 2) {
+                queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
+              }
+
+              console.log(`[Background Rendering] Level ${queue.currentLevel}: ${queue.tilesInLevel.length} tiles to render`);
+            }
+
+            // Render a batch of tiles
+            const batch = queue.tilesInLevel.slice(queue.levelIndex, queue.levelIndex + queue.batchSize);
+
+            for (const tile of batch) {
+              // Render the tile (calls getTile which handles caching)
+              try {
+                this.getTile(tile.level, tile.x, tile.y);
+              } catch (err) {
+                console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
+              }
+
+              // Check if stop was requested during batch
+              if (queue.stopRequested) {
+                queue.isRunning = false;
+                return;
+              }
+            }
+
+            // Update progress
+            queue.levelIndex += batch.length;
+
+            // If finished current level, move to next level
+            if (queue.levelIndex >= queue.tilesInLevel.length) {
+              console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+              queue.currentLevel++;
+              queue.levelIndex = 0;
+              queue.tilesInLevel = [];
+            }
+
+            // Schedule next batch (with delay to keep UI responsive)
+            setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+          }
+
+          /**
+           * Get all tile coordinates for a given level
+           * @param {number} level - Zoom level
+           * @returns {Array} Array of {level, x, y} tile coordinates
+           */
+          _getTilesForLevel(level) {
+            const tiles = [];
+            const scale = Math.pow(2, level);
+            const tileWidthInGrid = this.tileWidth / scale;
+            const tileHeightInGrid = this.tileHeight / scale;
+
+            // Calculate how many tiles cover the grid at this level
+            const tilesWide = Math.ceil(this.gridDims.totalWidth / tileWidthInGrid);
+            const tilesHigh = Math.ceil(this.gridDims.totalHeight / tileHeightInGrid);
+
+            for (let y = 0; y < tilesHigh; y++) {
+              for (let x = 0; x < tilesWide; x++) {
+                tiles.push({ level, x, y });
+              }
+            }
+
+            return tiles;
+          }
+
+          /**
+           * Sort tiles by page-locality to minimize cache thrashing
+           * Groups tiles that need similar page ranges together
+           * Critical for L2+ where many tiles exist but cache < numPages
+           *
+           * @param {Array} tiles - Array of {level, x, y} tile coordinates
+           * @returns {Array} Sorted tiles grouped by page locality
+           */
+          _sortTilesByPageLocality(tiles) {
+            const level = tiles[0].level;
+            const scale = Math.pow(2, level);
+            const tileWidthInGrid = this.tileWidth / scale;
+            const tileHeightInGrid = this.tileHeight / scale;
+
+            // Calculate page ranges for each tile
+            const tilesWithPages = tiles.map(tile => {
+              const tileLeft = tile.x * tileWidthInGrid;
+              const tileTop = tile.y * tileHeightInGrid;
+              const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
+              const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
+
+              const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+              const minPage = neededPages.length > 0 ? Math.min(...neededPages) : 0;
+              const maxPage = neededPages.length > 0 ? Math.max(...neededPages) : 0;
+
+              return {
+                ...tile,
+                neededPages,
+                minPage,
+                maxPage,
+                pageSpan: maxPage - minPage + 1
+              };
+            });
+
+            // Sort by min page (primary) then max page (secondary)
+            // This groups tiles that need consecutive page ranges
+            tilesWithPages.sort((a, b) => {
+              if (a.minPage !== b.minPage) {
+                return a.minPage - b.minPage;
+              }
+              return a.maxPage - b.maxPage;
+            });
+
+            // Return just the tile coordinates (drop page metadata)
+            return tilesWithPages.map(({ level, x, y }) => ({ level, x, y }));
           }
 
           /**
@@ -4748,6 +4948,28 @@
             const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize, showNavigator);
             osdViewerRef.current = viewer;
             window.osdViewerRef = viewer; // Store globally for async tile updates
+
+            // Enable and start background rendering (L0-down progressive strategy)
+            // This solves cache thrashing by rendering low levels (few tiles, need all pages) first
+            tileStreamer.backgroundQueue.enabled = true;
+            tileStreamer.startBackgroundRendering();
+
+            // Pause background rendering during user interactions to prioritize viewport
+            viewer.addHandler('animation-start', () => {
+              if (tileStreamer.backgroundQueue.isRunning) {
+                tileStreamer.stopBackgroundRendering();
+              }
+            });
+
+            // Resume background rendering after user interactions settle
+            viewer.addHandler('animation-finish', () => {
+              // Resume after 500ms delay (debounce multiple quick interactions)
+              setTimeout(() => {
+                if (!tileStreamer.backgroundQueue.isRunning) {
+                  tileStreamer.resumeBackgroundRendering();
+                }
+              }, 500);
+            });
 
             // Expose diagnostics API for automated testing
             window.__PDFGridDiagnostics = {
