@@ -2,15 +2,14 @@
 
 ## Executive Summary
 
-**Current State (v1.9.4):**
-- ✅ Works well: PDFs up to ~100 pages, ~50MB
+**Scalability Challenges:**
 - ⚠️ Performance degrades: PDFs with 200-500 pages, 50-200MB
 - ❌ Not viable: PDFs with 1000+ pages, 500MB+
 
 **Primary Bottlenecks:**
 1. **Initial page rendering** - Sequential rendering of all pages before viewer starts
-2. **Memory consumption** - Each page at 4x scale = ~2-3MB canvas → 1000 pages = 2-3GB!
-3. **PageCache limits** - Current max 100-150 pages can't hold 1000-page PDFs
+2. **Memory consumption** - Each page at 4x scale = ~2-3MB canvas → 1000 pages = 2-3GB
+3. **PageCache limits** - Fixed cache sizes can't hold very large PDFs
 4. **Browser memory limits** - Mobile Safari crashes at ~200MB canvas memory
 
 ---
@@ -27,18 +26,16 @@ PDF Load → Initial Rendering → Viewer Initialization → On-Demand Rendering
 **Phase 1:** Priority Pages (high-res)
 - First ~10 pages at high resolution (4x)
 - ~30-50ms per page
-- Total: ~500ms for 10 pages
 
 **Phase 2:** Viewport Pages (low-res)
 - Pages visible in initial viewport (low-res 0.3x)
 - ~10ms per page
-- Total: ~100-200ms for typical viewport
 
 **Phase 3:** Upfront All Pages (low-res) - **BOTTLENECK**
 - ALL remaining pages at low-res (0.3x)
 - ~10ms per page
-- Total: **~10 seconds for 1000-page PDF!**
-- This prevents viewer from opening until complete
+- Total: **~10 seconds for 1000-page PDF**
+- Blocks viewer from opening until complete
 
 ### Memory Architecture
 
@@ -57,13 +54,13 @@ PDF Load → Initial Rendering → Viewer Initialization → On-Demand Rendering
 **For 1000-page PDF:**
 - Phase 3 creates 1000 low-res canvases → ~300MB
 - Only 100 fit in cache → 900 immediately evicted
-- **Wasteful:** 90% of rendering work is discarded!
+- **Wasteful:** 90% of rendering work is discarded
 
 ---
 
 ## Scalability Recommendations
 
-### Short-Term Fixes (Immediate - v1.9.5)
+### Short-Term Fixes
 
 #### 1. Make Phase 3 Rendering Optional
 
@@ -86,8 +83,6 @@ if (CONFIG.UPFRONT_RENDERING_ENABLED && !skipUpfront) {
   // Phase 3: Render all remaining pages
   await renderAllPagesLowRes();
 }
-
-// Viewer opens immediately after Phase 1 + 2 for large PDFs
 ```
 
 **Impact:**
@@ -105,7 +100,7 @@ if (CONFIG.UPFRONT_RENDERING_ENABLED && !skipUpfront) {
 
 ```javascript
 function calculateOptimalCacheSizes(numPages, isIOS) {
-  // Low-res: Try to hold entire document up to 200 pages (for minimap)
+  // Low-res: Try to hold entire document up to limit (for minimap)
   const lowResSize = Math.min(numPages, isIOS ? 200 : 300);
 
   // High-res: Viewport + predictive buffer (fixed size)
@@ -114,8 +109,6 @@ function calculateOptimalCacheSizes(numPages, isIOS) {
   return { lowResSize, highResSize };
 }
 ```
-
-**Already Implemented:** ✅ This exists in v1.9.3! (line 570-605)
 
 **Recommendation:** Increase lowResSize cap from 200→500 on desktop for better minimap coverage.
 
@@ -142,13 +135,11 @@ function scatteredPageOrder(totalPages) {
 }
 ```
 
-**Already Partially Implemented:** ✅ Scattered rendering exists (v1.8.7+)
-
-**Enhancement Needed:** Apply scattered ordering to on-demand low-res renders, not just upfront.
+**Enhancement:** Apply scattered ordering to on-demand low-res renders, not just upfront.
 
 ---
 
-### Medium-Term Improvements (v2.0 - Major Refactor)
+### Medium-Term Improvements
 
 #### 4. Lazy L0 Minimap Tiles
 
@@ -214,9 +205,7 @@ async function extractThumbnail(page) {
 └────────────────────────────────────────┘
 ```
 
-**Already Partially Implemented:** ✅ Predictive rendering exists (v1.9.0+)
-
-**Enhancement Needed:**
+**Enhancements:**
 - Make eviction **more aggressive** for distant pages
 - Track viewport history to identify "hot zones" (frequently visited pages)
 - Keep hot zones cached even when out of viewport
@@ -258,7 +247,7 @@ Replace with crisp tile when ready
 
 ---
 
-### Long-Term Vision (v3.0 - Next-Gen Architecture)
+### Long-Term Vision
 
 #### 7. Web Worker Page Rendering
 
@@ -362,16 +351,7 @@ Composite onto existing tile
 
 ## Performance Targets
 
-### Current Performance (v1.9.3)
-
-| PDF Size | Page Count | Load Time | Memory Usage | User Experience |
-|----------|------------|-----------|--------------|-----------------|
-| 915KB    | ~5 pages   | ~0.5s     | ~20MB        | ✅ Excellent     |
-| 13MB     | ~50 pages  | ~3s       | ~150MB       | ✅ Good          |
-| 50MB     | ~200 pages | ~15s      | ~600MB       | ⚠️ Sluggish     |
-| 200MB    | ~1000 pages| ~60s      | **CRASH**    | ❌ Not viable    |
-
-### Target Performance (v2.0 with Short-Term Fixes)
+### Target Performance
 
 | PDF Size | Page Count | Load Time | Memory Usage | User Experience |
 |----------|------------|-----------|--------------|-----------------|
@@ -384,49 +364,6 @@ Composite onto existing tile
 
 ---
 
-## Implementation Roadmap
-
-### Phase 1: Critical Fixes (v1.9.5 - This Week)
-- [x] Fix cache invalidation for edge tiles
-- [x] Reduce on-demand debounce delay (100ms → 30ms)
-- [x] Add draw failure diagnostics to debug panel
-- [ ] Make Phase 3 upfront rendering conditional (skip for 200+ page PDFs)
-- [ ] Increase low-res cache cap (200 → 500 pages on desktop)
-
-**Impact:** 3x faster loading for large PDFs, no empty tiles on edges
-
----
-
-### Phase 2: Performance Optimizations (v1.10.0 - Next Sprint)
-- [ ] Progressive minimap population with scattered rendering
-- [ ] Viewport-aware aggressive eviction for distant pages
-- [ ] Hot zone tracking (keep frequently visited pages cached)
-- [ ] Memory pressure detection (reduce cache sizes automatically)
-
-**Impact:** 2x better memory efficiency, smoother panning for large PDFs
-
----
-
-### Phase 3: Advanced Features (v2.0.0 - Next Quarter)
-- [ ] Lazy L0 minimap with thumbnail extraction
-- [ ] Virtual page rendering (viewport-only)
-- [ ] Tile-to-tile resampling for instant zoom
-- [ ] IndexedDB canvas persistence
-
-**Impact:** Support for 1000+ page PDFs, instant page refresh
-
----
-
-### Phase 4: Next-Gen Architecture (v3.0.0 - Future)
-- [ ] Web Worker page rendering (parallel + non-blocking)
-- [ ] Differential tile updates (selective redraw)
-- [ ] Adaptive quality (reduce render scale under memory pressure)
-- [ ] Streaming PDF support (render before full download)
-
-**Impact:** Production-ready for enterprise use cases (legal, academic, publishing)
-
----
-
 ## Testing Strategy for Large PDFs
 
 ### Test Cases
@@ -436,11 +373,11 @@ Composite onto existing tile
    - Ensure no regressions
 
 2. **Medium PDF (50-100 pages, 10-50MB)**
-   - Current sweet spot
+   - Sweet spot validation
    - Validate all features work
 
 3. **Large PDF (200-500 pages, 50-200MB)**
-   - Stress test Phase 3 conditional logic
+   - Stress test conditional logic
    - Monitor memory usage
    - Test cache eviction
 
@@ -451,10 +388,10 @@ Composite onto existing tile
 
 ### Recommended Test PDFs
 
-- **Small:** demo-1.pdf (915KB, ~5 pages) ✅ Already have
-- **Medium:** natgeo-1969-05.pdf (13MB, ~50 pages) ✅ Already have
-- **Large:** Academic textbook (200 pages) - Need to acquire
-- **Huge:** Legal document (1000+ pages) - Need to acquire
+- **Small:** demo-1.pdf (915KB, ~5 pages)
+- **Medium:** natgeo-1969-05.pdf (13MB, ~50 pages)
+- **Large:** Academic textbook (200 pages)
+- **Huge:** Legal document (1000+ pages)
 
 **Sources for Test PDFs:**
 - Project Gutenberg (public domain books)
@@ -532,14 +469,8 @@ MOBILE_PDF_RENDER_SCALE: 2.0,           // 4x less memory than desktop
    - Panning frame rate (FPS)
    - Zoom responsiveness
 
-### Debug Panel Enhancements (v1.9.4+)
+### Recommended Debug Panel Features
 
-✅ **Added:**
-- Draw failure diagnostics (show which pages fail to render)
-- Breakdown by failure reason (no_canvas, invalid_dimensions, etc.)
-- Clear failures button for testing
-
-🔄 **Recommended Additions:**
 - Phase timing breakdown (Phase 1: 500ms, Phase 2: 200ms, Phase 3: 8s)
 - Memory pressure indicator (Green: <200MB, Yellow: 200-500MB, Red: >500MB)
 - Cache thrash detector (high eviction rate = cache too small)
@@ -551,14 +482,10 @@ MOBILE_PDF_RENDER_SCALE: 2.0,           // 4x less memory than desktop
 
 PDF Grid Viewer can scale to **1000+ page, 500MB+ PDFs** with targeted optimizations:
 
-1. **Immediate (v1.9.5):** Conditional Phase 3 rendering → 3-5x faster load
-2. **Near-term (v1.10.0):** Aggressive eviction + hot zones → 2x better memory
-3. **Future (v2.0.0):** Virtual rendering + persistence → production-ready
+1. **Immediate:** Conditional Phase 3 rendering → 3-5x faster load
+2. **Near-term:** Aggressive eviction + hot zones → 2x better memory
+3. **Future:** Virtual rendering + persistence → production-ready
 
 **The architecture is sound** - all necessary infrastructure exists (viewport tracking, LRU caching, on-demand rendering, predictive loading). The fixes are mostly **configuration tuning** and **conditional logic**, not major refactors.
 
-**Priority:** Implement Phase 1 fixes immediately (conditional Phase 3) for maximum impact with minimal risk.
-
----
-
-**Last Updated:** 2025-11-16 (for v1.9.4)
+**Priority:** Implement conditional Phase 3 for maximum impact with minimal risk.
