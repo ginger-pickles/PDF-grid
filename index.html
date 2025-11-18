@@ -1744,11 +1744,12 @@
            */
           _getTilesForLevel(level) {
             const tiles = [];
-            // CRITICAL: Invert level for pyramid (L0=overview, higher=detail)
-            // L0 should have 1 tile, L1 has 4 tiles, L2 has 16 tiles, etc.
+            // CRITICAL: Custom pyramid (L0=overview with 1 tile, maxLevel=detail with many tiles)
+            // L0: scale=64 → tiles cover 64x area → 1 tile
+            // maxLevel: scale=1 → tiles cover 1x area → many tiles
             const scale = Math.pow(2, this.maxLevel - level);
-            const tileWidthInGrid = this.tileWidth / scale;
-            const tileHeightInGrid = this.tileHeight / scale;
+            const tileWidthInGrid = this.tileWidth * scale;  // MULTIPLY for large tiles at low levels
+            const tileHeightInGrid = this.tileHeight * scale;
 
             // Calculate how many tiles cover the grid at this level
             const tilesWide = Math.ceil(this.gridDims.totalWidth / tileWidthInGrid);
@@ -1773,10 +1774,10 @@
            */
           _sortTilesByPageLocality(tiles) {
             const level = tiles[0].level;
-            // CRITICAL: Invert level for pyramid (L0=overview, higher=detail)
+            // CRITICAL: Custom pyramid (L0=overview, maxLevel=detail)
             const scale = Math.pow(2, this.maxLevel - level);
-            const tileWidthInGrid = this.tileWidth / scale;
-            const tileHeightInGrid = this.tileHeight / scale;
+            const tileWidthInGrid = this.tileWidth * scale;  // MULTIPLY for large tiles at low levels
+            const tileHeightInGrid = this.tileHeight * scale;
 
             // Calculate page ranges for each tile
             const tilesWithPages = tiles.map(tile => {
