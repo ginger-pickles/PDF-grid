@@ -4939,6 +4939,97 @@
             // Expose periodicity analysis function globally
             window.analyzePeriodicityPatterns = () => tileStreamer.analyzePeriodicityPatterns();
 
+            // Expose background rendering diagnostics globally
+            window.backgroundRenderingStatus = () => {
+              const queue = tileStreamer.backgroundQueue;
+              return {
+                enabled: queue.enabled,
+                isRunning: queue.isRunning,
+                currentLevel: queue.currentLevel,
+                levelProgress: `${queue.levelIndex}/${queue.tilesInLevel.length}`,
+                tilesInCurrentLevel: queue.tilesInLevel.length,
+                tilesRemaining: queue.tilesInLevel.length - queue.levelIndex,
+                maxLevel: tileStreamer.maxLevel,
+                percentComplete: queue.currentLevel > tileStreamer.maxLevel
+                  ? 100
+                  : ((queue.currentLevel / (tileStreamer.maxLevel + 1)) * 100).toFixed(1)
+              };
+            };
+
+            window.verifyNoIncompleteTiles = (level = null) => {
+              const issues = tileStreamer.inspectTileQuality();
+
+              // Filter by level if specified
+              const filtered = level !== null
+                ? issues.filter(t => t.level === level)
+                : issues;
+
+              console.log(`\n[Tile Quality Check]${level !== null ? ` Level ${level}` : ' All Levels'}`);
+              console.log(`Total quality issues: ${filtered.length}`);
+
+              if (filtered.length > 0) {
+                // Group by level
+                const byLevel = filtered.reduce((acc, t) => {
+                  if (!acc[t.level]) acc[t.level] = [];
+                  acc[t.level].push(t);
+                  return acc;
+                }, {});
+
+                console.log('\nIssues by level:');
+                for (const [lvl, tiles] of Object.entries(byLevel)) {
+                  console.log(`  L${lvl}: ${tiles.length} issues`);
+
+                  // Show first 5 issues at this level
+                  tiles.slice(0, 5).forEach(t => {
+                    console.log(`    ${t.key}: missing pages [${t.missingPages.join(',')}]`);
+                  });
+                  if (tiles.length > 5) {
+                    console.log(`    ... and ${tiles.length - 5} more`);
+                  }
+                }
+
+                return { passed: false, issues: filtered };
+              } else {
+                console.log('✓ No quality issues found - all tiles complete!');
+                return { passed: true, issues: [] };
+              }
+            };
+
+            window.testPageLocalityBatching = (level = 2) => {
+              console.log(`\n[Page-Locality Batching Test] Level ${level}`);
+
+              const tiles = tileStreamer._getTilesForLevel(level);
+              console.log(`Total tiles at L${level}: ${tiles.length}`);
+
+              if (level >= 2) {
+                const sorted = tileStreamer._sortTilesByPageLocality(tiles);
+
+                // Analyze batching effectiveness
+                const scale = Math.pow(2, level);
+                const tileWidthInGrid = tileStreamer.tileWidth / scale;
+                const tileHeightInGrid = tileStreamer.tileHeight / scale;
+
+                console.log('\nFirst 10 tiles (should be grouped by page range):');
+                sorted.slice(0, 10).forEach((tile, i) => {
+                  const tileLeft = tile.x * tileWidthInGrid;
+                  const tileTop = tile.y * tileHeightInGrid;
+                  const tileRight = Math.min(tileLeft + tileWidthInGrid, tileStreamer.gridDims.totalWidth);
+                  const tileBottom = Math.min(tileTop + tileHeightInGrid, tileStreamer.gridDims.totalHeight);
+
+                  const pages = tileStreamer._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                  const minPage = pages.length > 0 ? Math.min(...pages) : 0;
+                  const maxPage = pages.length > 0 ? Math.max(...pages) : 0;
+
+                  console.log(`  ${i + 1}. L${tile.level}(${tile.x},${tile.y}): pages ${minPage}-${maxPage}`);
+                });
+
+                return { totalTiles: tiles.length, sortedTiles: sorted };
+              } else {
+                console.log('Page-locality batching only applies to L2+');
+                return { totalTiles: tiles.length };
+              }
+            };
+
             // Store grid dimensions globally for viewer recreation
             window.gridPageWidth = pageWidth;
             window.gridPageHeight = pageHeight;
