@@ -1640,65 +1640,98 @@
            * Process the background rendering queue
            * Renders tiles level-by-level from L0 upward
            */
-          async _processBackgroundQueue() {
-            const queue = this.backgroundQueue;
+          _processBackgroundQueue() {
+            // Wrap entire function in try-catch to prevent silent failures
+            try {
+              const queue = this.backgroundQueue;
 
-            // Check if we should stop
-            if (queue.stopRequested || !queue.enabled) {
-              queue.isRunning = false;
-              return;
-            }
-
-            // Check if we've reached the max level
-            if (queue.currentLevel > this.maxLevel) {
-              console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
-              queue.isRunning = false;
-              return;
-            }
-
-            // If starting a new level, calculate all tiles for this level
-            if (queue.levelIndex === 0) {
-              queue.tilesInLevel = this._getTilesForLevel(queue.currentLevel);
-
-              // For L2+, sort tiles by page-locality to minimize cache thrashing
-              if (queue.currentLevel >= 2) {
-                queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
+              // Defensive check: Ensure queue exists
+              if (!queue) {
+                console.error('[Background Rendering] Queue object is undefined!');
+                return;
               }
 
-              console.log(`[Background Rendering] Level ${queue.currentLevel}: ${queue.tilesInLevel.length} tiles to render`);
-            }
-
-            // Render a batch of tiles
-            const batch = queue.tilesInLevel.slice(queue.levelIndex, queue.levelIndex + queue.batchSize);
-
-            for (const tile of batch) {
-              // Render the tile (calls getTile which handles caching)
-              try {
-                this.getTile(tile.level, tile.x, tile.y);
-              } catch (err) {
-                console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
-              }
-
-              // Check if stop was requested during batch
-              if (queue.stopRequested) {
+              // Check if we should stop
+              if (queue.stopRequested || !queue.enabled) {
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log('[Background Rendering] Stopped (requested:' + queue.stopRequested + ', enabled:' + queue.enabled + ')');
+                }
                 queue.isRunning = false;
                 return;
               }
+
+              // Check if we've reached the max level
+              if (queue.currentLevel > this.maxLevel) {
+                console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+                queue.isRunning = false;
+                return;
+              }
+
+              // If starting a new level, calculate all tiles for this level
+              if (queue.levelIndex === 0) {
+                queue.tilesInLevel = this._getTilesForLevel(queue.currentLevel);
+
+                // For L2+, sort tiles by page-locality to minimize cache thrashing
+                if (queue.currentLevel >= 2) {
+                  queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
+                }
+
+                console.log(`[Background Rendering] Level ${queue.currentLevel}: ${queue.tilesInLevel.length} tiles to render`);
+              }
+
+              // Render a batch of tiles
+              const batch = queue.tilesInLevel.slice(queue.levelIndex, queue.levelIndex + queue.batchSize);
+
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Background Rendering] Processing batch: ${queue.levelIndex}-${queue.levelIndex + batch.length} of ${queue.tilesInLevel.length}`);
+              }
+
+              for (const tile of batch) {
+                // Render the tile (calls getTile which handles caching)
+                try {
+                  this.getTile(tile.level, tile.x, tile.y);
+                } catch (err) {
+                  console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
+                  // Continue with next tile despite error
+                }
+
+                // Check if stop was requested during batch
+                if (queue.stopRequested) {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log('[Background Rendering] Stop requested during batch');
+                  }
+                  queue.isRunning = false;
+                  return;
+                }
+              }
+
+              // Update progress
+              queue.levelIndex += batch.length;
+
+              // If finished current level, move to next level
+              if (queue.levelIndex >= queue.tilesInLevel.length) {
+                console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                queue.currentLevel++;
+                queue.levelIndex = 0;
+                queue.tilesInLevel = [];
+              }
+
+              // Schedule next batch (with delay to keep UI responsive)
+              // CRITICAL: Use bind(this) to preserve context in setTimeout
+              setTimeout(this._processBackgroundQueue.bind(this), queue.delayMs);
+
+            } catch (error) {
+              // Catch any uncaught errors to prevent silent failure
+              console.error('[Background Rendering] FATAL ERROR in _processBackgroundQueue:', error);
+              console.error('[Background Rendering] Stack trace:', error.stack);
+
+              // Mark as not running so it can be restarted
+              if (this.backgroundQueue) {
+                this.backgroundQueue.isRunning = false;
+              }
+
+              // Don't schedule next batch on fatal error
             }
-
-            // Update progress
-            queue.levelIndex += batch.length;
-
-            // If finished current level, move to next level
-            if (queue.levelIndex >= queue.tilesInLevel.length) {
-              console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
-              queue.currentLevel++;
-              queue.levelIndex = 0;
-              queue.tilesInLevel = [];
-            }
-
-            // Schedule next batch (with delay to keep UI responsive)
-            setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
           }
 
           /**
