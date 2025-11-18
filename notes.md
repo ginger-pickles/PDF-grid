@@ -18,7 +18,7 @@
 
 ### Sophisticated Lazy-LRU Cache (Future Reference)
 
-The current simple FIFO cache works well for static tiles, but if we need true LRU behavior in the future (e.g., for dynamic content, memory pressure scenarios, or cache analytics), here's a more sophisticated approach:
+For future needs like cache analytics, different eviction strategies, or more sophisticated monitoring, here's a Lazy-LRU implementation approach:
 
 ```javascript
 class LazyLRUCache {
@@ -105,14 +105,7 @@ class LazyLRUCache {
 - Need to track which tiles are most frequently accessed
 - Want to implement cache metrics/monitoring
 - Multiple cache strategies needed (dev can swap strategies)
-- Memory-constrained environments where true LRU matters
-
-#### Why We Didn't Use It Now:
-For static PDF tiles that never change, the simpler FIFO cache is 3-5x faster because:
-- No access time tracking overhead
-- No counter increment on every read
-- Minimal code complexity
-- Tiles are equally valuable (no "hot" tiles)
+- More sophisticated eviction policies beyond basic LRU
 
 ## Performance Features (Current Implementation)
 
