@@ -710,6 +710,14 @@
            * Returns cached canvas if available, otherwise renders
            */
           async renderPage(pageNum, resolution) {
+            // Validate pdfDoc exists before trying to render
+            if (!this.pdfDoc) {
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[PageStreamer] Cannot render page ${pageNum}: pdfDoc not loaded`);
+              }
+              return null;
+            }
+
             const key = this._getCacheKey(pageNum, resolution);
             const pageCache = this._getPageCache(resolution);
 
@@ -1808,9 +1816,10 @@
                   const batchSize = queue.highResBatchSize;
                   const tilesGroupedByBatch = [];
 
-                  for (let startPage = 0; startPage < this.numPages; startPage += batchSize) {
-                    const endPage = Math.min(startPage + batchSize, this.numPages);
-                    const pagesInBatch = new Set(Array.from({length: endPage - startPage}, (_, i) => startPage + i));
+                  // PDF pages are 1-indexed, so start from 1
+                  for (let startPage = 1; startPage <= this.numPages; startPage += batchSize) {
+                    const endPage = Math.min(startPage + batchSize - 1, this.numPages);
+                    const pagesInBatch = new Set(Array.from({length: endPage - startPage + 1}, (_, i) => startPage + i));
 
                     // Find tiles that only need pages from this batch
                     const tilesInBatch = tilesWithPages.filter(tile =>
@@ -1866,25 +1875,14 @@
                     console.log(`[Background Rendering] Preloaded pages ${startPage}-${endPage}, rendering ${currentBatch.tiles.length} tiles`);
                   }
 
-                  // Now render all tiles in this batch
-                  for (const tile of currentBatch.tiles) {
-                    try {
-                      this.getTile(tile.level, tile.x, tile.y);
-                    } catch (err) {
-                      console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
-                    }
+                  // Now render all tiles in this batch (asynchronously to avoid blocking UI)
+                  this._renderTilesAsync(currentBatch.tiles, 0, () => {
+                    console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
 
-                    if (queue.stopRequested) {
-                      queue.isRunning = false;
-                      return;
-                    }
-                  }
-
-                  console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
-
-                  // Move to next batch
-                  queue.levelIndex++;
-                  setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                    // Move to next batch
+                    queue.levelIndex++;
+                    setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                  });
                 }).catch(err => {
                   console.error('[Background Rendering] Error preloading pages:', err);
                   queue.levelIndex++; // Skip this batch on error
@@ -1901,36 +1899,23 @@
                 console.log(`[Background Rendering] Processing batch: ${queue.levelIndex}-${queue.levelIndex + batch.length} of ${queue.tilesInLevel.length}`);
               }
 
-              for (const tile of batch) {
-                try {
-                  this.getTile(tile.level, tile.x, tile.y);
-                } catch (err) {
-                  console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
+              // Render tiles asynchronously to avoid blocking UI
+              this._renderTilesAsync(batch, 0, () => {
+                // Update progress
+                queue.levelIndex += batch.length;
+
+                // If finished current level, move to next level
+                if (queue.levelIndex >= queue.tilesInLevel.length) {
+                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  queue.currentLevel++;
+                  queue.levelIndex = 0;
+                  queue.tilesInLevel = [];
                 }
 
-                if (queue.stopRequested) {
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log('[Background Rendering] Stop requested during batch');
-                  }
-                  queue.isRunning = false;
-                  return;
-                }
-              }
-
-              // Update progress
-              queue.levelIndex += batch.length;
-
-              // If finished current level, move to next level
-              if (queue.levelIndex >= queue.tilesInLevel.length) {
-                console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
-                queue.currentLevel++;
-                queue.levelIndex = 0;
-                queue.tilesInLevel = [];
-              }
-
-              // Schedule next batch (with delay to keep UI responsive)
-              // CRITICAL: Use arrow function to preserve lexical 'this' context
-              setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                // Schedule next batch (with delay to keep UI responsive)
+                // CRITICAL: Use arrow function to preserve lexical 'this' context
+                setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+              });
 
             } catch (error) {
               // Catch any uncaught errors to prevent silent failure
@@ -1944,6 +1929,44 @@
 
               // Don't schedule next batch on fatal error
             }
+          }
+
+          /**
+           * Render tiles asynchronously with yielding to keep UI responsive
+           * Processes tiles one at a time with setTimeout(0) between each
+           * @param {Array} tiles - Array of tile objects
+           * @param {number} index - Current tile index
+           * @param {Function} callback - Called when all tiles are rendered
+           */
+          _renderTilesAsync(tiles, index, callback) {
+            const queue = this.backgroundQueue;
+
+            // Base case: all tiles rendered
+            if (index >= tiles.length) {
+              if (callback) callback();
+              return;
+            }
+
+            // Check if stop was requested
+            if (queue.stopRequested) {
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Stop requested during async tile rendering');
+              }
+              queue.isRunning = false;
+              return;
+            }
+
+            // Render current tile
+            const tile = tiles[index];
+            try {
+              this.generateTile(tile.level, tile.x, tile.y);
+            } catch (err) {
+              console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
+            }
+
+            // Yield to browser and continue with next tile
+            // Use setTimeout(0) to allow browser to process events, paint, etc.
+            setTimeout(() => this._renderTilesAsync(tiles, index + 1, callback), 0);
           }
 
           /**
