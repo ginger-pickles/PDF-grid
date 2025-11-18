@@ -4991,7 +4991,7 @@
                 tilesRemaining: queue.tilesInLevel.length - queue.levelIndex,
                 maxLevel: tileStreamer.maxLevel,
                 percentComplete: queue.currentLevel > tileStreamer.maxLevel
-                  ? 100
+                  ? "100"
                   : ((queue.currentLevel / (tileStreamer.maxLevel + 1)) * 100).toFixed(1)
               };
             };
