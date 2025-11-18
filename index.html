@@ -1515,7 +1515,11 @@
               gracePeriodMs: 3000,   // Don't allow stopping for first 3s (avoid OSD init animations)
               // High-res batch state (for levels > minimapMaxLevel)
               highResBatchIndex: 0,  // Current batch of pages being loaded (0-based)
-              highResBatchSize: 8,   // Pages per batch (must fit in PAGE_CACHE_MAX_SIZE_HIGH=10, leave 2 for safety)
+              // Calculate batch size as 80% of high-res cache (leave 20% headroom)
+              // Desktop (10 pages): 8 pages per batch
+              // Mobile (50 pages): 40 pages per batch
+              // User-adjusted: adapts automatically
+              highResBatchSize: Math.max(1, Math.floor(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH * 0.8)),
               highResPreloading: false // Currently preloading high-res pages
             };
 
