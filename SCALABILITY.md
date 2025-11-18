@@ -478,6 +478,50 @@ MOBILE_PDF_RENDER_SCALE: 2.0,           // 4x less memory than desktop
 
 ---
 
+## Implementation Roadmap
+
+### Short-Term Optimizations
+
+- Make Phase 3 upfront rendering conditional (skip for 200+ page PDFs)
+- Increase low-res cache cap (200 → 500 pages on desktop)
+
+**Impact:** 3x faster loading for large PDFs
+
+---
+
+### Medium-Term Improvements
+
+- Progressive minimap population with scattered rendering
+- Viewport-aware aggressive eviction for distant pages
+- Hot zone tracking (keep frequently visited pages cached)
+- Memory pressure detection (reduce cache sizes automatically)
+
+**Impact:** 2x better memory efficiency, smoother panning for large PDFs
+
+---
+
+### Advanced Features
+
+- Lazy L0 minimap with thumbnail extraction
+- Virtual page rendering (viewport-only)
+- Tile-to-tile resampling for instant zoom
+- IndexedDB canvas persistence
+
+**Impact:** Support for 1000+ page PDFs, instant page refresh
+
+---
+
+### Next-Generation Architecture
+
+- Web Worker page rendering (parallel + non-blocking)
+- Differential tile updates (selective redraw)
+- Adaptive quality (reduce render scale under memory pressure)
+- Streaming PDF support (render before full download)
+
+**Impact:** Production-ready for enterprise use cases
+
+---
+
 ## Conclusion
 
 PDF Grid Viewer can scale to **1000+ page, 500MB+ PDFs** with targeted optimizations:
