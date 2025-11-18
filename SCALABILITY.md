@@ -7,10 +7,9 @@
 - ❌ Not viable: PDFs with 1000+ pages, 500MB+
 
 **Primary Bottlenecks:**
-1. **Initial page rendering** - Sequential rendering of all pages before viewer starts
-2. **Memory consumption** - Each page at 4x scale = ~2-3MB canvas → 1000 pages = 2-3GB
-3. **PageCache limits** - Fixed cache sizes can't hold very large PDFs
-4. **Browser memory limits** - Mobile Safari crashes at ~200MB canvas memory
+1. **Memory consumption** - Each page at 4x scale = ~2-3MB canvas → 1000 pages = 2-3GB
+2. **PageCache limits** - LRU eviction limits max cached pages
+3. **Browser memory limits** - Mobile Safari crashes at ~200MB canvas memory
 
 ---
 
@@ -31,11 +30,10 @@ PDF Load → Initial Rendering → Viewer Initialization → On-Demand Rendering
 - Pages visible in initial viewport (low-res 0.3x)
 - ~10ms per page
 
-**Phase 3:** Upfront All Pages (low-res) - **BOTTLENECK**
-- ALL remaining pages at low-res (0.3x)
-- ~10ms per page
-- Total: **~10 seconds for 1000-page PDF**
-- Blocks viewer from opening until complete
+**Phase 3:** Upfront All Pages (low-res) - **CONDITIONAL**
+- Remaining pages at low-res (0.3x) for PDFs ≤100 pages
+- Skipped for PDFs >100 pages (on-demand rendering fills in tiles)
+- ~10ms per page when enabled
 
 ### Memory Architecture
 
@@ -51,48 +49,13 @@ PDF Load → Initial Rendering → Viewer Initialization → On-Demand Rendering
                                         Total: ~400MB
 ```
 
-**For 1000-page PDF:**
-- Phase 3 creates 1000 low-res canvases → ~300MB
-- Only 100 fit in cache → 900 immediately evicted
-- **Wasteful:** 90% of rendering work is discarded
-
 ---
 
 ## Scalability Recommendations
 
 ### Short-Term Fixes
 
-#### 1. Make Phase 3 Rendering Optional
-
-**Problem:** Upfront rendering of ALL pages blocks viewer initialization.
-
-**Solution:** Add CONFIG option to skip Phase 3 for large PDFs.
-
-```javascript
-// CONFIG
-UPFRONT_RENDERING_PAGE_THRESHOLD: 200, // Skip Phase 3 if PDF > N pages
-UPFRONT_RENDERING_ENABLED: true,       // Keep for small PDFs
-```
-
-**Implementation:**
-```javascript
-// In renderPDF()
-const skipUpfront = pdfDoc.numPages > CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD;
-
-if (CONFIG.UPFRONT_RENDERING_ENABLED && !skipUpfront) {
-  // Phase 3: Render all remaining pages
-  await renderAllPagesLowRes();
-}
-```
-
-**Impact:**
-- 1000-page PDF: Viewer opens in ~1 second instead of ~10 seconds
-- Empty tiles initially, filled by on-demand rendering as user pans
-- Acceptable trade-off for large documents
-
----
-
-#### 2. Adaptive Cache Sizing Based on PDF Size
+#### 1. Adaptive Cache Sizing Based on PDF Size
 
 **Problem:** Fixed cache sizes don't scale to document size.
 
@@ -114,7 +77,7 @@ function calculateOptimalCacheSizes(numPages, isIOS) {
 
 ---
 
-#### 3. Progressive Minimap Population
+#### 2. Progressive Minimap Population
 
 **Problem:** Minimap (navigator) is empty until low-res pages render.
 
@@ -141,7 +104,7 @@ function scatteredPageOrder(totalPages) {
 
 ### Medium-Term Improvements
 
-#### 4. Lazy L0 Minimap Tiles
+#### 3. Lazy L0 Minimap Tiles
 
 **Problem:** Navigator tries to show entire grid but pages aren't rendered yet.
 
@@ -172,9 +135,9 @@ async function extractThumbnail(page) {
 
 ---
 
-#### 5. Virtual Page Rendering (Viewport-Only)
+#### 4. Virtual Page Rendering (Viewport-Only)
 
-**Problem:** Pre-rendering all pages wastes memory for out-of-viewport pages.
+**Status:** Viewport-aware rendering and predictive loading are implemented. Further enhancements possible.
 
 **Solution:** Only render pages near viewport, aggressively evict distant pages.
 
@@ -212,7 +175,7 @@ async function extractThumbnail(page) {
 
 ---
 
-#### 6. Tile-to-Tile Resampling
+#### 5. Tile-to-Tile Resampling
 
 **Problem:** On-demand page rendering is slow (30-50ms per page).
 
@@ -249,9 +212,9 @@ Replace with crisp tile when ready
 
 ### Long-Term Vision
 
-#### 7. Web Worker Page Rendering
+#### 6. Web Worker Page Rendering
 
-**Problem:** Page rendering blocks main thread → janky UI.
+**Status:** Async tile rendering with yielding (setTimeout) prevents UI blocking. Web Workers would enable parallel rendering.
 
 **Solution:** Offload PDF rendering to dedicated Web Workers.
 
@@ -283,7 +246,7 @@ self.addEventListener('message', async (e) => {
 
 ---
 
-#### 8. IndexedDB Page Cache Persistence
+#### 7. IndexedDB Page Cache Persistence
 
 **Problem:** Page refresh requires re-rendering all pages.
 
@@ -320,9 +283,9 @@ const cache = {
 
 ---
 
-#### 9. Differential Tile Updates
+#### 8. Differential Tile Updates
 
-**Problem:** Entire tile regenerated when one page updates.
+**Status:** Tile invalidation when pages finish rendering is implemented. Selective region updates could further optimize.
 
 **Solution:** Track which pages changed, only redraw affected tile regions.
 
@@ -387,21 +350,19 @@ Composite onto existing tile
 
 ### Short-Term Optimizations
 
-- Make Phase 3 upfront rendering conditional (skip for 200+ page PDFs)
 - Increase low-res cache cap (200 → 500 pages on desktop)
 
-**Impact:** 3x faster loading for large PDFs
+**Impact:** Better minimap coverage for large PDFs
 
 ---
 
 ### Medium-Term Improvements
 
 - Progressive minimap population with scattered rendering
-- Viewport-aware aggressive eviction for distant pages
 - Hot zone tracking (keep frequently visited pages cached)
 - Memory pressure detection (reduce cache sizes automatically)
 
-**Impact:** 2x better memory efficiency, smoother panning for large PDFs
+**Impact:** Better memory efficiency, smoother panning for large PDFs
 
 ---
 
@@ -429,12 +390,15 @@ Composite onto existing tile
 
 ## Conclusion
 
-PDF Grid Viewer can scale to **1000+ page, 500MB+ PDFs** with targeted optimizations:
+PDF Grid Viewer has improved scalability through targeted optimizations:
 
-1. **Immediate:** Conditional Phase 3 rendering → 3-5x faster load
-2. **Near-term:** Aggressive eviction + hot zones → 2x better memory
-3. **Future:** Virtual rendering + persistence → production-ready
+**Implemented:**
+- Conditional Phase 3 rendering (skip for PDFs >100 pages)
+- LRU caching (PageCache and TileCache)
+- Viewport-aware rendering with predictive loading
+- On-demand rendering for large documents
+- Async tile rendering to prevent UI blocking
 
-**The architecture is sound** - all necessary infrastructure exists (viewport tracking, LRU caching, on-demand rendering, predictive loading). The fixes are mostly **configuration tuning** and **conditional logic**, not major refactors.
+**Architecture is sound** - all necessary infrastructure exists (viewport tracking, LRU caching, on-demand rendering, predictive loading). Further optimizations are mostly **configuration tuning** and **enhancements**, not major refactors.
 
-**Priority:** Implement conditional Phase 3 for maximum impact with minimal risk.
+**Remaining opportunities:** Lazy minimap tiles, hot zone tracking, memory pressure detection, IndexedDB persistence.
