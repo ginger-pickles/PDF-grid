@@ -3549,7 +3549,7 @@
               }
 
               // Try to restore saved viewport first (if same file as last session)
-              const savedViewport = ViewportManager.load(filename);
+              const savedViewport = ViewportManager.load(window.currentPdfFilename);
 
               if (savedViewport) {
                 // Restore saved viewport
@@ -3584,11 +3584,11 @@
 
               // Save viewport when user pans or zooms (debounced)
               viewer.addHandler('zoom', () => {
-                ViewportManager.saveDebounced(viewer.viewport, filename);
+                ViewportManager.saveDebounced(viewer.viewport, window.currentPdfFilename);
               });
 
               viewer.addHandler('pan', () => {
-                ViewportManager.saveDebounced(viewer.viewport, filename);
+                ViewportManager.saveDebounced(viewer.viewport, window.currentPdfFilename);
               });
             });
 
@@ -5299,6 +5299,9 @@
             window.gridPageWidth = pageWidth;
             window.gridPageHeight = pageHeight;
             window.gridSize = gridDims.gridSize;
+
+            // Store filename globally for viewport persistence
+            window.currentPdfFilename = filename;
 
             // Initialize OpenSeadragon viewer
             const viewer = OSDManager.initialize(tileStreamer, pageWidth, pageHeight, gridDims.gridSize, showNavigator);
