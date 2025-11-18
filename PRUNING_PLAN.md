@@ -1,8 +1,6 @@
 # Code Bloat Analysis & Pruning Plan
 **PDF Grid Viewer v1.9.6**
 **Analysis Date:** 2025-11-17
-**Current Size:** 6,500 lines
-**Target Size:** 4,000 lines (38% reduction)
 
 ---
 
@@ -36,6 +34,89 @@ PDF Grid Viewer has grown from ~500 LOC (v1.0) to **6,500 LOC (v1.9.6)** - a 13x
 - Defensive error handling (42 try/catch blocks)
 - Complex bi-directional rendering strategy
 - State management complexity (57 React hooks)
+
+**Current Size:** 6,500 lines
+**Target Size:** 4,000 lines (38% reduction)
+
+---
+
+## Feedback Control: Measurement & Testing
+
+**Philosophy:** Establish the "how" (measurement/testing) before planning the "what" (specific changes). Good feedback loops allow adaptive pruning.
+
+### Automated Testing
+
+After each change:
+```bash
+npm test  # Run full Playwright test suite
+```
+
+### Manual Testing Checklist
+
+- [ ] Load demo.pdf (small file)
+- [ ] Load 100+ page PDF (stress test)
+- [ ] Zoom in/out through all levels
+- [ ] Pan around viewport
+- [ ] Switch between PDFs
+- [ ] Refresh page (test persistence)
+- [ ] Resize to mobile width
+
+### Success Metrics (Track Before/After)
+
+```bash
+# File metrics
+wc -l index.html
+grep -c "console\." index.html
+grep -c "function\|class" index.html
+
+# Gzipped size (actual download size)
+gzip -c index.html | wc -c
+```
+
+### Performance Validation
+
+- [ ] Load time ≤ baseline
+- [ ] Memory usage ≤ baseline
+- [ ] Pan/zoom FPS ≥ baseline
+
+### Rollback Triggers (Automated Detection)
+
+Revert immediately if:
+- Test failures increase >10%
+- Load time regresses >20%
+- Memory usage increases >10%
+- User bug reports spike >50%
+
+---
+
+## Risk Mitigation
+
+### Git Safety Protocol
+
+```bash
+# Commit frequently with descriptive messages
+git commit -m "Phase 1.1: Remove debug logs (150 lines)"
+
+# Tag each milestone for easy rollback
+git tag v1.9.6-phase1-step1
+
+# Can revert to any checkpoint
+git revert <commit>
+```
+
+### High-Risk Changes (Phase 2: TileStreamer)
+
+- Create feature branch: `pruning/tilestreamer`
+- Test with small (10 pages), medium (50 pages), large (200+ pages) PDFs
+- Implement A/B test: `?version=legacy` falls back to old code
+- Keep old TileStreamer commented out for 1 release cycle
+
+### Progressive Release Strategy (Recommended)
+
+- **v1.9.7:** Phases 1+2 (low-hanging fruit + TileStreamer)
+- **v1.9.8:** Phases 3+4 (component + PageStreamer)
+
+Lower risk than big-bang release, enables faster feedback.
 
 ---
 
@@ -284,93 +365,6 @@ PDF Grid Viewer has grown from ~500 LOC (v1.0) to **6,500 LOC (v1.9.6)** - a 13x
    - Estimated: 70 lines
 
 **Total Phase 4: ~150 lines**
-
----
-
-## Testing Strategy
-
-After each phase:
-
-1. **Automated tests** - Run full test suite:
-   ```bash
-   npm test
-   ```
-
-2. **Manual testing checklist**:
-   - [ ] Load demo.pdf (small)
-   - [ ] Load large PDF (100+ pages)
-   - [ ] Zoom in/out (all levels)
-   - [ ] Pan around viewport
-   - [ ] Switch PDFs
-   - [ ] Refresh page (persistence)
-   - [ ] Mobile viewport (resize window)
-
-3. **Performance validation**:
-   - [ ] Load time ≤ baseline
-   - [ ] Memory usage ≤ baseline
-   - [ ] FPS during pan/zoom ≥ baseline
-
-4. **Git commits**:
-   - Commit after each major change
-   - Tag phases: `v1.9.6-phase1`, `v1.9.6-phase2`, etc.
-   - Can revert to last known-good state
-
----
-
-## Risk Mitigation
-
-### High-Risk Changes (Phase 2: TileStreamer)
-
-**Mitigation:**
-- Create feature branch `pruning/tilestreamer`
-- Test with multiple PDF sizes (small, medium, large)
-- A/B test with `?version=legacy` parameter
-- Keep old TileStreamer code commented out for 1 release cycle
-
-### Version Strategy
-
-**Option A: Progressive releases**
-- v1.9.7: Phase 1 + 2 (low-hanging + TileStreamer)
-- v1.9.8: Phase 3 + 4 (component + PageStreamer)
-
-**Option B: Single release**
-- v2.0.0: All phases at once, major version bump
-- Signals "major refactor" to users
-
-**Recommended: Option A** (lower risk, faster feedback)
-
----
-
-## Monitoring & Rollback
-
-### Success Metrics
-
-Track before/after for each phase:
-
-```bash
-# File size
-wc -l index.html
-
-# Function count
-grep -c "function\|class" index.html
-
-# Hook count
-grep -c "useState\|useEffect" index.html
-
-# Console calls
-grep -c "console\." index.html
-
-# Bundle size (if serving gzipped)
-gzip -c index.html | wc -c
-```
-
-### Rollback Triggers
-
-Revert if:
-- Test failures increase >10%
-- Load time increases >20%
-- User reports of bugs increase >50%
-- Memory usage increases >10%
 
 ---
 
