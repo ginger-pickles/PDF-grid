@@ -11,59 +11,11 @@
 2. **PageCache limits** - LRU eviction limits max cached pages
 3. **Browser memory limits** - Mobile Safari crashes at ~200MB canvas memory
 
----
-
-## Current Architecture Overview
-
-### Rendering Pipeline
-
-```
-PDF Load → Initial Rendering → Viewer Initialization → On-Demand Rendering
-          (Phase 1-3)            (OpenSeadragon)        (Viewport-aware)
-```
-
-**Phase 1:** Priority Pages - First ~10 pages at 4x scale (~30-50ms/page)
-**Phase 2:** Viewport Pages - Initial viewport at 0.3x scale (~10ms/page)
-**Phase 3:** Upfront All Pages - **CONDITIONAL** (≤100 pages only, ~10ms/page)
-- Skipped for large PDFs (>100 pages use on-demand rendering)
-
-### Memory Architecture
-
-```
-┌─────────────────────────────────────┐
-│   PageCache (LRU eviction)          │
-│   ├─ Low-res:  100 pages max        │  ← ~30MB
-│   └─ High-res: 100 pages max        │  ← ~250MB
-├─────────────────────────────────────┤
-│   TileCache (LRU + level-aware)     │
-│   └─ 300 tiles (150 on iOS)         │  ← ~120MB
-└─────────────────────────────────────┘
-                                        Total: ~400MB
-```
-
----
-
 ## Scalability Recommendations
 
 ### Short-Term Fixes
 
-#### 1. Adaptive Cache Sizing
-
-Scale cache sizes to document size instead of fixed limits.
-
-```javascript
-function calculateOptimalCacheSizes(numPages, isIOS) {
-  const lowResSize = Math.min(numPages, isIOS ? 200 : 300);  // For minimap
-  const highResSize = isIOS ? 50 : 100;  // Viewport + buffer
-  return { lowResSize, highResSize };
-}
-```
-
-**Recommendation:** Increase desktop low-res cap to 500 pages for better minimap coverage.
-
----
-
-#### 2. Progressive Minimap Population
+#### 1. Progressive Minimap Population
 
 Render low-res pages in scattered (bit-reversal) order for progressive minimap appearance instead of sequential rendering.
 
@@ -79,7 +31,7 @@ function scatteredPageOrder(totalPages) {
 
 ### Medium-Term Improvements
 
-#### 3. Lazy L0 Minimap Tiles
+#### 2. Lazy L0 Minimap Tiles
 
 Generate L0 tiles on-demand using PDF.js thumbnail extraction (0.1x scale).
 
@@ -98,7 +50,7 @@ async function extractThumbnail(page) {
 
 ---
 
-#### 4. Virtual Page Rendering (Viewport-Only)
+#### 3. Virtual Page Rendering (Viewport-Only)
 
 **Status:** Viewport-aware rendering and predictive loading implemented. Enhancements possible.
 
@@ -112,7 +64,7 @@ Viewport Tracker → Priority Calculator → Render Queue
 
 ---
 
-#### 5. Tile-to-Tile Resampling
+#### 4. Tile-to-Tile Resampling
 
 Generate missing tiles by resampling existing tiles at different zoom levels instead of waiting for page rendering (30-50ms).
 
@@ -128,7 +80,7 @@ L3 tile needed → Check L2 exists → Upsample L2→L3 (~1ms) → Return instan
 
 ### Long-Term Vision
 
-#### 6. Web Worker Page Rendering
+#### 5. Web Worker Page Rendering
 
 **Status:** Async tile rendering with setTimeout prevents UI blocking. Web Workers enable parallel rendering.
 
@@ -142,7 +94,7 @@ L3 tile needed → Check L2 exists → Upsample L2→L3 (~1ms) → Return instan
 
 ---
 
-#### 7. IndexedDB Page Cache Persistence
+#### 6. IndexedDB Page Cache Persistence
 
 Persist rendered canvases to IndexedDB for instant page refresh and cross-session cache.
 
@@ -157,7 +109,7 @@ Persist rendered canvases to IndexedDB for instant page refresh and cross-sessio
 
 ---
 
-#### 8. Differential Tile Updates
+#### 7. Differential Tile Updates
 
 **Status:** Tile invalidation implemented. Selective region updates could further optimize.
 
