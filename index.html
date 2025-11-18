@@ -1159,6 +1159,110 @@
         };
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                       VIEWPORT PERSISTENCE MODULE                        ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
+
+        /**
+         * Manages viewport (zoom & pan) persistence across page refreshes
+         * Simple approach: Save current viewport, restore on reload, clear on file change
+         */
+        const ViewportManager = {
+          STORAGE_KEY: 'pdfgrid_viewport',
+          FILENAME_KEY: 'pdfgrid_viewport_filename',
+          saveTimer: null,
+          DEBOUNCE_DELAY: 500, // ms - save viewport 500ms after last change
+
+          /**
+           * Save current viewport state
+           * @param {object} viewport - OpenSeadragon viewport object
+           * @param {string} filename - Current PDF filename
+           */
+          save(viewport, filename) {
+            if (!viewport) return;
+
+            try {
+              const state = {
+                zoom: viewport.getZoom(true),
+                center: viewport.getCenter(true)
+              };
+
+              localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
+              localStorage.setItem(this.FILENAME_KEY, filename || '');
+
+              if (CONFIG.DEBUG_MODE) {
+                console.log('[ViewportManager] Saved viewport:', state);
+              }
+            } catch (error) {
+              console.warn('[ViewportManager] Failed to save viewport:', error);
+            }
+          },
+
+          /**
+           * Save viewport with debouncing (call this from viewport change handlers)
+           * @param {object} viewport - OpenSeadragon viewport object
+           * @param {string} filename - Current PDF filename
+           */
+          saveDebounced(viewport, filename) {
+            if (this.saveTimer) {
+              clearTimeout(this.saveTimer);
+            }
+
+            this.saveTimer = setTimeout(() => {
+              this.save(viewport, filename);
+              this.saveTimer = null;
+            }, this.DEBOUNCE_DELAY);
+          },
+
+          /**
+           * Load saved viewport state
+           * @param {string} currentFilename - Current PDF filename (to check if file changed)
+           * @returns {object|null} {zoom, center} or null if no saved state or file changed
+           */
+          load(currentFilename) {
+            try {
+              const stored = localStorage.getItem(this.STORAGE_KEY);
+              const savedFilename = localStorage.getItem(this.FILENAME_KEY);
+
+              if (!stored) return null;
+
+              // If filename changed, don't restore viewport (reset to default)
+              if (currentFilename && savedFilename !== currentFilename) {
+                if (CONFIG.DEBUG_MODE) {
+                  console.log('[ViewportManager] File changed, not restoring viewport');
+                }
+                return null;
+              }
+
+              const state = JSON.parse(stored);
+
+              if (CONFIG.DEBUG_MODE) {
+                console.log('[ViewportManager] Loaded viewport:', state);
+              }
+
+              return {
+                zoom: state.zoom,
+                center: state.center
+              };
+            } catch (error) {
+              console.warn('[ViewportManager] Failed to load viewport:', error);
+              return null;
+            }
+          },
+
+          /**
+           * Clear saved viewport
+           */
+          clear() {
+            localStorage.removeItem(this.STORAGE_KEY);
+            localStorage.removeItem(this.FILENAME_KEY);
+
+            if (CONFIG.DEBUG_MODE) {
+              console.log('[ViewportManager] Cleared viewport');
+            }
+          }
+        };
+
+        // ╔══════════════════════════════════════════════════════════════════════════╗
         // ║                           TILE CACHE MODULE                              ║
         // ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -3444,7 +3548,14 @@
                 }
               }
 
-              if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
+              // Try to restore saved viewport first (if same file as last session)
+              const savedViewport = ViewportManager.load(filename);
+
+              if (savedViewport) {
+                // Restore saved viewport
+                viewer.viewport.zoomTo(savedViewport.zoom, savedViewport.center, true);
+                viewer.viewport.panTo(savedViewport.center, true);
+              } else if (CONFIG.DEBUG_INITIAL_VIEW_WHOLE_GRID) {
                 // Debug mode: Show the entire grid at once (fills ~90% of viewport per minZoomImageRatio)
                 viewer.viewport.goHome(true);
               } else {
@@ -3470,6 +3581,15 @@
                 );
                 viewer.viewport.fitBounds(viewportRect, true);
               }
+
+              // Save viewport when user pans or zooms (debounced)
+              viewer.addHandler('zoom', () => {
+                ViewportManager.saveDebounced(viewer.viewport, filename);
+              });
+
+              viewer.addHandler('pan', () => {
+                ViewportManager.saveDebounced(viewer.viewport, filename);
+              });
             });
 
             // Track when initial tiles are fully loaded (for automated testing)
