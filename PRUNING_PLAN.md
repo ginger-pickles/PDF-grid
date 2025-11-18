@@ -6,6 +6,23 @@
 
 ---
 
+## Effectivity
+
+**This plan applies to:**
+- index.html v1.9.6 (development branch)
+- Commit: `080aec9` (as of 2025-11-17)
+- 6,500 total lines
+
+**Line number references valid for:** v1.9.6 only
+**Update this plan when:** Major refactors change line numbers significantly
+
+**Related docs:**
+- SCALABILITY.md (optimization recommendations)
+- lessons.md (development principles)
+- CHANGELOG.md (feature history)
+
+---
+
 ## Executive Summary
 
 PDF Grid Viewer has grown from ~500 LOC (v1.0) to **6,500 LOC (v1.9.6)** - a 13x increase. The primary bloat is concentrated in two areas:
@@ -270,19 +287,6 @@ PDF Grid Viewer has grown from ~500 LOC (v1.0) to **6,500 LOC (v1.9.6)** - a 13x
 
 ---
 
-## Cumulative Targets
-
-| Phase | Target Lines | Cumulative | % Reduction | New Total |
-|-------|--------------|------------|-------------|-----------|
-| Baseline | - | - | - | 6,500 |
-| Phase 1 | 400 | 400 | 6% | 6,100 |
-| Phase 2 | 650 | 1,050 | 16% | 5,450 |
-| Phase 3 | 400 | 1,450 | 22% | 5,050 |
-| Phase 4 | 150 | 1,600 | 25% | 4,900 |
-| **Stretch Goal** | 900 | **2,500** | **38%** | **4,000** |
-
----
-
 ## Testing Strategy
 
 After each phase:
@@ -411,32 +415,6 @@ Before merging new code, ask:
 - [ ] Is this debugging code that should be `?debug=1` only?
 - [ ] Is this documentation that could link externally?
 - [ ] Does this consolidate similar code elsewhere?
-
-### LOC Budget
-
-Set quarterly targets:
-
-- **Q1 2025:** Maintain ≤4,000 LOC (pruning complete)
-- **Q2 2025:** Reduce to 3,500 LOC (stretch goals)
-- **Q3 2025:** Maintain 3,500 LOC (no new bloat)
-- **Q4 2025:** Reduce to 3,000 LOC (if feature-complete)
-
----
-
-## Version History & References
-
-**This plan applies to:**
-- index.html v1.9.6 (development branch)
-- Commit: `080aec9` (as of 2025-11-17)
-- 6,500 total lines
-
-**Line number references valid for:** v1.9.6 only
-**Update this plan when:** Major refactors change line numbers significantly
-
-**Related docs:**
-- SCALABILITY.md (optimization recommendations)
-- lessons.md (development principles)
-- CHANGELOG.md (feature history)
 
 ---
 
