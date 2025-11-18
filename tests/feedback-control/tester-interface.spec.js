@@ -34,13 +34,17 @@ test.describe('Agent operates tester.html', () => {
 
         // Navigate to tester
         await page.goto('http://localhost:8000/tester.html');
-        await page.waitForLoadState('networkidle');
+
+        // Wait for tester interface to be ready (not networkidle - iframes load PDFs indefinitely)
+        await page.waitForSelector('#pdfSelect', { state: 'visible' });
+        await page.waitForSelector('#actionSelect', { state: 'visible' });
+        await page.waitForTimeout(2000); // Allow iframes to start loading
 
         log('Tester interface loaded');
 
         // Configure test parameters (operating UI like a human would)
-        log('Selecting test PDF: demo.pdf');
-        await page.selectOption('#pdfSelect', 'demo.pdf');
+        log('Selecting test PDF: demo/demo-1.pdf');
+        await page.selectOption('#pdfSelect', 'demo/demo-1.pdf');
 
         log('Selecting test action: load');
         await page.selectOption('#actionSelect', 'load');
@@ -57,7 +61,7 @@ test.describe('Agent operates tester.html', () => {
 
         // Execute the test action
         log('Executing test action (load PDF)');
-        await page.click('button:has-text("Execute Action")');
+        await page.click('button:has-text("Execute Test")');
 
         // Wait for action to complete
         log('Waiting for PDF load to complete across all versions...');
@@ -179,7 +183,7 @@ test.describe('Agent operates tester.html', () => {
             timestamp: new Date(startTime).toISOString(),
             duration_ms: duration,
             status: testStatus,
-            test_pdf: 'demo.pdf',
+            test_pdf: 'demo/demo-1.pdf',
             action: 'load',
             regressions_detected: hasRegressions,
             log: testLog
@@ -220,3 +224,6 @@ test.use({
     // Slower actions for better video visibility
     actionTimeout: 10000
 });
+
+// Set longer timeout for this test (loading 3 PDFs in iframes takes time)
+test.setTimeout(120000); // 2 minutes
