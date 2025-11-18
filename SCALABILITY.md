@@ -52,7 +52,7 @@ async function extractThumbnail(page) {
 
 #### 3. Virtual Page Rendering (Viewport-Only)
 
-**Status:** Viewport-aware rendering and predictive loading implemented. Enhancements possible.
+Render only pages near viewport with aggressive eviction for distant pages.
 
 ```
 Viewport Tracker → Priority Calculator → Render Queue
@@ -82,7 +82,7 @@ L3 tile needed → Check L2 exists → Upsample L2→L3 (~1ms) → Return instan
 
 #### 5. Web Worker Page Rendering
 
-**Status:** Async tile rendering with setTimeout prevents UI blocking. Web Workers enable parallel rendering.
+Offload page rendering to Web Workers for parallel multi-core processing.
 
 ```javascript
 // Main: worker.postMessage({ type: 'render', pageNum: 5, scale: 4.0 });
@@ -111,8 +111,6 @@ Persist rendered canvases to IndexedDB for instant page refresh and cross-sessio
 
 #### 7. Differential Tile Updates
 
-**Status:** Tile invalidation implemented. Selective region updates could further optimize.
-
 Track changed pages and redraw only affected tile regions instead of regenerating entire tiles.
 
 ```
@@ -127,12 +125,12 @@ Tile [pages 1,2,3] → Page 2 renders → Identify region → Partial redraw →
 ## Monitoring & Diagnostics
 
 **Key Metrics:**
-- Load time (Phase 1/2/3 duration, total time to open)
+- Load time (initial render, on-demand render, total time to interactive)
 - Memory (peak canvas MB, cache breakdown, browser limits)
 - Cache effectiveness (hit rate, eviction count, fallback tiles)
 - UX (blank tile duration, panning FPS, zoom responsiveness)
 
-**Debug Panel Features:** Phase timing breakdown, memory pressure indicator (green <200MB, yellow 200-500MB, red >500MB), cache thrash detector, load time history.
+**Debug Panel Features:** Render timing breakdown, memory pressure indicator, cache thrash detector, load time history.
 
 ---
 
@@ -180,15 +178,12 @@ Tile [pages 1,2,3] → Page 2 renders → Identify region → Partial redraw →
 
 ## Conclusion
 
-PDF Grid Viewer has improved scalability through targeted optimizations:
+Scalability improvements follow a clear path from quick wins to architectural enhancements:
 
-**Implemented:**
-- Conditional Phase 3 rendering (skip for PDFs >100 pages)
-- LRU caching (PageCache and TileCache)
-- Viewport-aware rendering with predictive loading
-- On-demand rendering for large documents
-- Async tile rendering to prevent UI blocking
+**Short-term optimizations** (configuration tuning) can extend support to 200-500 page documents with minimal complexity.
 
-**Architecture is sound** - all necessary infrastructure exists (viewport tracking, LRU caching, on-demand rendering, predictive loading). Further optimizations are mostly **configuration tuning** and **enhancements**, not major refactors.
+**Medium-term improvements** (lazy loading, hot zones, memory pressure detection) enable smoother handling of large PDFs through smarter resource management.
 
-**Remaining opportunities:** Lazy minimap tiles, hot zone tracking, memory pressure detection, IndexedDB persistence.
+**Long-term enhancements** (Web Workers, IndexedDB persistence, differential updates) unlock support for 1000+ page enterprise documents with production-grade performance.
+
+The roadmap balances impact vs. complexity, prioritizing high-value optimizations that build on existing infrastructure.
