@@ -1720,8 +1720,8 @@
               }
 
               // Schedule next batch (with delay to keep UI responsive)
-              // CRITICAL: Use bind(this) to preserve context in setTimeout
-              setTimeout(this._processBackgroundQueue.bind(this), queue.delayMs);
+              // CRITICAL: Use arrow function to preserve lexical 'this' context
+              setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
 
             } catch (error) {
               // Catch any uncaught errors to prevent silent failure
