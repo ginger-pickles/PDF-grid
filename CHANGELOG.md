@@ -5,9 +5,22 @@ All notable changes to PDF Grid Viewer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.6] - 2025-11-16
+## [1.9.6] - 2025-11-17
 
 ### Fixed
+- **Critical: 1,495 console errors eliminated**
+  - Fixed incorrect method calls from `getTile()` to `generateTile()` in background rendering (lines 1881, 1915)
+  - Added pdfDoc validation in `renderPage()` to prevent null reference errors (lines 713-719)
+  - Fixed page indexing bug (0-based to 1-based) for PDF.js compatibility (lines 1819-1822)
+  - Background rendering now executes correctly without throwing errors
+
+- **Critical: UI responsivity regression fixed**
+  - Implemented async tile rendering with yielding to prevent UI thread blocking (lines 1941-1970)
+  - Added `_renderTilesAsync()` helper method that processes tiles one at a time with `setTimeout(0)` between each
+  - Updated high-res and low-res rendering to use async approach (lines 1879, 1903)
+  - Eliminated page rendering timeouts (>10s) caused by synchronous batch processing
+  - Background rendering now completes without freezing the interface
+
 - **Navigator incorrectly showing on mobile/touch devices**
   - Removed forced `showNavigator: true` parameter that bypassed device detection (line 3071)
   - Navigator now properly hidden on small phones (<600px) as intended
@@ -25,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clearing URL field and clicking "Open URL" now destroys viewer and shows home screen
   - Previously showed "Please enter a URL" alert dialog
   - Provides clean way to return to home state without page refresh
+
+### Added
+- **Automated test suite for console errors and viewport persistence**
+  - New test: `tests/console-errors.spec.js` - Detects and verifies zero console errors on PDF load
+  - New test: `tests/viewport-persistence.spec.js` - Validates viewport state persistence across page refreshes
+  - Tests confirm background rendering completes successfully through all levels (L0-L5)
+  - Zero console errors verified on demo-1.pdf loading
 
 ## [1.9.5] - 2025-11-16
 
