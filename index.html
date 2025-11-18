@@ -1510,7 +1510,9 @@
               isRunning: false,      // Is background rendering active
               stopRequested: false,  // Signal to stop background rendering
               batchSize: 10,         // Tiles to render per batch before yielding
-              delayMs: 50            // Delay between batches (ms) - keeps UI responsive
+              delayMs: 50,           // Delay between batches (ms) - keeps UI responsive
+              startTime: null,       // When background rendering started (for grace period)
+              gracePeriodMs: 3000    // Don't allow stopping for first 3s (avoid OSD init animations)
             };
 
             // Diagnostics: Track fallback tiles vs full tiles
@@ -1606,6 +1608,7 @@
             this.backgroundQueue.stopRequested = false;
             this.backgroundQueue.currentLevel = 0;
             this.backgroundQueue.levelIndex = 0;
+            this.backgroundQueue.startTime = Date.now(); // Track start time for grace period
 
             // Start processing from L0
             this._processBackgroundQueue();
@@ -5079,9 +5082,16 @@
             tileStreamer.startBackgroundRendering();
 
             // Pause background rendering during user interactions to prioritize viewport
+            // IMPORTANT: Respect grace period to avoid stopping during OSD initialization
             viewer.addHandler('animation-start', () => {
               if (tileStreamer.backgroundQueue.isRunning) {
-                tileStreamer.stopBackgroundRendering();
+                const elapsedMs = Date.now() - (tileStreamer.backgroundQueue.startTime || 0);
+                if (elapsedMs > tileStreamer.backgroundQueue.gracePeriodMs) {
+                  // Only stop after grace period (avoid OSD init animations)
+                  tileStreamer.stopBackgroundRendering();
+                } else if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Background Rendering] Ignoring animation-start during grace period (${elapsedMs}ms < ${tileStreamer.backgroundQueue.gracePeriodMs}ms)`);
+                }
               }
             });
 
