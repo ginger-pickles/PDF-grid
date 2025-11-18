@@ -1512,7 +1512,11 @@
               batchSize: 10,         // Tiles to render per batch before yielding
               delayMs: 50,           // Delay between batches (ms) - keeps UI responsive
               startTime: null,       // When background rendering started (for grace period)
-              gracePeriodMs: 3000    // Don't allow stopping for first 3s (avoid OSD init animations)
+              gracePeriodMs: 3000,   // Don't allow stopping for first 3s (avoid OSD init animations)
+              // High-res batch state (for levels > minimapMaxLevel)
+              highResBatchIndex: 0,  // Current batch of pages being loaded (0-based)
+              highResBatchSize: 8,   // Pages per batch (must fit in PAGE_CACHE_MAX_SIZE_HIGH=10, leave 2 for safety)
+              highResPreloading: false // Currently preloading high-res pages
             };
 
             // Diagnostics: Track fallback tiles vs full tiles
@@ -1672,17 +1676,117 @@
 
               // If starting a new level, calculate all tiles for this level
               if (queue.levelIndex === 0) {
+                const resolution = this._getResolutionForLevel(queue.currentLevel);
                 queue.tilesInLevel = this._getTilesForLevel(queue.currentLevel);
 
-                // For L2+, sort tiles by page-locality to minimize cache thrashing
-                if (queue.currentLevel >= 2) {
-                  queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
-                }
+                // For high-res levels, we need to batch by pages to avoid cache thrashing
+                if (resolution === 'high') {
+                  // Annotate each tile with required pages
+                  const tilesWithPages = queue.tilesInLevel.map(tile => {
+                    const scale = Math.pow(2, this.maxLevel - tile.level);
+                    const tileWidthInGrid = this.tileWidth * scale;
+                    const tileHeightInGrid = this.tileHeight * scale;
 
-                console.log(`[Background Rendering] Level ${queue.currentLevel}: ${queue.tilesInLevel.length} tiles to render`);
+                    const tileLeft = tile.x * tileWidthInGrid;
+                    const tileTop = tile.y * tileHeightInGrid;
+                    const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
+                    const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
+
+                    const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                    return { ...tile, neededPages };
+                  });
+
+                  // Group tiles by page batches (8 pages per batch fits in 10-page cache)
+                  const batchSize = queue.highResBatchSize;
+                  const tilesGroupedByBatch = [];
+
+                  for (let startPage = 0; startPage < this.numPages; startPage += batchSize) {
+                    const endPage = Math.min(startPage + batchSize, this.numPages);
+                    const pagesInBatch = new Set(Array.from({length: endPage - startPage}, (_, i) => startPage + i));
+
+                    // Find tiles that only need pages from this batch
+                    const tilesInBatch = tilesWithPages.filter(tile =>
+                      tile.neededPages.every(p => pagesInBatch.has(p))
+                    );
+
+                    if (tilesInBatch.length > 0) {
+                      tilesGroupedByBatch.push({
+                        batchIndex: Math.floor(startPage / batchSize),
+                        pageRange: [startPage, endPage - 1],
+                        tiles: tilesInBatch
+                      });
+                    }
+                  }
+
+                  console.log(`[Background Rendering] Level ${queue.currentLevel} (HIGH-RES): ${queue.tilesInLevel.length} tiles grouped into ${tilesGroupedByBatch.length} page batches`);
+                  queue.tilesInLevel = tilesGroupedByBatch;
+                  queue.highResBatchIndex = 0;
+                } else {
+                  // For low-res levels, sort by page-locality
+                  if (queue.currentLevel >= 2) {
+                    queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
+                  }
+                  console.log(`[Background Rendering] Level ${queue.currentLevel} (LOW-RES): ${queue.tilesInLevel.length} tiles to render`);
+                }
               }
 
-              // Render a batch of tiles
+              // Determine if this is a high-res level (different data structure)
+              const resolution = this._getResolutionForLevel(queue.currentLevel);
+              const isHighRes = resolution === 'high';
+
+              if (isHighRes) {
+                // HIGH-RES PROCESSING: Work through page batches
+                if (queue.levelIndex >= queue.tilesInLevel.length) {
+                  // All batches processed, move to next level
+                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  queue.currentLevel++;
+                  queue.levelIndex = 0;
+                  queue.tilesInLevel = [];
+                  setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                  return;
+                }
+
+                const currentBatch = queue.tilesInLevel[queue.levelIndex];
+                const [startPage, endPage] = currentBatch.pageRange;
+                const pagesToLoad = Array.from({length: endPage - startPage + 1}, (_, i) => startPage + i);
+
+                console.log(`[Background Rendering] Processing page batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length}: pages ${startPage}-${endPage} (${currentBatch.tiles.length} tiles)`);
+
+                // Preload all pages for this batch
+                this.pageStreamer.requestPages(pagesToLoad, 'high').then(() => {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Preloaded pages ${startPage}-${endPage}, rendering ${currentBatch.tiles.length} tiles`);
+                  }
+
+                  // Now render all tiles in this batch
+                  for (const tile of currentBatch.tiles) {
+                    try {
+                      this.getTile(tile.level, tile.x, tile.y);
+                    } catch (err) {
+                      console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
+                    }
+
+                    if (queue.stopRequested) {
+                      queue.isRunning = false;
+                      return;
+                    }
+                  }
+
+                  console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
+
+                  // Move to next batch
+                  queue.levelIndex++;
+                  setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                }).catch(err => {
+                  console.error('[Background Rendering] Error preloading pages:', err);
+                  queue.levelIndex++; // Skip this batch on error
+                  setTimeout(() => this._processBackgroundQueue(), queue.delayMs);
+                });
+
+                return; // Don't continue to low-res logic below
+              }
+
+              // LOW-RES PROCESSING: Render tiles directly
               const batch = queue.tilesInLevel.slice(queue.levelIndex, queue.levelIndex + queue.batchSize);
 
               if (CONFIG.VERBOSE_LOGGING) {
@@ -1690,15 +1794,12 @@
               }
 
               for (const tile of batch) {
-                // Render the tile (calls getTile which handles caching)
                 try {
                   this.getTile(tile.level, tile.x, tile.y);
                 } catch (err) {
                   console.error(`[Background Rendering] Error rendering tile L${tile.level}(${tile.x},${tile.y}):`, err);
-                  // Continue with next tile despite error
                 }
 
-                // Check if stop was requested during batch
                 if (queue.stopRequested) {
                   if (CONFIG.VERBOSE_LOGGING) {
                     console.log('[Background Rendering] Stop requested during batch');
