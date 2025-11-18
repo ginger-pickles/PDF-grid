@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.9.6] - 2025-11-17
 
+### Added
+- **Bidirectional rendering strategy for large PDFs**
+  - Solves cache thrashing in PDFs with pages > cache size (e.g., 126 pages with 120 cache)
+  - **Viewport-First rendering**: Immediately renders visible tiles at current zoom level
+  - **L0-Down background rendering**: Progressive L0→L1→L2... rendering with page-locality batching
+  - **Page-locality batching**: Groups L2+ tiles by consecutive page ranges to minimize cache evictions
+  - Background rendering pauses during user interaction, resumes automatically
+  - Eliminates infinite loop where pages 121-126 evict pages 1-6, then 1-6 evict 121-126
+  - New test: `tests/bidirectional-rendering.spec.js` - Validates rendering completes without thrashing
+
+- **Tile quality inspector** (diagnostic tool)
+  - Renamed from `detectIncompleteTilesAllLevels()` to `inspectTileQuality()`
+  - Detects incomplete tiles and blank pages across all zoom levels
+  - Exposed via `window.__PDFGridDiagnostics.inspectTileQuality()`
+  - Console reporting with [Tile Inspector] tag
+  - Future: will also detect blurry tiles
+
+- **Feedback-driven tile healing system**
+  - Automatically heals incomplete tiles at L0/L1/L2/L3 after background rendering
+  - **Detection**: Scans which tiles should exist vs actual cache state
+  - **Identification**: Determines specific missing pages for each incomplete tile
+  - **Rendering**: Requests missing pages with high priority
+  - **Regeneration**: Forces tile regeneration with all pages present
+  - **Verification**: Confirms tiles are now complete
+  - Runs automatically 1s after background rendering completes
+  - Manual trigger: `window.__PDFGridDiagnostics.healIncompleteTiles([0,1,2,3])`
+  - Replaces dead reckoning with actual cache state inspection
+
+- **Viewport persistence across page refreshes**
+  - Saves and restores pan/zoom position when refreshing with same PDF
+  - Debounced saving (500ms) to avoid excessive localStorage writes
+  - Viewport resets automatically when loading a different PDF
+  - New test suite: `tests/viewport-persistence.spec.js` (5 tests)
+    - Viewport persists across refresh for same PDF
+    - Viewport resets when loading different PDF
+    - Zoom and pan events trigger viewport save
+    - Rapid viewport changes properly debounced
+
+- **Automated test suite for console errors and viewport persistence**
+  - New test: `tests/console-errors.spec.js` - Detects and verifies zero console errors on PDF load
+  - New test: `tests/viewport-persistence.spec.js` - Validates viewport state persistence across page refreshes
+  - Tests confirm background rendering completes successfully through all levels (L0-L5)
+  - Zero console errors verified on demo-1.pdf loading
+
 ### Fixed
 - **Critical: 1,495 console errors eliminated**
   - Fixed incorrect method calls from `getTile()` to `generateTile()` in background rendering (lines 1881, 1915)
@@ -21,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Eliminated page rendering timeouts (>10s) caused by synchronous batch processing
   - Background rendering now completes without freezing the interface
 
+- **Critical: High-res cache thrashing with batched page loading**
+  - Fixed cache eviction during high-res rendering by matching batch size to cache size
+  - Prevents pages from being evicted while still needed for current batch
+  - Dynamically adjusts batch size based on `PAGE_CACHE_MAX_SIZE_HIGH` config
+  - Eliminates perpetual re-rendering of same pages due to premature eviction
+
 - **Navigator incorrectly showing on mobile/touch devices**
   - Removed forced `showNavigator: true` parameter that bypassed device detection (line 3071)
   - Navigator now properly hidden on small phones (<600px) as intended
@@ -33,18 +83,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `suppressAlerts` flag threaded through loadPDFFromURL → loadPDF chain
   - All automatic loading paths now gracefully show home screen on failure
 
+- **Stale tiles from OpenSeadragon internal cache**
+  - Disabled OpenSeadragon's image cache (`imageLoaderLimit: 0`) to prevent stale tiles
+  - Ensures tiles always regenerate from current page cache state
+  - Prevents tiles from persisting with outdated/incomplete page data
+
 ### Changed
 - **Empty URL input behavior**
   - Clearing URL field and clicking "Open URL" now destroys viewer and shows home screen
   - Previously showed "Please enter a URL" alert dialog
   - Provides clean way to return to home state without page refresh
 
-### Added
-- **Automated test suite for console errors and viewport persistence**
-  - New test: `tests/console-errors.spec.js` - Detects and verifies zero console errors on PDF load
-  - New test: `tests/viewport-persistence.spec.js` - Validates viewport state persistence across page refreshes
-  - Tests confirm background rendering completes successfully through all levels (L0-L5)
-  - Zero console errors verified on demo-1.pdf loading
+### Technical
+- Bidirectional rendering: L0-Down progressive strategy with viewport-first prioritization
+- Tile healing: Methods `healIncompleteTiles()` and `_identifyRequiredTiles(level)` added
+- Viewport persistence: Global `window.currentPdfFilename` for cross-PDF comparison
+- Cache management: Disabled OSD image cache, nuclear-clear all cached tiles for Level 3+
+- Diagnostic API: `window.__PDFGridDiagnostics.inspectTileQuality()` and `.healIncompleteTiles()`
 
 ## [1.9.5] - 2025-11-16
 
