@@ -1,5 +1,4 @@
 const { test, expect } = require('@playwright/test');
-const path = require('path');
 
 test.describe('Viewport Persistence', () => {
   test.beforeEach(async ({ page }) => {
@@ -12,13 +11,12 @@ test.describe('Viewport Persistence', () => {
   });
 
   test('should persist viewport across page refresh for same PDF', async ({ page }) => {
-    await page.goto('http://localhost:8000/');
+    // Load PDF via URL parameter (more reliable than file upload in automated tests)
+    await page.goto('http://localhost:8000/?pdf=demo/demo-1.pdf');
 
-    // Load demo PDF
-    const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
-    await page.setInputFiles('input[type="file"]', pdfPath);
-    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 10000 });
-    await page.waitForTimeout(1000);
+    // Wait for viewer to initialize
+    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 30000 });
+    await page.waitForTimeout(2000); // Wait for initial rendering
 
     // Get initial viewport
     const initialViewport = await page.evaluate(() => {
@@ -99,12 +97,11 @@ test.describe('Viewport Persistence', () => {
   });
 
   test('should reset viewport when loading different PDF', async ({ page }) => {
-    await page.goto('http://localhost:8000/');
+    // Load PDF via URL parameter
+    await page.goto('http://localhost:8000/?pdf=demo/demo-1.pdf');
 
-    // Load demo PDF
-    const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
-    await page.setInputFiles('input[type="file"]', pdfPath);
-    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 10000 });
+    // Wait for viewer to initialize
+    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 30000 });
     await page.waitForTimeout(2000);
 
     // Zoom and pan
@@ -179,11 +176,11 @@ test.describe('Viewport Persistence', () => {
   });
 
   test('should save viewport changes via zoom event', async ({ page }) => {
-    await page.goto('http://localhost:8000/');
+    // Load PDF via URL parameter
+    await page.goto('http://localhost:8000/?pdf=demo/demo-1.pdf');
 
-    const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
-    await page.setInputFiles('input[type="file"]', pdfPath);
-    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 10000 });
+    // Wait for viewer to initialize
+    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 30000 });
     await page.waitForTimeout(2000);
 
     // Zoom using scroll wheel simulation
@@ -206,11 +203,11 @@ test.describe('Viewport Persistence', () => {
   });
 
   test('should save viewport changes via pan event', async ({ page }) => {
-    await page.goto('http://localhost:8000/');
+    // Load PDF via URL parameter
+    await page.goto('http://localhost:8000/?pdf=demo/demo-1.pdf');
 
-    const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
-    await page.setInputFiles('input[type="file"]', pdfPath);
-    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 10000 });
+    // Wait for viewer to initialize
+    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 30000 });
     await page.waitForTimeout(2000);
 
     // Clear any existing save
@@ -241,11 +238,11 @@ test.describe('Viewport Persistence', () => {
   });
 
   test('should debounce rapid viewport changes', async ({ page }) => {
-    await page.goto('http://localhost:8000/');
+    // Load PDF via URL parameter
+    await page.goto('http://localhost:8000/?pdf=demo/demo-1.pdf');
 
-    const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
-    await page.setInputFiles('input[type="file"]', pdfPath);
-    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 10000 });
+    // Wait for viewer to initialize
+    await page.waitForFunction(() => window.osdViewerRef !== undefined && window.osdViewerRef !== null, { timeout: 30000 });
     await page.waitForTimeout(2000);
 
     // Make rapid viewport changes
