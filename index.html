@@ -1603,14 +1603,14 @@
               return;
             }
 
-            console.log('[Background Rendering] Starting L0-down progressive rendering');
+            console.log(`[Background Rendering] Starting from L${this.maxLevel} down to L0 (overview→detail)`);
             this.backgroundQueue.isRunning = true;
             this.backgroundQueue.stopRequested = false;
-            this.backgroundQueue.currentLevel = 0;
+            this.backgroundQueue.currentLevel = this.maxLevel; // Start from maxLevel (fewest tiles)
             this.backgroundQueue.levelIndex = 0;
             this.backgroundQueue.startTime = Date.now(); // Track start time for grace period
 
-            // Start processing from L0
+            // Start processing from maxLevel (overview)
             this._processBackgroundQueue();
           }
 
@@ -1663,9 +1663,9 @@
                 return;
               }
 
-              // Check if we've reached the max level
-              if (queue.currentLevel > this.maxLevel) {
-                console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+              // Check if we've completed all levels (going from maxLevel down to 0)
+              if (queue.currentLevel < 0) {
+                console.log('[Background Rendering] Completed all levels (L' + this.maxLevel + ' down to L0)');
                 queue.isRunning = false;
                 return;
               }
@@ -1711,10 +1711,10 @@
               // Update progress
               queue.levelIndex += batch.length;
 
-              // If finished current level, move to next level
+              // If finished current level, move to next level (decrement: maxLevel→0)
               if (queue.levelIndex >= queue.tilesInLevel.length) {
                 console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
-                queue.currentLevel++;
+                queue.currentLevel--; // Decrement: go from maxLevel down to 0
                 queue.levelIndex = 0;
                 queue.tilesInLevel = [];
               }
@@ -1744,9 +1744,8 @@
            */
           _getTilesForLevel(level) {
             const tiles = [];
-            // CRITICAL: Invert level for pyramid (L0=overview, higher=detail)
-            // L0 should have 1 tile, L1 has 4 tiles, L2 has 16 tiles, etc.
-            const scale = Math.pow(2, this.maxLevel - level);
+            // In OSD: Level 0 = highest res (most tiles), maxLevel = lowest res (fewest tiles)
+            const scale = Math.pow(2, level);
             const tileWidthInGrid = this.tileWidth / scale;
             const tileHeightInGrid = this.tileHeight / scale;
 
@@ -1773,8 +1772,8 @@
            */
           _sortTilesByPageLocality(tiles) {
             const level = tiles[0].level;
-            // CRITICAL: Invert level for pyramid (L0=overview, higher=detail)
-            const scale = Math.pow(2, this.maxLevel - level);
+            // In OSD: Level 0 = highest res (most tiles), maxLevel = lowest res (fewest tiles)
+            const scale = Math.pow(2, level);
             const tileWidthInGrid = this.tileWidth / scale;
             const tileHeightInGrid = this.tileHeight / scale;
 
@@ -4989,9 +4988,9 @@
                 tilesInCurrentLevel: queue.tilesInLevel.length,
                 tilesRemaining: queue.tilesInLevel.length - queue.levelIndex,
                 maxLevel: tileStreamer.maxLevel,
-                percentComplete: queue.currentLevel > tileStreamer.maxLevel
+                percentComplete: queue.currentLevel < 0
                   ? 100
-                  : ((queue.currentLevel / (tileStreamer.maxLevel + 1)) * 100).toFixed(1)
+                  : (((tileStreamer.maxLevel - queue.currentLevel) / (tileStreamer.maxLevel + 1)) * 100).toFixed(1)
               };
             };
 
