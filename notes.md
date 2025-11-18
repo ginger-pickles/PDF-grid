@@ -2,23 +2,13 @@
 
 ## Known Visual Issues
 
-### Antialiasing Halo Issue (Dark Hairlines at Tile Edges)
-
-**Status**: Known issue, documented in TODO.md line 37
-
-**Issue**: Dark hairlines visible at tile boundaries due to canvas antialiasing blending white page edges with dark background.
-
-**Current Mitigation**:
-- JPEG tiles + subPixelRoundingForTransparency:2 + 1px overlap
-- Significantly improved on desktop, some hairlines remain on iOS Safari
-
-**See**: TODO.md "Further improve sub-pixel hairline gaps between tiles (iOS Safari)" for full analysis and investigation notes.
+**Antialiasing Halo** - Dark hairlines at tile boundaries due to canvas antialiasing. Current mitigation: JPEG tiles + subPixelRoundingForTransparency:2 + 1px overlap. See TODO.md line 37.
 
 ## Performance Optimization Ideas
 
-### Sophisticated Lazy-LRU Cache (Future Reference)
+### Lazy-LRU Cache (Future Reference)
 
-For future needs like cache analytics, different eviction strategies, or more sophisticated monitoring, here's a Lazy-LRU implementation approach:
+For cache analytics or advanced eviction strategies:
 
 ```javascript
 class LazyLRUCache {
@@ -26,14 +16,12 @@ class LazyLRUCache {
     this.cache = new Map();
     this.maxSize = maxSize;
     this.accessCounter = 0;
-    this.accessTimes = new Map(); // key -> last access counter
+    this.accessTimes = new Map();
   }
 
   get(key) {
     const value = this.cache.get(key);
     if (value !== undefined) {
-      // Lazy LRU: just record access time, don't reorganize Map
-      // This avoids the expensive delete() + set() on every read
       this.accessTimes.set(key, ++this.accessCounter);
     }
     return value || null;
@@ -42,7 +30,6 @@ class LazyLRUCache {
   set(key, value) {
     this.cache.set(key, value);
     this.accessTimes.set(key, ++this.accessCounter);
-
     if (this.cache.size > this.maxSize) {
       this._evict();
     }
@@ -63,25 +50,20 @@ class LazyLRUCache {
   }
 
   _evict() {
-    // Find least recently used (lowest access counter)
-    // Only runs on eviction, not on every access
     let oldestKey = null;
     let oldestTime = Infinity;
-
     for (const [key, time] of this.accessTimes) {
       if (time < oldestTime) {
         oldestTime = time;
         oldestKey = key;
       }
     }
-
     if (oldestKey) {
       this.cache.delete(oldestKey);
       this.accessTimes.delete(oldestKey);
     }
   }
 
-  // Bonus: Can add analytics
   getStats() {
     return {
       size: this.cache.size,
@@ -93,77 +75,21 @@ class LazyLRUCache {
 }
 ```
 
-#### Benefits of Lazy-LRU:
-- **Performance**: O(1) for get/set operations (hot path)
-- **Only pays eviction cost when needed**: O(n) only when cache is full
-- **Extensible**: Easy to add different eviction strategies (LFU, adaptive, etc.)
-- **Analytics ready**: Already tracking access patterns
-- **Can add features**: TTL, size-based eviction, cache warming, prefetching
+**Benefits**: O(1) get/set, O(n) eviction only when full, extensible for analytics/metrics.
 
-#### When to Use:
-- Dynamic content that changes over time
-- Need to track which tiles are most frequently accessed
-- Want to implement cache metrics/monitoring
-- Multiple cache strategies needed (dev can swap strategies)
-- More sophisticated eviction policies beyond basic LRU
+### Other Optimization Ideas
 
-## Performance Features (Current Implementation)
+**Grid Periodicity** - Staggered pattern repeats every N rows/cols. Could exploit for cache deduplication at minimap scales. See TODO.md.
 
-The following performance features are **already implemented** in v1.9.x:
+**Rectangular Tiles** - Match page aspect ratio (e.g., 612×792) instead of square tiles. Better packing, fewer tiles, less waste.
 
-✅ **Parallel Rendering** - Viewport-aware parallel page rendering with CPU core detection
-✅ **Predictive Rendering** - Velocity-based motion prediction for ahead-of-viewport rendering
-✅ **On-Demand Rendering** - Immediate render trigger on cache miss with fire-and-forget async
-✅ **Adaptive Fallback** - Intelligent resolution fallback with scale-aware limits
-✅ **LRU Caching** - Separate LRU caches for pages (low-res/high-res) and tiles
+## Current Implementation (v1.9.x)
 
-See `CHANGELOG.md` v1.9.0-v1.9.6 for implementation details.
+✅ Parallel rendering (viewport-aware, CPU core detection)
+✅ Predictive rendering (velocity-based motion prediction)
+✅ On-demand rendering (cache miss triggers)
+✅ Adaptive fallback (intelligent resolution fallback)
+✅ LRU caching (separate low-res/high-res page caches + tile cache)
+✅ Progressive loading (priority viewport, scattered minimap, background rendering)
 
-## CORS Proxy (Current Implementation)
-
-**Current**: `CONFIG.CORS_PROXY` = `'https://corsproxy.io/?'`
-- Automatically applied to external URLs
-- Local files and same-origin URLs bypass proxy
-- See README.md for configuration details and security considerations
-
-## Browser History & Page Refresh
-
-**Status**: Current implementation uses `history.replaceState()` for URL management.
-
-**Future enhancement ideas** (not currently prioritized):
-- Multi-file history support with `pushState()`
-- Canvas persistence in IndexedDB for faster refresh
-- See TODO.md for feature requests
-
-## Grid Pattern Periodicity
-
-**Observation**: The staggered diagonal grid pattern creates spatial periodicity - the arrangement repeats every N rows/columns (where N = number of pages).
-
-**Potential optimization**: Exploit periodicity for cache deduplication at minimap scales.
-
-**Status**: Not currently implemented. Current LRU cache performs well for typical use cases.
-
-**See**: TODO.md line 56-58 for detailed investigation notes on periodicity exploitation.
-
-## Rectangular Tiles (Future Consideration)
-
-**Current**: Square tiles sized to `max(pageWidth, pageHeight)`
-
-**Potential optimization**: Use rectangular tiles matching page aspect ratio (e.g., 612×792 for US Letter)
-
-**Benefits**: Better tile packing, fewer tiles needed, less wasted canvas space
-
-**Status**: Not currently prioritized. Square tiles work well for current use cases.
-
-## Progressive Loading & Background Rendering
-
-**Status**: ✅ **Fully implemented in v1.9.x**
-
-The application now features sophisticated progressive loading with:
-- Priority rendering for viewport pages
-- Scattered bit-reversal ordering for minimap
-- Background rendering without blocking UI
-- Bidirectional resolution fallback
-- Automatic tile invalidation when pages finish rendering
-
-See `CHANGELOG.md` v1.8.0-v1.9.6 for complete implementation history.
+See CHANGELOG.md v1.8.0-v1.9.6 for details.
