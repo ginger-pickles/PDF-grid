@@ -1,6 +1,14 @@
 LESSONS
 -------
 
+RECURSION
+
+All applications should be designed for both human and machine interaction. Machines (agents) must be able to operate the application both like a human would, and as a machine can. Agents must use the tools they develop.
+
+The web browser is the universal local computing platform that everyone has on their computer. The web browser shoud be the interactive interface for all software used by agents. 
+
+
+
 TESTING
 
 Applications should be developed using the principle of feedback control - using measurement and testing to bring error to zero.

@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor - Agent Test Session Review</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .status-passed { color: #10b981; font-weight: bold; }
+        .status-failed { color: #ef4444; font-weight: bold; }
+        .status-warning { color: #f59e0b; font-weight: bold; }
+        .metric-improved { color: #10b981; }
+        .metric-regressed { color: #ef4444; }
+        .metric-unchanged { color: #6b7280; }
+        .section-card {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        .screenshot-thumbnail {
+            width: 200px;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .screenshot-thumbnail:hover {
+            transform: scale(1.05);
+        }
+        #videoPlayer {
+            width: 100%;
+            max-width: 1200px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-6">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Supervisor</h1>
+            <p class="text-gray-600">Agent Test Session Review</p>
+        </header>
+
+        <!-- Session Status -->
+        <div class="section-card" id="sessionStatus">
+            <h2 class="text-xl font-semibold mb-4">Session Status</h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <p class="text-sm text-gray-600">Status</p>
+                    <p id="status" class="text-2xl">Loading...</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Timestamp</p>
+                    <p id="timestamp" class="text-lg">-</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Duration</p>
+                    <p id="duration" class="text-lg">-</p>
+                </div>
+                <div>
+                    <p class="text-sm text-gray-600">Regressions</p>
+                    <p id="regressions" class="text-lg">-</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Video Playback -->
+        <div class="section-card" id="videoSection">
+            <h2 class="text-xl font-semibold mb-4">Agent Session Recording</h2>
+            <div id="videoContainer">
+                <p class="text-gray-600">Loading video...</p>
+            </div>
+        </div>
+
+        <!-- Metrics Comparison -->
+        <div class="section-card" id="metricsSection">
+            <h2 class="text-xl font-semibold mb-4">Metrics Comparison (A vs C)</h2>
+            <table class="w-full" id="metricsTable">
+                <thead>
+                    <tr class="border-b">
+                        <th class="text-left py-2">Metric</th>
+                        <th class="text-left py-2">Version A (New)</th>
+                        <th class="text-left py-2">Version C (Baseline)</th>
+                        <th class="text-left py-2">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="metricsBody">
+                    <tr>
+                        <td colspan="4" class="py-4 text-gray-600">Loading metrics...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Screenshots -->
+        <div class="section-card" id="screenshotsSection">
+            <h2 class="text-xl font-semibold mb-4">Screenshots</h2>
+            <div id="screenshotsContainer" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <p class="text-gray-600">Loading screenshots...</p>
+            </div>
+        </div>
+
+        <!-- Test Log -->
+        <div class="section-card" id="testLogSection">
+            <h2 class="text-xl font-semibold mb-4">Test Log</h2>
+            <div id="testLog" class="bg-gray-50 p-4 rounded font-mono text-sm max-h-96 overflow-y-auto">
+                <p class="text-gray-600">Loading test log...</p>
+            </div>
+        </div>
+
+        <!-- Agent Decision -->
+        <div class="section-card" id="decisionSection">
+            <h2 class="text-xl font-semibold mb-4">Agent Decision</h2>
+            <div id="agentDecision" class="text-lg">
+                <p class="text-gray-600">Analyzing...</p>
+            </div>
+        </div>
+
+        <!-- Export Controls -->
+        <div class="section-card">
+            <h2 class="text-xl font-semibold mb-4">Export</h2>
+            <button onclick="Supervisor.downloadSummary()" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                Download Summary (JSON)
+            </button>
+            <button onclick="Supervisor.openTraceViewer()" class="ml-4 px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                Open Playwright Trace Viewer
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const Supervisor = {
+            sessionPath: 'tests/feedback-control/latest-session/',
+            sessionData: null,
+            summary: null,
+
+            async init() {
+                console.log('[Supervisor] Initializing...');
+                await this.loadSessionData();
+                this.renderSessionStatus();
+                this.renderVideo();
+                this.renderMetrics();
+                this.renderScreenshots();
+                this.renderTestLog();
+                this.renderDecision();
+                this.generateSummaryJSON();
+                console.log('[Supervisor] Initialization complete');
+            },
+
+            async loadSessionData() {
+                try {
+                    // Load session metadata
+                    const metadataResponse = await fetch(`${this.sessionPath}session-metadata.json`);
+                    const metadata = await metadataResponse.json();
+
+                    // Load metrics
+                    const metricsResponse = await fetch(`${this.sessionPath}metrics.json`);
+                    const metrics = await metricsResponse.json();
+
+                    this.sessionData = {
+                        metadata,
+                        metrics
+                    };
+
+                    console.log('[Supervisor] Session data loaded:', this.sessionData);
+                } catch (error) {
+                    console.error('[Supervisor] Error loading session data:', error);
+                    this.showError('Failed to load session data. Ensure Playwright test has been run.');
+                }
+            },
+
+            renderSessionStatus() {
+                if (!this.sessionData) return;
+
+                const { metadata } = this.sessionData;
+
+                // Status
+                const statusEl = document.getElementById('status');
+                statusEl.textContent = metadata.status === 'passed' ? 'PASSED' : 'FAILED';
+                statusEl.className = metadata.status === 'passed' ? 'status-passed text-2xl' : 'status-failed text-2xl';
+
+                // Timestamp
+                const timestamp = new Date(metadata.timestamp);
+                document.getElementById('timestamp').textContent = timestamp.toLocaleString();
+
+                // Duration
+                const durationMs = metadata.duration_ms;
+                const durationSec = (durationMs / 1000).toFixed(2);
+                document.getElementById('duration').textContent = `${durationSec}s`;
+
+                // Regressions
+                const hasRegressions = this.detectRegressions();
+                const regressionsEl = document.getElementById('regressions');
+                if (hasRegressions) {
+                    regressionsEl.textContent = 'YES';
+                    regressionsEl.className = 'status-failed text-lg';
+                } else {
+                    regressionsEl.textContent = 'NO';
+                    regressionsEl.className = 'status-passed text-lg';
+                }
+            },
+
+            renderVideo() {
+                const videoContainer = document.getElementById('videoContainer');
+                const videoPath = `${this.sessionPath}video.webm`;
+
+                videoContainer.innerHTML = `
+                    <video id="videoPlayer" controls>
+                        <source src="${videoPath}" type="video/webm">
+                        Your browser does not support video playback.
+                    </video>
+                `;
+            },
+
+            renderMetrics() {
+                if (!this.sessionData || !this.sessionData.metrics) return;
+
+                const { metrics } = this.sessionData;
+                const tbody = document.getElementById('metricsBody');
+                tbody.innerHTML = '';
+
+                // Metrics to display
+                const metricsToShow = [
+                    { key: 'loadTime', label: 'Load Time (ms)', preference: 'lower' },
+                    { key: 'consoleErrors', label: 'Console Errors', preference: 'lower' },
+                    { key: 'pagesCached', label: 'Pages Cached', preference: 'higher' },
+                    { key: 'tilesCached', label: 'Tiles Cached', preference: 'higher' },
+                    { key: 'cacheHitRate', label: 'Cache Hit Rate (%)', preference: 'higher' }
+                ];
+
+                metricsToShow.forEach(metric => {
+                    const valueA = metrics.versionA?.[metric.key] || 'N/A';
+                    const valueC = metrics.versionC?.[metric.key] || 'N/A';
+
+                    const status = this.compareMetric(valueA, valueC, metric.preference);
+
+                    const row = document.createElement('tr');
+                    row.className = 'border-b';
+                    row.innerHTML = `
+                        <td class="py-2">${metric.label}</td>
+                        <td class="py-2">${valueA}</td>
+                        <td class="py-2">${valueC}</td>
+                        <td class="py-2 ${status.class}">${status.text}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            },
+
+            compareMetric(valueA, valueC, preference) {
+                if (valueA === 'N/A' || valueC === 'N/A') {
+                    return { text: 'N/A', class: 'metric-unchanged' };
+                }
+
+                const a = parseFloat(valueA);
+                const c = parseFloat(valueC);
+
+                if (isNaN(a) || isNaN(c)) {
+                    return { text: 'N/A', class: 'metric-unchanged' };
+                }
+
+                const diff = a - c;
+                const percentChange = Math.abs((diff / c) * 100).toFixed(1);
+
+                if (Math.abs(diff) < 0.01 * c) {
+                    return { text: 'Unchanged', class: 'metric-unchanged' };
+                }
+
+                if (preference === 'lower') {
+                    if (a < c) {
+                        return { text: `✓ ${percentChange}% better`, class: 'metric-improved' };
+                    } else {
+                        return { text: `⚠ ${percentChange}% worse`, class: 'metric-regressed' };
+                    }
+                } else {
+                    if (a > c) {
+                        return { text: `✓ ${percentChange}% better`, class: 'metric-improved' };
+                    } else {
+                        return { text: `⚠ ${percentChange}% worse`, class: 'metric-regressed' };
+                    }
+                }
+            },
+
+            detectRegressions() {
+                if (!this.sessionData || !this.sessionData.metrics) return false;
+
+                const { metrics } = this.sessionData;
+
+                // Check critical metrics for regressions
+                const criticalMetrics = [
+                    { key: 'loadTime', preference: 'lower' },
+                    { key: 'consoleErrors', preference: 'lower' }
+                ];
+
+                return criticalMetrics.some(metric => {
+                    const valueA = parseFloat(metrics.versionA?.[metric.key]);
+                    const valueC = parseFloat(metrics.versionC?.[metric.key]);
+
+                    if (isNaN(valueA) || isNaN(valueC)) return false;
+
+                    if (metric.preference === 'lower') {
+                        return valueA > valueC * 1.1; // 10% worse threshold
+                    } else {
+                        return valueA < valueC * 0.9; // 10% worse threshold
+                    }
+                });
+            },
+
+            renderScreenshots() {
+                const container = document.getElementById('screenshotsContainer');
+
+                // For now, show placeholder - screenshots will be added by Playwright test
+                container.innerHTML = `
+                    <div class="col-span-4 text-gray-600">
+                        Screenshots will appear here after Playwright test execution.
+                    </div>
+                `;
+
+                // TODO: Load actual screenshots from session directory
+            },
+
+            renderTestLog() {
+                if (!this.sessionData || !this.sessionData.metadata) return;
+
+                const { metadata } = this.sessionData;
+                const logContainer = document.getElementById('testLog');
+
+                const logEntries = metadata.log || [];
+
+                if (logEntries.length === 0) {
+                    logContainer.innerHTML = '<p class="text-gray-600">No test log available.</p>';
+                    return;
+                }
+
+                logContainer.innerHTML = logEntries.map(entry => {
+                    const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+                    return `<div>[${timestamp}] ${entry.message}</div>`;
+                }).join('');
+            },
+
+            renderDecision() {
+                if (!this.sessionData) return;
+
+                const hasRegressions = this.detectRegressions();
+                const status = this.sessionData.metadata.status;
+                const decisionEl = document.getElementById('agentDecision');
+
+                let decision = '';
+                let className = '';
+
+                if (status === 'failed') {
+                    decision = '🔴 ROLLBACK - Test failed, revert changes';
+                    className = 'status-failed';
+                } else if (hasRegressions) {
+                    decision = '⚠️  INVESTIGATE - Regressions detected, review before proceeding';
+                    className = 'status-warning';
+                } else {
+                    decision = '✅ CONTINUE - No regressions detected, safe to proceed';
+                    className = 'status-passed';
+                }
+
+                decisionEl.innerHTML = `<p class="${className}">${decision}</p>`;
+            },
+
+            generateSummaryJSON() {
+                if (!this.sessionData) return;
+
+                const hasRegressions = this.detectRegressions();
+                const { metadata, metrics } = this.sessionData;
+
+                // Determine improvements
+                const improvements = [];
+                const metricsToCheck = [
+                    { key: 'loadTime', preference: 'lower' },
+                    { key: 'consoleErrors', preference: 'lower' },
+                    { key: 'cacheHitRate', preference: 'higher' }
+                ];
+
+                metricsToCheck.forEach(metric => {
+                    const valueA = parseFloat(metrics.versionA?.[metric.key]);
+                    const valueC = parseFloat(metrics.versionC?.[metric.key]);
+
+                    if (!isNaN(valueA) && !isNaN(valueC)) {
+                        const improved = metric.preference === 'lower' ? valueA < valueC : valueA > valueC;
+                        if (improved && Math.abs(valueA - valueC) > 0.05 * valueC) {
+                            improvements.push(metric.key);
+                        }
+                    }
+                });
+
+                // Determine agent decision
+                let agentDecision = 'continue';
+                if (metadata.status === 'failed') {
+                    agentDecision = 'rollback';
+                } else if (hasRegressions) {
+                    agentDecision = 'investigate';
+                }
+
+                this.summary = {
+                    session: {
+                        timestamp: metadata.timestamp,
+                        status: metadata.status,
+                        duration_ms: metadata.duration_ms
+                    },
+                    metrics: {
+                        regressions_detected: hasRegressions,
+                        improvements: improvements,
+                        comparison: {
+                            versionA: metrics.versionA,
+                            versionC: metrics.versionC
+                        }
+                    },
+                    agent_decision: agentDecision,
+                    files: {
+                        video: `${this.sessionPath}video.webm`,
+                        trace: `${this.sessionPath}trace.json`,
+                        metrics: `${this.sessionPath}metrics.json`
+                    }
+                };
+
+                // Write to file (via download)
+                this.saveSummaryToFile();
+
+                console.log('[Supervisor] Summary generated:', this.summary);
+            },
+
+            async saveSummaryToFile() {
+                if (!this.summary) return;
+
+                // Auto-save summary JSON for agent consumption
+                const blob = new Blob([JSON.stringify(this.summary, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+
+                // In a real implementation, this would save to tests/feedback-control/latest-session/supervisor-summary.json
+                // For now, we'll provide it for download
+                console.log('[Supervisor] Summary JSON ready for download');
+            },
+
+            downloadSummary() {
+                if (!this.summary) {
+                    alert('No summary available yet. Please wait for data to load.');
+                    return;
+                }
+
+                const blob = new Blob([JSON.stringify(this.summary, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'supervisor-summary.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            },
+
+            openTraceViewer() {
+                alert('To view the Playwright trace, run:\n\nnpx playwright show-trace tests/feedback-control/latest-session/trace.json');
+            },
+
+            showError(message) {
+                document.querySelector('.container').innerHTML = `
+                    <div class="section-card bg-red-50 border border-red-200">
+                        <h2 class="text-xl font-semibold text-red-800 mb-2">Error</h2>
+                        <p class="text-red-600">${message}</p>
+                        <p class="text-sm text-gray-600 mt-4">
+                            To generate session data, run:<br>
+                            <code class="bg-gray-100 px-2 py-1 rounded">npx playwright test tests/feedback-control/tester-interface.spec.js</code>
+                        </p>
+                    </div>
+                `;
+            }
+        };
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            Supervisor.init();
+        });
+    </script>
+</body>
+</html>

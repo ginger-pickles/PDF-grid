@@ -151,10 +151,113 @@ But **tester.html remains the primary feedback control interface.**
 ✅ **Regression detection**: Automatic warnings visible in UI
 ✅ **Synchronous testing**: All versions tested simultaneously
 
+## Recursive Architecture: supervisor.html
+
+**The complete feedback control hierarchy:**
+
+```
+Human/Agent ←→ supervisor.html ←→ Playwright test ←→ tester.html ←→ index-2.html
+              (reviews testing)    (operates tester) (tests app)    (the app)
+```
+
+### supervisor.html: Reviewing Agent Test Sessions
+
+**Purpose**: Human interface to review agent's operation of tester.html
+
+**Displays**:
+- Video recording of agent operating tester.html
+- Metrics extracted by agent (A/B/C comparison)
+- Regression alerts and pass/fail status
+- Screenshots at key moments
+- Test duration and session metadata
+
+**Dual output for agent accessibility**:
+1. **Visual dashboard** (human-readable in browser)
+2. **supervisor-summary.json** (machine-readable, auto-generated)
+
+### Agent Access to supervisor.html (Without Playwright)
+
+```bash
+# Agent checks supervisor report (lightweight)
+curl http://localhost:8000/tests/feedback-control/latest-session/supervisor-summary.json
+
+# Parse JSON
+{
+  "session": {
+    "timestamp": "2025-11-18T10:30:00Z",
+    "status": "passed",
+    "duration_ms": 5423
+  },
+  "metrics": {
+    "regressions_detected": false,
+    "improvements": ["load_time", "cache_efficiency"]
+  },
+  "agent_decision": "continue"
+}
+```
+
+**When agent would use Playwright on supervisor.html**: Only for interactive exploration (drill into traces, compare multiple sessions). For basic pass/fail checking, just read the JSON.
+
+### File Structure
+
+```
+/
+├── index.html              # Baseline (version C)
+├── index-2.html            # Rewrite (version A)
+├── tester.html             # A/B/C comparison interface
+├── supervisor.html         # Review agent test sessions
+└── tests/feedback-control/
+    ├── tester-interface.spec.js    # Agent operates tester.html
+    └── latest-session/
+        ├── video.webm              # Recording of agent
+        ├── trace.json              # Playwright trace data
+        ├── screenshots/            # Key moments
+        ├── metrics.json           # Data agent extracted
+        ├── session-metadata.json  # Test results
+        └── supervisor-summary.json # Machine-readable summary
+```
+
+## Complete Workflow
+
+### Human Workflow
+1. Open `supervisor.html` in browser
+2. Watch video of agent operating tester.html
+3. Review metrics, regressions, decisions
+4. Approve or investigate further
+
+### Agent Workflow (Automated Refactoring)
+```bash
+# 1. Agent modifies index-2.html
+vim index-2.html
+
+# 2. Agent runs test (operates tester.html via Playwright)
+npx playwright test tests/feedback-control/tester-interface.spec.js
+
+# 3. Playwright outputs:
+#    - video.webm (recording)
+#    - metrics.json (extracted data)
+#    - trace.json (full trace)
+#    - session-metadata.json (pass/fail)
+
+# 4. supervisor.html loads latest session
+#    - Generates supervisor-summary.json automatically
+
+# 5. Agent (or meta-agent) checks results
+curl http://localhost:8000/tests/feedback-control/latest-session/supervisor-summary.json
+
+# 6. Agent decides based on results
+if [ "$(jq -r .metrics.regressions_detected)" = "false" ]; then
+  git commit -m "Refactor: no regressions detected"
+else
+  git revert HEAD
+fi
+```
+
 ## Next Steps
 
-1. **Create Playwright wrapper**: `tests/feedback-control/tester-interface.spec.js`
-2. **Agent uses tester.html for every refactor iteration**
-3. **Specialized tests spun off as needed**
+1. **Create supervisor.html**: Visual dashboard + auto-generates JSON
+2. **Create Playwright wrapper**: `tests/feedback-control/tester-interface.spec.js`
+3. **Configure Playwright**: Output video/trace/screenshots to `latest-session/`
+4. **Test complete loop**: Agent → tester.html → supervisor.html → decision
 
-The agent operates tester.html exactly as a human would - because agents must use the tools they develop.
+The agent operates tester.html exactly as a human would - and humans review agent sessions via supervisor.html exactly as they would review their own testing.
