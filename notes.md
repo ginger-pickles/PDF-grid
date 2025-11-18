@@ -2,7 +2,7 @@
 
 ## Known Visual Issues
 
-**Antialiasing Halo** - Dark hairlines at tile boundaries due to canvas antialiasing. Current mitigation: JPEG tiles + subPixelRoundingForTransparency:2 + 1px overlap. See TODO.md line 37.
+**Antialiasing Halo** - Dark hairlines at tile boundaries due to canvas antialiasing. See TODO.md line 37.
 
 ## Performance Optimization Ideas
 
@@ -82,14 +82,3 @@ class LazyLRUCache {
 **Grid Periodicity** - Staggered pattern repeats every N rows/cols. Could exploit for cache deduplication at minimap scales. See TODO.md.
 
 **Rectangular Tiles** - Match page aspect ratio (e.g., 612×792) instead of square tiles. Better packing, fewer tiles, less waste.
-
-## Current Implementation (v1.9.x)
-
-✅ Parallel rendering (viewport-aware, CPU core detection)
-✅ Predictive rendering (velocity-based motion prediction)
-✅ On-demand rendering (cache miss triggers)
-✅ Adaptive fallback (intelligent resolution fallback)
-✅ LRU caching (separate low-res/high-res page caches + tile cache)
-✅ Progressive loading (priority viewport, scattered minimap, background rendering)
-
-See CHANGELOG.md v1.8.0-v1.9.6 for details.
