@@ -277,43 +277,35 @@
 
             async loadPDFList() {
                 try {
-                    // Fetch directory listing from server
-                    const response = await fetch('demo/');
-                    const html = await response.text();
-
-                    // Parse HTML to extract PDF filenames
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    const links = doc.querySelectorAll('a');
-
-                    const pdfFiles = [];
-                    links.forEach(link => {
-                        const href = link.getAttribute('href');
-                        if (href && href.endsWith('.pdf')) {
-                            pdfFiles.push(href);
-                        }
-                    });
+                    // Fetch PDF list from API
+                    const response = await fetch('/api/list-pdfs');
+                    const data = await response.json();
 
                     // Populate dropdown
                     const select = document.getElementById('pdfSelect');
                     select.innerHTML = '';
 
-                    if (pdfFiles.length === 0) {
+                    if (!data.pdfs || data.pdfs.length === 0) {
                         select.innerHTML = '<option value="">No PDFs found in demo/</option>';
                         this.log('No PDFs found in demo/ folder', 'warn');
                         return;
                     }
 
-                    pdfFiles.forEach(filename => {
+                    data.pdfs.forEach(pdf => {
                         const option = document.createElement('option');
-                        option.value = `demo/${filename}`;
-                        option.textContent = filename;
+                        option.value = pdf.path;
+                        option.textContent = pdf.filename;
                         select.appendChild(option);
                     });
 
                     // Select the first PDF by default
                     select.selectedIndex = 0;
-                    this.log(`Loaded ${pdfFiles.length} PDFs from demo/ folder`, 'success');
+                    this.log(`Loaded ${data.count} PDFs from demo/ folder`, 'success');
+
+                    // Auto-load the first PDF into all versions
+                    if (data.pdfs.length > 0) {
+                        this.loadPdfInAllVersions(data.pdfs[0].path);
+                    }
                 } catch (error) {
                     this.log(`Could not load PDF list: ${error.message}`, 'error');
                     // Fallback to hardcoded list

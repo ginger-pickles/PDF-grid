@@ -190,6 +190,32 @@ app.post('/api/save-summary', async (req, res) => {
 });
 
 /**
+ * List all PDFs in demo directory
+ */
+app.get('/api/list-pdfs', async (req, res) => {
+    try {
+        const demoDir = path.join(__dirname, 'demo');
+        const files = await fs.readdir(demoDir);
+
+        // Filter for PDF files only
+        const pdfFiles = files.filter(file => file.toLowerCase().endsWith('.pdf'));
+
+        res.json({
+            pdfs: pdfFiles.map(filename => ({
+                filename,
+                path: `demo/${filename}`
+            })),
+            count: pdfFiles.length
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: 'Failed to list PDFs',
+            message: error.message
+        });
+    }
+});
+
+/**
  * Organize test results (same as organize-results.js)
  */
 async function organizeResults() {
