@@ -13,11 +13,12 @@
         .metric-regressed { color: #ef4444; }
         .metric-unchanged { color: #6b7280; }
         .section-card {
-            background: white;
+            background: #1f2937;
             border-radius: 8px;
             padding: 1.5rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
             margin-bottom: 1.5rem;
+            color: #e5e7eb;
         }
         .screenshot-thumbnail {
             width: 200px;
@@ -37,45 +38,115 @@
         }
     </style>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-900">
     <div class="container mx-auto px-4 py-6">
         <header class="mb-6">
-            <h1 class="text-3xl font-bold text-gray-800">Supervisor</h1>
-            <p class="text-gray-600">Agent Test Session Review</p>
+            <h1 class="text-3xl font-bold text-gray-100">Supervisor</h1>
+            <p class="text-gray-400">Agent Test Session Review</p>
         </header>
 
-        <!-- Session Status -->
+        <div class="section-card mb-6 border-2 border-blue-500">
+            <h2 class="text-xl font-semibold mb-3 text-blue-300">📋 Active Setpoint</h2>
+            <div id="setpointDisplay" class="space-y-2 min-h-[100px]">
+                <div class="text-lg font-medium text-gray-100" id="setpointDescription">Loading...</div>
+                <div class="grid grid-cols-2 gap-2 mt-3 text-sm" id="setpointRequirements">
+                </div>
+            </div>
+        </div>
+
+        <div class="section-card mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold">Test Execution</h2>
+                    <p class="text-sm text-gray-300">Execute Playwright test and monitor results</p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="runTestBtn" onclick="TestRunner.runTest()"
+                            class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">
+                        ▶ Run Playwright Test
+                    </button>
+                    <button id="stopTestBtn" onclick="TestRunner.stopTest()"
+                            class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium hidden">
+                        ⏹ Stop Test
+                    </button>
+                    <button onclick="Supervisor.init()"
+                            class="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded font-medium">
+                        🔄 Refresh Results
+                    </button>
+                </div>
+            </div>
+            <div id="testOutput" class="mt-4 hidden">
+                <div class="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm max-h-96 overflow-y-auto">
+                    <div id="testOutputContent"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-card" id="setpointEditor">
+            <h2 class="text-xl font-semibold mb-4">📋 Setpoint Definition</h2>
+            <div class="mb-4">
+                <p class="text-sm text-gray-300 mb-2">
+                    Define the requirements that the system must meet. Changes are saved to <code class="bg-blue-900 text-blue-200 px-2 py-1 rounded border border-blue-600">SETPOINT.md</code> for version control.
+                </p>
+                <div class="flex gap-2 mb-3">
+                    <input type="file" id="setpointFileInput" accept=".md,.txt" class="hidden" onchange="Supervisor.handleFileSelect(event)">
+                    <button onclick="document.getElementById('setpointFileInput').click()"
+                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded">
+                        📂 Load
+                    </button>
+                    <button onclick="Supervisor.saveSetpoint()"
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded">
+                        💾 Save
+                    </button>
+                    <button onclick="Supervisor.saveSetpointAs()"
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded">
+                        💾 Save As
+                    </button>
+                    <button onclick="Supervisor.toggleSetpointEditor()"
+                            class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded">
+                        <span id="setpointToggleIcon">▲</span> Toggle Editor
+                    </button>
+                </div>
+                <div id="setpointEditorContainer">
+                    <textarea id="setpointTextarea"
+                              class="w-full h-64 p-4 border border-gray-600 bg-gray-800 text-gray-100 rounded font-mono text-sm"
+                              placeholder="# Setpoint Definition&#10;&#10;## Description&#10;Demo PDF loads successfully in all versions with no regressions&#10;&#10;## Requirements&#10;- all_versions_load_successfully: true&#10;- console_errors_max: 0&#10;- max_load_time_ms: 15000&#10;- warning_load_time_ms: 8000&#10;- performance_regression_percent: 10"></textarea>
+                    <div class="mt-2 text-sm text-gray-300">
+                        <span id="setpointStatus">Ready to edit</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="section-card" id="sessionStatus">
             <h2 class="text-xl font-semibold mb-4">Session Status</h2>
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
-                    <p class="text-sm text-gray-600">Status</p>
+                    <p class="text-sm text-gray-300">Status</p>
                     <p id="status" class="text-2xl">Loading...</p>
                 </div>
                 <div>
-                    <p class="text-sm text-gray-600">Timestamp</p>
+                    <p class="text-sm text-gray-300">Timestamp</p>
                     <p id="timestamp" class="text-lg">-</p>
                 </div>
                 <div>
-                    <p class="text-sm text-gray-600">Duration</p>
+                    <p class="text-sm text-gray-300">Duration</p>
                     <p id="duration" class="text-lg">-</p>
                 </div>
                 <div>
-                    <p class="text-sm text-gray-600">Regressions</p>
+                    <p class="text-sm text-gray-300">Regressions</p>
                     <p id="regressions" class="text-lg">-</p>
                 </div>
             </div>
         </div>
 
-        <!-- Video Playback -->
-        <div class="section-card" id="videoSection">
-            <h2 class="text-xl font-semibold mb-4">Agent Session Recording</h2>
-            <div id="videoContainer">
-                <p class="text-gray-600">Loading video...</p>
+        <div class="section-card" id="decisionSection">
+            <h2 class="text-xl font-semibold mb-4">Agent Decision</h2>
+            <div id="agentDecision" class="text-lg">
+                <p class="text-gray-300">Analyzing...</p>
             </div>
         </div>
 
-        <!-- Metrics Comparison -->
         <div class="section-card" id="metricsSection">
             <h2 class="text-xl font-semibold mb-4">Metrics Comparison (A vs C)</h2>
             <table class="w-full" id="metricsTable">
@@ -89,93 +160,269 @@
                 </thead>
                 <tbody id="metricsBody">
                     <tr>
-                        <td colspan="4" class="py-4 text-gray-600">Loading metrics...</td>
+                        <td colspan="4" class="py-4 text-gray-300">Loading metrics...</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <!-- Screenshots -->
+        <div class="section-card" id="videoSection">
+            <h2 class="text-xl font-semibold mb-4">Agent Session Recording</h2>
+            <div id="videoContainer">
+                <p class="text-gray-300">Loading video...</p>
+            </div>
+        </div>
+
         <div class="section-card" id="screenshotsSection">
             <h2 class="text-xl font-semibold mb-4">Screenshots</h2>
             <div id="screenshotsContainer" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <p class="text-gray-600">Loading screenshots...</p>
+                <p class="text-gray-300">Loading screenshots...</p>
             </div>
         </div>
 
-        <!-- Test Log -->
         <div class="section-card" id="testLogSection">
             <h2 class="text-xl font-semibold mb-4">Test Log</h2>
-            <div id="testLog" class="bg-gray-50 p-4 rounded font-mono text-sm max-h-96 overflow-y-auto">
-                <p class="text-gray-600">Loading test log...</p>
+            <div id="testLog" class="bg-gray-800 p-4 rounded font-mono text-sm max-h-96 overflow-y-auto text-gray-200">
+                <p class="text-gray-300">Loading test log...</p>
             </div>
         </div>
 
-        <!-- Agent Decision -->
-        <div class="section-card" id="decisionSection">
-            <h2 class="text-xl font-semibold mb-4">Agent Decision</h2>
-            <div id="agentDecision" class="text-lg">
-                <p class="text-gray-600">Analyzing...</p>
-            </div>
-        </div>
-
-        <!-- Export Controls -->
         <div class="section-card">
             <h2 class="text-xl font-semibold mb-4">Export</h2>
-            <button onclick="Supervisor.downloadSummary()" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                Download Summary (JSON)
-            </button>
-            <button onclick="Supervisor.openTraceViewer()" class="ml-4 px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-                Open Playwright Trace Viewer
-            </button>
+            <div class="flex gap-3">
+                <button onclick="Supervisor.saveSummaryToFile()" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    💾 Save Analysis
+                </button>
+                <button onclick="Supervisor.openTraceViewer()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                    🔍 Open Trace Viewer
+                </button>
+            </div>
         </div>
     </div>
 
     <script>
         const Supervisor = {
-            sessionPath: 'tests/feedback-control/latest-session/',
+            sessionPath: 'test-results/tester/',
             sessionData: null,
             summary: null,
+            setpointRawContent: null,
+            currentFile: null,
+            currentFileName: 'SETPOINT.md',
+
+            // SETPOINT: Requirements that must be met
+            SETPOINT: {
+                description: "Demo PDF loads successfully in all versions with no regressions",
+                requirements: {
+                    all_versions_load_successfully: true,
+                    console_errors_max: 0,
+                    console_errors_warning: 0,
+                    max_load_time_ms: 15000,         // Critical threshold
+                    warning_load_time_ms: 8000,      // Warning if exceeded
+                    performance_regression_percent: 10,  // Warn if >10% slower than baseline
+                    no_regressions: true
+                }
+            },
 
             async init() {
-                console.log('[Supervisor] Initializing...');
+                await this.loadSetpointFromFile();
+                this.renderSetpoint();
                 await this.loadSessionData();
-                this.renderSessionStatus();
-                this.renderVideo();
-                this.renderMetrics();
-                this.renderScreenshots();
-                this.renderTestLog();
-                this.renderDecision();
-                this.generateSummaryJSON();
-                console.log('[Supervisor] Initialization complete');
+                if (this.sessionData) {
+                    this.renderSessionStatus();
+                    this.renderVideo();
+                    this.renderMetrics();
+                    this.generateSummaryJSON();
+                    this.renderScreenshots();
+                    this.renderTestLog();
+                    this.renderDecision();
+                }
+            },
+
+            async loadSetpointFromFile() {
+                try {
+                    // Add timestamp to bypass browser cache and always fetch fresh copy from disk
+                    const response = await fetch(`SETPOINT.md?t=${Date.now()}`);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const text = await response.text();
+                    this.setpointRawContent = text;
+
+                    // Parse SETPOINT.md - extract description and requirements
+                    const lines = text.split('\n');
+                    let description = '';
+                    let inYaml = false;
+                    let yamlContent = '';
+
+                    for (const line of lines) {
+                        if (line.trim().startsWith('```yaml')) {
+                            inYaml = true;
+                            continue;
+                        }
+                        if (line.trim().startsWith('```') && inYaml) {
+                            inYaml = false;
+                            continue;
+                        }
+                        if (inYaml) {
+                            yamlContent += line + '\n';
+                        } else if (!description && line.trim() && !line.startsWith('#')) {
+                            description = line.trim();
+                        }
+                    }
+
+                    // Parse YAML requirements (simple key:value parser)
+                    const requirements = {};
+                    yamlContent.split('\n').forEach(line => {
+                        const match = line.match(/^([^:]+):\s*(.+)$/);
+                        if (match) {
+                            const key = match[1].trim();
+                            let value = match[2].trim();
+
+                            // Parse value types
+                            if (value === 'true') value = true;
+                            else if (value === 'false') value = false;
+                            else if (!isNaN(value)) value = Number(value);
+
+                            requirements[key] = value;
+                        }
+                    });
+                    // Update SETPOINT with loaded values
+                    if (description) {
+                        this.SETPOINT.description = description;
+                    }
+                    if (Object.keys(requirements).length > 0) {
+                        this.SETPOINT.requirements = { ...this.SETPOINT.requirements, ...requirements };
+                    }
+
+                } catch (error) {
+                }
             },
 
             async loadSessionData() {
                 try {
-                    // Load session metadata
-                    const metadataResponse = await fetch(`${this.sessionPath}session-metadata.json`);
-                    const metadata = await metadataResponse.json();
+                    // Load session summary from TESTER
+                    const summaryResponse = await fetch(`${this.sessionPath}session-summary.json`);
+                    if (!summaryResponse.ok) {
+                        throw new Error(`Failed to load session-summary.json: ${summaryResponse.status}`);
+                    }
+                    const summary = await summaryResponse.json();
 
-                    // Load metrics
-                    const metricsResponse = await fetch(`${this.sessionPath}metrics.json`);
-                    const metrics = await metricsResponse.json();
+                    // Compute status based on requirements
+                    let status = 'passed';
+                    const consoleErrorsA = summary.metrics.versionA?.['Console Errors'] || 0;
+                    const consoleErrorsB = summary.metrics.versionB?.['Console Errors'] || 0;
+                    const consoleErrorsC = summary.metrics.versionC?.['Console Errors'] || 0;
 
+                    if (consoleErrorsA > 0 || consoleErrorsB > 0 || consoleErrorsC > 0) {
+                        status = 'failed';
+                    }
+
+                    // Map TESTER output to expected structure
                     this.sessionData = {
-                        metadata,
-                        metrics
+                        metadata: {
+                            timestamp: summary.timestamp,
+                            status: status,
+                            duration_ms: summary.duration_ms,
+                            test_subject: summary.test_subject,
+                            tester_version: summary.tester_version,
+                            log: [] // TESTER doesn't provide unified log, but test-log.json exists per version
+                        },
+                        metrics: summary.metrics
                     };
 
-                    console.log('[Supervisor] Session data loaded:', this.sessionData);
                 } catch (error) {
                     console.error('[Supervisor] Error loading session data:', error);
-                    this.showError('Failed to load session data. Ensure Playwright test has been run.');
+                    // Don't show blocking error - supervisor can still display setpoint
                 }
+            },
+
+            async handleFileSelect(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                try {
+                    document.getElementById('setpointTextarea').value = await file.text();
+                    this.currentFileName = file.name;
+                    document.getElementById('setpointStatus').textContent = `Loaded: ${file.name}`;
+                } catch (error) {
+                    document.getElementById('setpointStatus').textContent = 'Error loading file';
+                }
+            },
+
+            async loadSetpoint() {
+                try {
+                    // Add timestamp to bypass browser cache and always fetch fresh copy from disk
+                    const response = await fetch(`SETPOINT.md?t=${Date.now()}`);
+                    const text = await response.text();
+                    document.getElementById('setpointTextarea').value = text;
+                    document.getElementById('setpointStatus').textContent = 'Loaded from SETPOINT.md';
+                } catch (error) {
+                    console.error('[Supervisor] Error loading SETPOINT.md:', error);
+                    document.getElementById('setpointStatus').textContent = 'File not found - using default';
+
+                    const defaultSetpoint = `# Setpoint Definition\n## Description\n${this.SETPOINT.description}\n## Requirements\n\`\`\`yaml\nall_versions_load_successfully: ${this.SETPOINT.requirements.all_versions_load_successfully}\nconsole_errors_max: ${this.SETPOINT.requirements.console_errors_max}\nconsole_errors_warning: ${this.SETPOINT.requirements.console_errors_warning}\nmax_load_time_ms: ${this.SETPOINT.requirements.max_load_time_ms}\nwarning_load_time_ms: ${this.SETPOINT.requirements.warning_load_time_ms}\nperformance_regression_percent: ${this.SETPOINT.requirements.performance_regression_percent}\nno_regressions: ${this.SETPOINT.requirements.no_regressions}\n\`\`\``;
+                    document.getElementById('setpointTextarea').value = defaultSetpoint;
+                }
+            },
+
+            saveSetpoint(askForName = false) {
+                if (askForName) {
+                    const newFileName = prompt('Enter filename:', this.currentFileName);
+                    if (!newFileName) return;
+                    this.currentFileName = newFileName;
+                }
+                const content = document.getElementById('setpointTextarea').value;
+                const blob = new Blob([content], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = this.currentFileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                document.getElementById('setpointStatus').textContent = `Saved as: ${this.currentFileName}`;
+            },
+            saveSetpointAs() {
+                this.saveSetpoint(true);
+            },
+
+            toggleSetpointEditor() {
+                const container = document.getElementById('setpointEditorContainer');
+                const icon = document.getElementById('setpointToggleIcon');
+
+                if (container.classList.contains('hidden')) {
+                    container.classList.remove('hidden');
+                    icon.textContent = '▲';
+                } else {
+                    container.classList.add('hidden');
+                    icon.textContent = '▼';
+                }
+            },
+
+            renderSetpoint() {
+                const descEl = document.getElementById('setpointDescription');
+                const reqEl = document.getElementById('setpointRequirements');
+
+                descEl.textContent = this.SETPOINT.description;
+
+                // Render requirements as a grid
+                const reqs = this.SETPOINT.requirements;
+                let reqHTML = '';
+                for (const [key, value] of Object.entries(reqs)) {
+                    const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    const displayValue = typeof value === 'boolean' ? (value ? '✓ Yes' : '✗ No') : value;
+                    reqHTML += `
+                        <div class="bg-gray-700 p-2 rounded">
+                            <div class="text-xs text-gray-400">${displayKey}</div>
+                            <div class="font-semibold text-blue-300">${displayValue}</div>
+                        </div>
+                    `;
+                }
+                reqEl.innerHTML = reqHTML;
             },
 
             renderSessionStatus() {
                 if (!this.sessionData) return;
 
-                const { metadata } = this.sessionData;
+                const { metadata} = this.sessionData;
 
                 // Status
                 const statusEl = document.getElementById('status');
@@ -205,9 +452,13 @@
 
             renderVideo() {
                 const videoContainer = document.getElementById('videoContainer');
-                const videoPath = `${this.sessionPath}video.webm`;
+                // Show video for Version A (current version)
+                const videoPath = `${this.sessionPath}version-A/video.webm`;
 
                 videoContainer.innerHTML = `
+                    <div class="mb-2">
+                        <span class="text-sm text-gray-300">Version A (Current)</span>
+                    </div>
                     <video id="videoPlayer" controls>
                         <source src="${videoPath}" type="video/webm">
                         Your browser does not support video playback.
@@ -288,22 +539,26 @@
 
                 const { metrics } = this.sessionData;
 
-                // Check critical metrics for regressions
+                // Check critical metrics for regressions using correct metric names
                 const criticalMetrics = [
-                    { key: 'loadTime', preference: 'lower' },
-                    { key: 'consoleErrors', preference: 'lower' }
+                    { key: 'Load Time (ms)', preference: 'lower' },
+                    { key: 'Console Errors', preference: 'lower' }
                 ];
+
+                const regressionThreshold = this.SETPOINT.requirements.performance_regression_percent / 100;
 
                 return criticalMetrics.some(metric => {
                     const valueA = parseFloat(metrics.versionA?.[metric.key]);
                     const valueC = parseFloat(metrics.versionC?.[metric.key]);
 
-                    if (isNaN(valueA) || isNaN(valueC)) return false;
+                    if (isNaN(valueA) || isNaN(valueC) || valueC === 0) return false;
 
                     if (metric.preference === 'lower') {
-                        return valueA > valueC * 1.1; // 10% worse threshold
+                        const percentChange = ((valueA - valueC) / valueC) * 100;
+                        return percentChange > this.SETPOINT.requirements.performance_regression_percent;
                     } else {
-                        return valueA < valueC * 0.9; // 10% worse threshold
+                        const percentChange = ((valueC - valueA) / valueC) * 100;
+                        return percentChange > this.SETPOINT.requirements.performance_regression_percent;
                     }
                 });
             },
@@ -311,14 +566,83 @@
             renderScreenshots() {
                 const container = document.getElementById('screenshotsContainer');
 
-                // For now, show placeholder - screenshots will be added by Playwright test
+                if (!this.sessionData) {
+                    container.innerHTML = `
+                        <div class="col-span-4 text-gray-300">
+                            Screenshots will appear here after TESTER execution.
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Show screenshots from Version A (current)
+                const screenshotData = [
+                    { path: `${this.sessionPath}version-A/screenshot-loaded.png`, title: 'Version A - Desktop', description: 'Current version desktop view' },
+                    { path: `${this.sessionPath}version-A/screenshot-mobile.png`, title: 'Version A - Mobile', description: 'Current version mobile view' },
+                    { path: `${this.sessionPath}version-C/screenshot-loaded.png`, title: 'Version C - Desktop', description: 'Baseline version desktop view' },
+                    { path: `${this.sessionPath}version-C/screenshot-mobile.png`, title: 'Version C - Mobile', description: 'Baseline version mobile view' }
+                ];
+
                 container.innerHTML = `
-                    <div class="col-span-4 text-gray-600">
-                        Screenshots will appear here after Playwright test execution.
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        ${screenshotData.map((screenshot, index) => `
+                            <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+                                <div class="p-3 bg-gray-50 border-b">
+                                    <h4 class="font-semibold text-gray-800">${screenshot.title}</h4>
+                                    <p class="text-xs text-gray-300">${screenshot.description}</p>
+                                </div>
+                                <div class="p-2">
+                                    <img
+                                        src="${screenshot.path}"
+                                        alt="${screenshot.title}"
+                                        class="w-full h-auto cursor-pointer hover:opacity-80 transition-opacity border border-gray-200 rounded"
+                                        onclick="window.screenshotModal.show(${index})"
+                                    />
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div id="screenshotModal" class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4" onclick="window.screenshotModal.hide()">
+                        <div class="relative max-w-6xl max-h-full">
+                            <button class="absolute top-2 right-2 bg-white text-gray-800 rounded-full w-8 h-8 flex items-center justify-center font-bold hover:bg-gray-200" onclick="window.screenshotModal.hide()">×</button>
+                            <img id="modalImage" src="" alt="" class="max-w-full max-h-screen rounded-lg" onclick="event.stopPropagation()"/>
+                            <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-white px-4 py-2 rounded-lg shadow-lg">
+                                <button onclick="window.screenshotModal.prev(); event.stopPropagation()" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded mr-2">← Prev</button>
+                                <span id="modalTitle" class="font-semibold mx-2"></span>
+                                <button onclick="window.screenshotModal.next(); event.stopPropagation()" class="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded ml-2">Next →</button>
+                            </div>
+                        </div>
                     </div>
                 `;
 
-                // TODO: Load actual screenshots from session directory
+                // Screenshot modal controller
+                window.screenshotModal = {
+                    currentIndex: 0,
+                    screenshots: screenshotData,
+                    show(index) {
+                        this.currentIndex = index;
+                        this.updateModal();
+                        document.getElementById('screenshotModal').classList.remove('hidden');
+                    },
+                    hide() {
+                        document.getElementById('screenshotModal').classList.add('hidden');
+                    },
+                    next() {
+                        this.currentIndex = (this.currentIndex + 1) % this.screenshots.length;
+                        this.updateModal();
+                    },
+                    prev() {
+                        this.currentIndex = (this.currentIndex - 1 + this.screenshots.length) % this.screenshots.length;
+                        this.updateModal();
+                    },
+                    updateModal() {
+                        const screenshot = this.screenshots[this.currentIndex];
+                        document.getElementById('modalImage').src = screenshot.path;
+                        document.getElementById('modalImage').alt = screenshot.title;
+                        document.getElementById('modalTitle').textContent = screenshot.title;
+                    }
+                };
             },
 
             renderTestLog() {
@@ -330,7 +654,7 @@
                 const logEntries = metadata.log || [];
 
                 if (logEntries.length === 0) {
-                    logContainer.innerHTML = '<p class="text-gray-600">No test log available.</p>';
+                    logContainer.innerHTML = '<p class="text-gray-300">No test log available.</p>';
                     return;
                 }
 
@@ -367,90 +691,274 @@
             generateSummaryJSON() {
                 if (!this.sessionData) return;
 
-                const hasRegressions = this.detectRegressions();
                 const { metadata, metrics } = this.sessionData;
+                const { requirements } = this.SETPOINT;
 
-                // Determine improvements
-                const improvements = [];
-                const metricsToCheck = [
-                    { key: 'loadTime', preference: 'lower' },
-                    { key: 'consoleErrors', preference: 'lower' },
-                    { key: 'cacheHitRate', preference: 'higher' }
-                ];
+                // COMPUTE ERROR SIGNALS: Compare actual vs setpoint
+                const errors = [];
+                const warnings = [];
+                let totalErrorMagnitude = 0;
+                const missingMetrics = [];
 
-                metricsToCheck.forEach(metric => {
-                    const valueA = parseFloat(metrics.versionA?.[metric.key]);
-                    const valueC = parseFloat(metrics.versionC?.[metric.key]);
+                const versions = ['A', 'B', 'C'];
 
-                    if (!isNaN(valueA) && !isNaN(valueC)) {
-                        const improved = metric.preference === 'lower' ? valueA < valueC : valueA > valueC;
-                        if (improved && Math.abs(valueA - valueC) > 0.05 * valueC) {
-                            improvements.push(metric.key);
+                // Check 1: Console errors (critical and warnings)
+                versions.forEach(version => {
+                    const versionKey = `version${version}`;
+                    const consoleErrors = metrics[versionKey]?.consoleErrors || 0;
+
+                    if (consoleErrors > requirements.console_errors_max) {
+                        const error = consoleErrors - requirements.console_errors_max;
+                        errors.push({
+                            type: 'critical',
+                            requirement: 'console_errors_max',
+                            version: version,
+                            setpoint: requirements.console_errors_max,
+                            actual: consoleErrors,
+                            error: error,
+                            action: `Fix ${error} console error(s) in version ${version}`,
+                            suggestions: [
+                                'Review browser console in trace.json',
+                                `Check screenshot-metrics.png for error details`,
+                                'Compare against version C console output'
+                            ]
+                        });
+                        totalErrorMagnitude += error * 100; // High weight
+                    }
+                });
+
+                // Check 2: Load time (critical and warnings)
+                versions.forEach(version => {
+                    const versionKey = `version${version}`;
+                    const loadTime = metrics[versionKey]?.['Load Time (ms)'];
+
+                    if (!loadTime) {
+                        missingMetrics.push(`Load Time for version ${version}`);
+                        return;
+                    }
+
+                    if (loadTime > requirements.max_load_time_ms) {
+                        const error = loadTime - requirements.max_load_time_ms;
+                        errors.push({
+                            type: 'critical',
+                            requirement: 'max_load_time_ms',
+                            version: version,
+                            setpoint: requirements.max_load_time_ms,
+                            actual: loadTime,
+                            error: Math.round(error),
+                            action: `Reduce load time by ${Math.round(error)}ms in version ${version}`,
+                            suggestions: [
+                                'Profile rendering performance',
+                                'Check for blocking operations during PDF load',
+                                `Compare against baseline version C (${metrics.versionC?.['Load Time (ms)']}ms)`,
+                                'Review Playwright trace for bottlenecks'
+                            ]
+                        });
+                        totalErrorMagnitude += error;
+                    } else if (loadTime > requirements.warning_load_time_ms) {
+                        const warning = loadTime - requirements.warning_load_time_ms;
+                        warnings.push({
+                            type: 'performance_warning',
+                            requirement: 'warning_load_time_ms',
+                            version: version,
+                            setpoint: requirements.warning_load_time_ms,
+                            actual: loadTime,
+                            deviation: Math.round(warning),
+                            message: `Load time ${loadTime}ms exceeds warning threshold ${requirements.warning_load_time_ms}ms`,
+                            suggestions: ['Consider optimization before further development']
+                        });
+                        totalErrorMagnitude += warning * 0.1; // Low weight for warnings
+                    }
+                });
+
+                // Check 3: Performance regressions (A vs C, B vs C)
+                const regressions = [];
+                const metricsToCompare = ['Load Time (ms)', 'Console Errors'];
+
+                metricsToCompare.forEach(metric => {
+                    const valueA = metrics.versionA?.[metric];
+                    const valueB = metrics.versionB?.[metric];
+                    const valueC = metrics.versionC?.[metric];
+
+                    if (valueA != null && valueC != null) {
+                        // Compare A vs C (baseline)
+                        const percentChange = ((valueA - valueC) / valueC) * 100;
+                        if (percentChange > requirements.performance_regression_percent) {
+                            regressions.push({
+                                metric: metric,
+                                versionA: valueA,
+                                versionC: valueC,
+                                degradation_percent: percentChange.toFixed(1),
+                                is_new: valueB ? (valueA > valueB) : null
+                            });
+                        }
+                    }
+
+                    if (valueB != null && valueC != null && valueA != null) {
+                        // Check if regression was introduced in A (B was fine)
+                        const percentChangeB = ((valueB - valueC) / valueC) * 100;
+                        const percentChangeA = ((valueA - valueC) / valueC) * 100;
+
+                        if (percentChangeA > requirements.performance_regression_percent &&
+                            percentChangeB <= requirements.performance_regression_percent) {
+                            // Regression introduced recently (A worse than both B and C)
+                            const regIndex = regressions.findIndex(r => r.metric === metric);
+                            if (regIndex >= 0) {
+                                regressions[regIndex].introduced_in_version_A = true;
+                                regressions[regIndex].versionB = valueB;
+                            }
                         }
                     }
                 });
 
-                // Determine agent decision
-                let agentDecision = 'continue';
-                if (metadata.status === 'failed') {
-                    agentDecision = 'rollback';
-                } else if (hasRegressions) {
-                    agentDecision = 'investigate';
+                if (regressions.length > 0) {
+                    regressions.forEach(reg => {
+                        errors.push({
+                            type: 'regression',
+                            requirement: 'performance_regression_percent',
+                            metric: reg.metric,
+                            setpoint: `<${requirements.performance_regression_percent}% degradation`,
+                            actual: `${reg.degradation_percent}% degradation`,
+                            details: reg,
+                            action: reg.introduced_in_version_A
+                                ? `Fix recent regression in ${reg.metric}: version A (${reg.versionA}) is ${reg.degradation_percent}% worse than version B (${reg.versionB}) and baseline C (${reg.versionC})`
+                                : `Investigate regression in ${reg.metric}: version A (${reg.versionA}) is ${reg.degradation_percent}% worse than baseline C (${reg.versionC})`,
+                            suggestions: [
+                                'Review commits between version C and A',
+                                reg.introduced_in_version_A ? 'Regression is recent - review changes since version B' : 'Regression may be historical - present in version B as well',
+                                'Use Playwright trace to compare performance profiles',
+                                'Consider reverting recent changes'
+                            ]
+                        });
+                        totalErrorMagnitude += 100; // High priority
+                    });
                 }
 
+                // Check 4: Test status
+                if (metadata.status !== 'passed' && requirements.all_versions_load_successfully) {
+                    errors.push({
+                        type: 'critical',
+                        requirement: 'all_versions_load_successfully',
+                        setpoint: 'passed',
+                        actual: metadata.status,
+                        error: 1,
+                        action: 'Fix test failures - test did not pass',
+                        suggestions: [
+                            'Review session-metadata.json for failure details',
+                            'Check screenshot-after-load.png for visual issues',
+                            'Examine test logs in latest-session/'
+                        ]
+                    });
+                    totalErrorMagnitude += 1000; // Critical
+                }
+
+                // DETERMINE AGENT ACTION based on total error
+                let agentAction = 'continue_development';
+                if (totalErrorMagnitude > 1000) {
+                    agentAction = 'halt_and_fix_critical';
+                } else if (totalErrorMagnitude > 100) {
+                    agentAction = 'investigate_regressions';
+                } else if (totalErrorMagnitude > 10) {
+                    agentAction = 'optimize_performance';
+                } else if (warnings.length > 0) {
+                    agentAction = 'continue_with_warnings';
+                }
+
+                // BUILD SUMMARY with enhanced error signals
                 this.summary = {
+                    setpoint: {
+                        description: this.SETPOINT.description,
+                        requirements: this.SETPOINT.requirements,
+                        raw_content: this.setpointRawContent
+                    },
                     session: {
                         timestamp: metadata.timestamp,
                         status: metadata.status,
-                        duration_ms: metadata.duration_ms
+                        duration_ms: metadata.duration_ms,
+                        test_subject: metadata.test_subject,
+                        tester_version: metadata.tester_version
+                    },
+                    error_signals: {
+                        total_error_magnitude: Math.round(totalErrorMagnitude),
+                        critical_error_count: errors.filter(e => e.type === 'critical').length,
+                        regression_count: errors.filter(e => e.type === 'regression').length,
+                        warning_count: warnings.length,
+                        errors: errors,
+                        warnings: warnings,
+                        missing_metrics: missingMetrics
                     },
                     metrics: {
-                        regressions_detected: hasRegressions,
-                        improvements: improvements,
-                        comparison: {
-                            versionA: metrics.versionA,
-                            versionC: metrics.versionC
-                        }
+                        versionA: metrics.versionA,
+                        versionB: metrics.versionB,
+                        versionC: metrics.versionC
                     },
-                    agent_decision: agentDecision,
+                    agent_action: agentAction,
                     files: {
-                        video: `${this.sessionPath}video.webm`,
-                        trace: `${this.sessionPath}trace.json`,
-                        metrics: `${this.sessionPath}metrics.json`
+                        tester_summary: `${this.sessionPath}session-summary.json`,
+                        version_A: {
+                            video: `${this.sessionPath}version-A/video.webm`,
+                            metrics: `${this.sessionPath}version-A/metrics.json`,
+                            console_logs: `${this.sessionPath}version-A/console-logs.json`,
+                            test_log: `${this.sessionPath}version-A/test-log.json`,
+                            screenshots: {
+                                loaded: `${this.sessionPath}version-A/screenshot-loaded.png`,
+                                mobile: `${this.sessionPath}version-A/screenshot-mobile.png`
+                            }
+                        },
+                        version_B: {
+                            video: `${this.sessionPath}version-B/video.webm`,
+                            metrics: `${this.sessionPath}version-B/metrics.json`,
+                            console_logs: `${this.sessionPath}version-B/console-logs.json`,
+                            test_log: `${this.sessionPath}version-B/test-log.json`,
+                            screenshots: {
+                                loaded: `${this.sessionPath}version-B/screenshot-loaded.png`,
+                                mobile: `${this.sessionPath}version-B/screenshot-mobile.png`
+                            }
+                        },
+                        version_C: {
+                            video: `${this.sessionPath}version-C/video.webm`,
+                            metrics: `${this.sessionPath}version-C/metrics.json`,
+                            console_logs: `${this.sessionPath}version-C/console-logs.json`,
+                            test_log: `${this.sessionPath}version-C/test-log.json`,
+                            screenshots: {
+                                loaded: `${this.sessionPath}version-C/screenshot-loaded.png`,
+                                mobile: `${this.sessionPath}version-C/screenshot-mobile.png`
+                            }
+                        }
                     }
                 };
 
-                // Write to file (via download)
-                this.saveSummaryToFile();
-
-                console.log('[Supervisor] Summary generated:', this.summary);
             },
 
-            async saveSummaryToFile() {
-                if (!this.summary) return;
-
-                // Auto-save summary JSON for agent consumption
-                const blob = new Blob([JSON.stringify(this.summary, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-
-                // In a real implementation, this would save to tests/feedback-control/latest-session/supervisor-summary.json
-                // For now, we'll provide it for download
-                console.log('[Supervisor] Summary JSON ready for download');
-            },
-
-            downloadSummary() {
+            saveSummaryToFile() {
                 if (!this.summary) {
-                    alert('No summary available yet. Please wait for data to load.');
+                    alert('No analysis available to save. Run TESTER first.');
                     return;
                 }
 
-                const blob = new Blob([JSON.stringify(this.summary, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'supervisor-summary.json';
-                a.click();
-                URL.revokeObjectURL(url);
+                try {
+                    // Generate filename with timestamp
+                    const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+                    const filename = `supervisor-analysis-${timestamp}.json`;
+
+                    // Download summary as JSON file
+                    const content = JSON.stringify(this.summary, null, 2);
+                    const blob = new Blob([content], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    console.log(`[Supervisor] Analysis saved: ${filename}`);
+                    alert(`Analysis saved as: ${filename}`);
+                } catch (error) {
+                    console.error('[Supervisor] Error saving analysis:', error);
+                    alert(`Error saving analysis: ${error.message}`);
+                }
             },
 
             openTraceViewer() {
@@ -462,7 +970,7 @@
                     <div class="section-card bg-red-50 border border-red-200">
                         <h2 class="text-xl font-semibold text-red-800 mb-2">Error</h2>
                         <p class="text-red-600">${message}</p>
-                        <p class="text-sm text-gray-600 mt-4">
+                        <p class="text-sm text-gray-300 mt-4">
                             To generate session data, run:<br>
                             <code class="bg-gray-100 px-2 py-1 rounded">npx playwright test tests/feedback-control/tester-interface.spec.js</code>
                         </p>
@@ -471,10 +979,117 @@
             }
         };
 
+        /**
+         * TestRunner - Handles execution of Playwright tests via server API
+         */
+        const TestRunner = {
+            API_BASE: 'http://localhost:8000/api',
+            eventSource: null,
+
+            async runTest() {
+                const btn = document.getElementById('runTestBtn');
+                const stopBtn = document.getElementById('stopTestBtn');
+                const output = document.getElementById('testOutput');
+                const outputContent = document.getElementById('testOutputContent');
+
+                // Show output area and disable run button
+                output.classList.remove('hidden');
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.remove('hidden');
+
+                // Clear previous output
+                outputContent.innerHTML = '<div class="text-yellow-400">⏳ Starting Playwright test...</div>';
+
+                try {
+                    // Use EventSource for Server-Sent Events
+                    this.eventSource = new EventSource(`${this.API_BASE}/run-test`);
+
+                    this.eventSource.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'start') {
+                            outputContent.innerHTML += `<div class="text-blue-400">${data.message}</div>`;
+                        } else if (data.type === 'stdout') {
+                            const line = data.message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            outputContent.innerHTML += `<div>${line}</div>`;
+                        } else if (data.type === 'stderr') {
+                            const line = data.message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            outputContent.innerHTML += `<div class="text-red-400">${line}</div>`;
+                        } else if (data.type === 'complete') {
+                            const statusClass = data.code === 0 ? 'text-green-400' : 'text-red-400';
+                            outputContent.innerHTML += `<div class="${statusClass}">✓ ${data.message}</div>`;
+                            outputContent.innerHTML += `<div class="text-blue-400 mt-2">Results: ${data.resultsPath}</div>`;
+
+                            // Auto-refresh supervisor data after test completes
+                            setTimeout(() => {
+                                outputContent.innerHTML += `<div class="text-yellow-400 mt-2">↻ Refreshing results...</div>`;
+                                Supervisor.init();
+                            }, 2000);
+
+                            this.testComplete();
+                        } else if (data.type === 'error') {
+                            outputContent.innerHTML += `<div class="text-red-400">✗ ${data.message}</div>`;
+                            this.testComplete();
+                        }
+
+                        // Auto-scroll to bottom
+                        output.querySelector('.bg-gray-900').scrollTop = output.querySelector('.bg-gray-900').scrollHeight;
+                    };
+
+                    this.eventSource.onerror = (error) => {
+                        console.error('[TestRunner] EventSource error:', error);
+                        outputContent.innerHTML += `<div class="text-red-400">✗ Connection error - ensure server is running on port 8000</div>`;
+                        outputContent.innerHTML += `<div class="text-gray-400 mt-2">Start server: <code>node server.js</code></div>`;
+                        this.testComplete();
+                    };
+
+                } catch (error) {
+                    console.error('[TestRunner] Error running test:', error);
+                    outputContent.innerHTML += `<div class="text-red-400">✗ Error: ${error.message}</div>`;
+                    this.testComplete();
+                }
+            },
+
+            stopTest() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+
+                fetch(`${this.API_BASE}/stop-test`, { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        const outputContent = document.getElementById('testOutputContent');
+                        outputContent.innerHTML += `<div class="text-yellow-400">⏹ Test stopped</div>`;
+                    })
+                    .catch(error => {
+                        console.error('[TestRunner] Error stopping test:', error);
+                    });
+
+                this.testComplete();
+            },
+
+            testComplete() {
+                const btn = document.getElementById('runTestBtn');
+                const stopBtn = document.getElementById('stopTestBtn');
+
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.add('hidden');
+
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+            }
+        };
+
+        // Expose Supervisor to window for external access (e.g., Playwright)
+        window.Supervisor = Supervisor;
+
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', () => {
             Supervisor.init();
         });
     </script>
-</body>
-</html>
+</body></html>
