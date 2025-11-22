@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Grid Viewer - A/B/C Tester (Feedback Control)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Monaco', 'Courier New', monospace; }
+        .iframe-container { position: relative; height: 500px; border: 2px solid #ccc; }
+        .iframe-container iframe { width: 100%; height: 100%; border: none; }
+        .metric-good { color: #10b981; }
+        .metric-bad { color: #ef4444; }
+        .metric-warn { color: #f59e0b; }
+        .console-output { height: 150px; overflow-y: auto; font-size: 11px; background: #1e1e1e; color: #d4d4d4; padding: 8px; }
+        .version-label { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.8); color: white; padding: 4px 12px; border-radius: 4px; z-index: 10; font-size: 12px; font-weight: bold; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 p-4">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold mb-2">PDF Grid Viewer - A/B/C Comparison Tester</h1>
+            <p class="text-gray-400">Feedback control testing: Compare rewrite (A) vs previous checkpoint (B) vs baseline (C)</p>
+        </header>
+
+        <!-- Control Panel -->
+        <div class="bg-gray-800 rounded-lg p-4 mb-6">
+            <h2 class="text-xl font-bold mb-4">Test Controls</h2>
+            <!-- Headers Row -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2">
+                <label class="block text-sm font-medium">Test PDF</label>
+                <label class="block text-sm font-medium">Manual Testing</label>
+                <label class="block text-sm font-medium">Automated Testing</label>
+            </div>
+
+            <!-- Controls Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- PDF Selection -->
+                <div>
+                    <input type="file" id="pdfFilePicker" accept=".pdf,application/pdf" style="display: none;">
+                    <button id="loadPdfBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2">
+                        📂 Browse Local PDF
+                    </button>
+                    <select id="pdfSelect" class="w-full bg-gray-700 text-white rounded px-3 py-2">
+                        <option value="">Loading PDFs...</option>
+                    </select>
+                </div>
+
+                <!-- Manual Test Section -->
+                <div>
+                    <button id="executeBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-2">
+                        Execute Test
+                    </button>
+                    <select id="actionSelect" class="w-full bg-gray-700 text-white rounded px-3 py-2">
+                        <option value="load">Load PDF</option>
+                        <option value="zoom-l0">Zoom to L0 (overview)</option>
+                        <option value="zoom-l3">Zoom to L3 (detail)</option>
+                        <option value="pan">Pan to center</option>
+                        <option value="screenshot">Take Screenshot</option>
+                        <option value="inspect">Inspect Tiles</option>
+                    </select>
+                </div>
+
+                <!-- Playwright Test Section -->
+                <div>
+                    <button id="playwrightBtn" onclick="PlaywrightRunner.runTest()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded mb-2">
+                        🤖 Run Playwright
+                    </button>
+                    <select id="testFileSelect" class="w-full bg-gray-700 text-white rounded px-3 py-2">
+                        <option value="tests/grid-tester-framework.spec.js">Grid Tester (3 versions of index.html)</option>
+                        <option value="tests/tester-framework.spec.js">Supervisor Tester (3 versions of supervisor.html)</option>
+                        <option value="tests/smoke-test.spec.js">Smoke Test</option>
+                        <option value="tests/functional/core-features.spec.js">Core Features</option>
+                        <option value="tests/console-errors.spec.js">Console Errors</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Sync Options -->
+            <div class="mt-4 flex gap-4">
+                <label class="flex items-center">
+                    <input type="checkbox" id="syncActions" checked class="mr-2">
+                    <span class="text-sm">Synchronize actions across all versions</span>
+                </label>
+                <label class="flex items-center">
+                    <input type="checkbox" id="autoCollectMetrics" checked class="mr-2">
+                    <span class="text-sm">Auto-collect metrics after each action</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Playwright Test Output -->
+        <div id="playwrightOutput" class="bg-gray-800 rounded-lg p-4 mb-6 hidden">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Playwright Test Output</h2>
+                <button id="stopPlaywrightBtn" onclick="PlaywrightRunner.stopTest()" class="px-4 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm hidden">
+                    ⏹ Stop Test
+                </button>
+            </div>
+            <div class="console-output font-mono text-xs">
+                <div id="playwrightOutputContent"></div>
+            </div>
+        </div>
+
+        <!-- Metrics Comparison Table -->
+        <div class="bg-gray-800 rounded-lg p-4 mb-6">
+            <h2 class="text-xl font-bold mb-4">Comparative Metrics</h2>
+            <table class="w-full text-sm">
+                <thead class="border-b border-gray-700">
+                    <tr>
+                        <th class="text-left py-2 px-3">Metric</th>
+                        <th class="text-center py-2 px-3 bg-blue-900/30">A (Current)</th>
+                        <th class="text-center py-2 px-3 bg-purple-900/30">B (Previous)</th>
+                        <th class="text-center py-2 px-3 bg-gray-700/30">C (Baseline)</th>
+                        <th class="text-center py-2 px-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="metricsTable" class="divide-y divide-gray-700">
+                    <tr>
+                        <td class="py-2 px-3 font-mono">Lines of Code</td>
+                        <td id="loc-a" class="text-center py-2 px-3">-</td>
+                        <td id="loc-b" class="text-center py-2 px-3">-</td>
+                        <td id="loc-c" class="text-center py-2 px-3">6,500</td>
+                        <td id="loc-status" class="text-center py-2 px-3">-</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2 px-3 font-mono">Load Time (ms)</td>
+                        <td id="loadtime-a" class="text-center py-2 px-3">-</td>
+                        <td id="loadtime-b" class="text-center py-2 px-3">-</td>
+                        <td id="loadtime-c" class="text-center py-2 px-3">-</td>
+                        <td id="loadtime-status" class="text-center py-2 px-3">-</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2 px-3 font-mono">Console Errors</td>
+                        <td id="errors-a" class="text-center py-2 px-3">-</td>
+                        <td id="errors-b" class="text-center py-2 px-3">-</td>
+                        <td id="errors-c" class="text-center py-2 px-3">-</td>
+                        <td id="errors-status" class="text-center py-2 px-3">-</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2 px-3 font-mono">Pages Cached</td>
+                        <td id="pages-a" class="text-center py-2 px-3">-</td>
+                        <td id="pages-b" class="text-center py-2 px-3">-</td>
+                        <td id="pages-c" class="text-center py-2 px-3">-</td>
+                        <td id="pages-status" class="text-center py-2 px-3">-</td>
+                    </tr>
+                    <tr>
+                        <td class="py-2 px-3 font-mono">Tile Completeness</td>
+                        <td id="tiles-a" class="text-center py-2 px-3">-</td>
+                        <td id="tiles-b" class="text-center py-2 px-3">-</td>
+                        <td id="tiles-c" class="text-center py-2 px-3">-</td>
+                        <td id="tiles-status" class="text-center py-2 px-3">-</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="mt-4 flex gap-4">
+                <button id="collectMetricsBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                    Collect Metrics Now
+                </button>
+                <button id="exportResultsBtn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded">
+                    Export Results (JSON)
+                </button>
+            </div>
+        </div>
+
+        <!-- Three-Panel Viewer -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <!-- Version A (Current) -->
+            <div>
+                <h3 class="text-lg font-bold text-blue-400">Version A: Current</h3>
+                <a href="index.html" target="_blank" class="text-sm text-blue-400 hover:text-blue-300 underline mb-2 block">index.html ↗</a>
+                <div class="iframe-container">
+                    <iframe id="iframe-a" src="index.html?pdf=demo/demo-1.pdf"></iframe>
+                </div>
+                <div class="mt-2 console-output" id="console-a">
+                    <div class="text-gray-500 text-xs">Console output will appear here...</div>
+                </div>
+            </div>
+
+            <!-- Version B (Previous Checkpoint) -->
+            <div>
+                <h3 class="text-lg font-bold text-purple-400">Version B: Checkpoint</h3>
+                <a href="index-checkpoint.html" target="_blank" class="text-sm text-purple-400 hover:text-purple-300 underline mb-2 block">index-checkpoint.html ↗</a>
+                <div class="iframe-container">
+                    <iframe id="iframe-b" src="index-checkpoint.html?pdf=demo/demo-1.pdf"></iframe>
+                </div>
+                <div class="mt-2 console-output" id="console-b">
+                    <div class="text-gray-500 text-xs">Console output will appear here...</div>
+                </div>
+            </div>
+
+            <!-- Version C (Baseline) -->
+            <div>
+                <h3 class="text-lg font-bold text-gray-400">Version C: Baseline</h3>
+                <a href="index-baseline.html" target="_blank" class="text-sm text-gray-400 hover:text-gray-300 underline mb-2 block">index-baseline.html ↗</a>
+                <div class="iframe-container">
+                    <iframe id="iframe-c" src="index-baseline.html?pdf=demo/demo-1.pdf"></iframe>
+                </div>
+                <div class="mt-2 console-output" id="console-c">
+                    <div class="text-gray-500 text-xs">Console output will appear here...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Test Results Log -->
+        <div class="bg-gray-800 rounded-lg p-4">
+            <h2 class="text-xl font-bold mb-4">Test Log</h2>
+            <div id="testLog" class="space-y-2 max-h-64 overflow-y-auto text-sm font-mono">
+                <div class="text-gray-500">[Ready] Tester initialized. Load PDFs to begin testing.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Tester Controller
+        const Tester = {
+            versions: { a: null, b: null, c: null },
+            metrics: { a: {}, b: {}, c: {} },
+            consoleInterceptors: { a: [], b: [], c: [] },
+
+            async init() {
+                this.setupIframes();
+                this.setupControls();
+                this.setupConsoleInterceptors();
+                await this.loadPDFList();
+                this.log('Tester initialized', 'info');
+            },
+
+            setupIframes() {
+                this.versions.a = document.getElementById('iframe-a');
+                this.versions.b = document.getElementById('iframe-b');
+                this.versions.c = document.getElementById('iframe-c');
+
+                // Wait for iframes to load
+                Object.entries(this.versions).forEach(([key, iframe]) => {
+                    iframe.addEventListener('load', () => {
+                        this.log(`Version ${key.toUpperCase()} loaded: ${iframe.src}`, 'success');
+                        this.interceptConsole(key);
+                        // Auto-collect metrics after iframe loads
+                        setTimeout(() => this.collectMetrics(), 2000);
+                    });
+                });
+
+                // Set up periodic metrics collection every 5 seconds
+                this.metricsInterval = setInterval(() => {
+                    this.collectMetrics();
+                }, 5000);
+            },
+
+            setupControls() {
+                // Load PDF button triggers file picker
+                document.getElementById('loadPdfBtn').addEventListener('click', () => {
+                    document.getElementById('pdfFilePicker').click();
+                });
+
+                // Handle file selection
+                document.getElementById('pdfFilePicker').addEventListener('change', (event) => {
+                    const file = event.target.files[0];
+                    if (file && file.type === 'application/pdf') {
+                        this.loadLocalPDF(file);
+                    }
+                });
+
+                // When dropdown selection changes, load that PDF from server
+                document.getElementById('pdfSelect').addEventListener('change', (event) => {
+                    const pdfPath = event.target.value;
+                    if (pdfPath) {
+                        this.loadPdfInAllVersions(pdfPath);
+                    }
+                });
+
+                document.getElementById('executeBtn').addEventListener('click', () => this.executeAction());
+                document.getElementById('collectMetricsBtn').addEventListener('click', () => this.collectMetrics());
+                document.getElementById('exportResultsBtn').addEventListener('click', () => this.exportResults());
+            },
+
+            async loadPDFList() {
+                try {
+                    // Fetch directory listing from server
+                    const response = await fetch('demo/');
+                    const html = await response.text();
+
+                    // Parse HTML to extract PDF filenames
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const links = doc.querySelectorAll('a');
+
+                    const pdfFiles = [];
+                    links.forEach(link => {
+                        const href = link.getAttribute('href');
+                        if (href && href.endsWith('.pdf')) {
+                            pdfFiles.push(href);
+                        }
+                    });
+
+                    // Populate dropdown
+                    const select = document.getElementById('pdfSelect');
+                    select.innerHTML = '';
+
+                    if (pdfFiles.length === 0) {
+                        select.innerHTML = '<option value="">No PDFs found in demo/</option>';
+                        this.log('No PDFs found in demo/ folder', 'warn');
+                        return;
+                    }
+
+                    pdfFiles.forEach(filename => {
+                        const option = document.createElement('option');
+                        option.value = `demo/${filename}`;
+                        option.textContent = filename;
+                        select.appendChild(option);
+                    });
+
+                    // Select the first PDF by default
+                    select.selectedIndex = 0;
+                    this.log(`Loaded ${pdfFiles.length} PDFs from demo/ folder`, 'success');
+                } catch (error) {
+                    this.log(`Could not load PDF list: ${error.message}`, 'error');
+                    // Fallback to hardcoded list
+                    const select = document.getElementById('pdfSelect');
+                    select.innerHTML = `
+                        <option value="demo/demo-1.pdf">demo-1.pdf</option>
+                        <option value="demo/natgeo-1969-05.pdf">natgeo-1969-05.pdf</option>
+                    `;
+                }
+            },
+
+            loadLocalPDF(file) {
+                this.log(`Loading local PDF: ${file.name}`, 'info');
+
+                // Create a URL for the file
+                const fileURL = URL.createObjectURL(file);
+
+                // Load the PDF in all versions
+                Object.entries(this.versions).forEach(([key, iframe]) => {
+                    const currentSrc = iframe.src.split('?')[0];
+                    iframe.src = `${currentSrc}?pdf=${encodeURIComponent(fileURL)}`;
+                    this.log(`Version ${key.toUpperCase()}: Loading ${file.name}`, 'info');
+                });
+
+                this.log(`Local PDF loaded in all versions: ${file.name}`, 'success');
+            },
+
+            loadPdfInAllVersions(pdfPath) {
+                if (!pdfPath) {
+                    pdfPath = document.getElementById('pdfSelect').value;
+                }
+
+                this.log(`Loading PDF: ${pdfPath} in all versions`, 'info');
+
+                Object.entries(this.versions).forEach(([key, iframe]) => {
+                    const currentUrl = new URL(iframe.src);
+                    currentUrl.searchParams.set('pdf', pdfPath);
+                    iframe.src = currentUrl.toString();
+                    this.log(`Version ${key.toUpperCase()}: Loading ${pdfPath}`, 'info');
+                });
+            },
+
+            setupConsoleInterceptors() {
+                // Note: Due to same-origin policy, we can only intercept console if served from same origin
+                // This is a placeholder for the structure
+            },
+
+            interceptConsole(version) {
+                try {
+                    const iframeWindow = this.versions[version].contentWindow;
+                    const consoleDiv = document.getElementById(`console-${version}`);
+
+                    if (!iframeWindow) return;
+
+                    // Store original console methods
+                    const originalLog = iframeWindow.console.log;
+                    const originalError = iframeWindow.console.error;
+                    const originalWarn = iframeWindow.console.warn;
+
+                    // Intercept console.log
+                    iframeWindow.console.log = (...args) => {
+                        originalLog.apply(iframeWindow.console, args);
+                        this.logConsole(version, 'log', args);
+                    };
+
+                    // Intercept console.error
+                    iframeWindow.console.error = (...args) => {
+                        originalError.apply(iframeWindow.console, args);
+                        this.logConsole(version, 'error', args);
+                        this.metrics[version].consoleErrors = (this.metrics[version].consoleErrors || 0) + 1;
+                    };
+
+                    // Intercept console.warn
+                    iframeWindow.console.warn = (...args) => {
+                        originalWarn.apply(iframeWindow.console, args);
+                        this.logConsole(version, 'warn', args);
+                    };
+
+                } catch (e) {
+                    this.log(`Cannot intercept console for ${version}: ${e.message}`, 'warn');
+                }
+            },
+
+            logConsole(version, type, args) {
+                const consoleDiv = document.getElementById(`console-${version}`);
+                const timestamp = new Date().toLocaleTimeString();
+                const message = args.map(arg =>
+                    typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+                ).join(' ');
+
+                const color = type === 'error' ? '#ef4444' : type === 'warn' ? '#f59e0b' : '#d4d4d4';
+                const entry = `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
+
+                consoleDiv.innerHTML += entry;
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            },
+
+            async executeAction() {
+                const action = document.getElementById('actionSelect').value;
+                const pdfPath = document.getElementById('pdfSelect').value;
+                const sync = document.getElementById('syncActions').checked;
+
+                this.log(`Executing action: ${action} with ${pdfPath}`, 'info');
+
+                if (sync) {
+                    await Promise.all([
+                        this.executeOnVersion('a', action, pdfPath),
+                        this.executeOnVersion('b', action, pdfPath),
+                        this.executeOnVersion('c', action, pdfPath)
+                    ]);
+                } else {
+                    await this.executeOnVersion('a', action, pdfPath);
+                }
+
+                if (document.getElementById('autoCollectMetrics').checked) {
+                    setTimeout(() => this.collectMetrics(), 2000);
+                }
+            },
+
+            async executeOnVersion(version, action, pdfPath) {
+                try {
+                    const iframeWindow = this.versions[version].contentWindow;
+
+                    switch (action) {
+                        case 'load':
+                            const startTime = performance.now();
+                            this.log(`Loading ${pdfPath} in version ${version.toUpperCase()}...`, 'info');
+
+                            // Reload iframe with PDF query parameter
+                            const currentSrc = this.versions[version].src.split('?')[0];
+                            this.versions[version].src = `${currentSrc}?pdf=${encodeURIComponent(pdfPath)}`;
+
+                            // Measure load time
+                            this.versions[version].addEventListener('load', () => {
+                                const loadTime = performance.now() - startTime;
+                                this.metrics[version].loadTime = Math.round(loadTime);
+                                this.log(`Version ${version.toUpperCase()} loaded in ${loadTime.toFixed(0)}ms`, 'success');
+                            }, { once: true });
+                            break;
+
+                        case 'zoom-l0':
+                            // Zoom out to see whole grid (L0)
+                            if (iframeWindow.viewer) {
+                                this.log(`Zooming to L0 (overview) in version ${version.toUpperCase()}`, 'info');
+                                iframeWindow.viewer.viewport.goHome();
+                                this.log(`Version ${version.toUpperCase()}: Zoomed to L0 (home)`, 'success');
+                            } else {
+                                this.log(`Version ${version.toUpperCase()}: Viewer not ready`, 'warn');
+                            }
+                            break;
+
+                        case 'zoom-l3':
+                            // Zoom to L3 detail level
+                            if (iframeWindow.viewer) {
+                                this.log(`Zooming to L3 (detail) in version ${version.toUpperCase()}`, 'info');
+                                // L3 typically means zoom level around 4-8x
+                                iframeWindow.viewer.viewport.zoomBy(6.0);
+                                iframeWindow.viewer.viewport.applyConstraints();
+                                const newZoom = iframeWindow.viewer.viewport.getZoom();
+                                this.log(`Version ${version.toUpperCase()}: Zoomed to ${newZoom.toFixed(2)}x`, 'success');
+                            } else {
+                                this.log(`Version ${version.toUpperCase()}: Viewer not ready`, 'warn');
+                            }
+                            break;
+
+                        case 'pan':
+                            // Pan to center of grid
+                            if (iframeWindow.viewer) {
+                                this.log(`Panning to center in version ${version.toUpperCase()}`, 'info');
+                                const centerPoint = new iframeWindow.OpenSeadragon.Point(0.5, 0.5);
+                                iframeWindow.viewer.viewport.panTo(centerPoint);
+                                iframeWindow.viewer.viewport.applyConstraints();
+                                this.log(`Version ${version.toUpperCase()}: Panned to center`, 'success');
+                            } else {
+                                this.log(`Version ${version.toUpperCase()}: Viewer not ready`, 'warn');
+                            }
+                            break;
+
+                        case 'screenshot':
+                            this.log(`Taking screenshot of version ${version.toUpperCase()}`, 'info');
+                            // Note: Browser screenshot would require browser extension or server-side rendering
+                            this.log(`Screenshot functionality requires additional implementation`, 'warn');
+                            break;
+
+                        case 'inspect':
+                            // Call tile inspector if available
+                            if (iframeWindow.__PDFGridDiagnostics) {
+                                const cacheStats = iframeWindow.__PDFGridDiagnostics.getCacheStats();
+                                this.log(`Tile inspection ${version.toUpperCase()}:`, 'info');
+                                this.log(`  Pages cached: ${cacheStats.pages?.total || 0}`, 'info');
+                                this.log(`  Tiles cached: ${cacheStats.tiles || 0}`, 'info');
+                                this.log(`  Tiles rendered: ${cacheStats.tileRenderStats?.total || 0}`, 'info');
+                                this.log(`  Fallback: ${cacheStats.tileRenderStats?.fallbackPercentage || 0}%`, 'info');
+                            } else {
+                                this.log(`Version ${version.toUpperCase()}: Diagnostics not available`, 'warn');
+                            }
+                            break;
+
+                        default:
+                            this.log(`Unknown action: ${action}`, 'error');
+                            break;
+                    }
+                } catch (e) {
+                    this.log(`Error executing ${action} on ${version}: ${e.message}`, 'error');
+                }
+            },
+
+            async collectMetrics() {
+                this.log('Collecting metrics from all versions...', 'info');
+
+                for (const [version, iframe] of Object.entries(this.versions)) {
+                    try {
+                        const iframeWindow = iframe.contentWindow;
+                        const metrics = this.metrics[version];
+
+                        // Collect available metrics
+                        if (iframeWindow.__PDFGridDiagnostics) {
+                            const cacheStats = iframeWindow.__PDFGridDiagnostics.getCacheStats();
+                            metrics.pagesCached = cacheStats.pages?.total || 0;
+                            metrics.tilesCached = cacheStats.tiles || 0;
+                            this.log(`Version ${version.toUpperCase()}: Pages=${metrics.pagesCached}, Tiles=${metrics.tilesCached}`, 'info');
+                        } else {
+                            metrics.pagesCached = '-';
+                            metrics.tilesCached = '-';
+                            this.log(`Version ${version.toUpperCase()}: Diagnostics not available`, 'warn');
+                        }
+
+                        // Measure load time if viewerReady exists
+                        if (iframeWindow.viewerReady && !metrics.loadTime) {
+                            // Load time will be set during iframe load event
+                            const performanceTiming = iframeWindow.performance?.timing;
+                            if (performanceTiming) {
+                                metrics.loadTime = performanceTiming.loadEventEnd - performanceTiming.navigationStart;
+                            }
+                        }
+
+                        // Count lines of code if not already done
+                        if (!metrics.linesOfCode) {
+                            const htmlFile = this.getHtmlFileForVersion(version);
+                            metrics.linesOfCode = await this.countLinesOfCode(htmlFile);
+                        }
+
+                        // Update console error count if not already set
+                        if (!metrics.consoleErrors) metrics.consoleErrors = 0;
+
+                    } catch (e) {
+                        this.log(`Cannot collect metrics from ${version}: ${e.message}`, 'warn');
+                        this.metrics[version].pagesCached = '-';
+                        this.metrics[version].tilesCached = '-';
+                    }
+                }
+
+                this.updateMetricsTable();
+                this.log('Metrics collection complete', 'success');
+            },
+
+            getHtmlFileForVersion(version) {
+                const versionFiles = {
+                    'a': 'index.html',
+                    'b': 'index-checkpoint.html',
+                    'c': 'index-baseline.html'
+                };
+                return versionFiles[version] || 'index.html';
+            },
+
+            async countLinesOfCode(filename) {
+                try {
+                    const response = await fetch(filename);
+                    const text = await response.text();
+                    return text.split('\n').length;
+                } catch (e) {
+                    this.log(`Cannot count lines in ${filename}: ${e.message}`, 'warn');
+                    return '-';
+                }
+            },
+
+            updateMetricsTable() {
+                // Update Lines of Code
+                this.updateMetricCell('loc', 'a', this.metrics.a.linesOfCode);
+                this.updateMetricCell('loc', 'b', this.metrics.b.linesOfCode);
+                this.updateMetricCell('loc', 'c', this.metrics.c.linesOfCode);
+                this.compareMetric('loc', 'lower');
+
+                // Update Load Time
+                this.updateMetricCell('loadtime', 'a', this.metrics.a.loadTime);
+                this.updateMetricCell('loadtime', 'b', this.metrics.b.loadTime);
+                this.updateMetricCell('loadtime', 'c', this.metrics.c.loadTime);
+                this.compareMetric('loadtime', 'lower');
+
+                // Update Console Errors
+                this.updateMetricCell('errors', 'a', this.metrics.a.consoleErrors || 0);
+                this.updateMetricCell('errors', 'b', this.metrics.b.consoleErrors || 0);
+                this.updateMetricCell('errors', 'c', this.metrics.c.consoleErrors || 0);
+                this.compareMetric('errors', 'lower');
+
+                // Update Pages Cached
+                this.updateMetricCell('pages', 'a', this.metrics.a.pagesCached);
+                this.updateMetricCell('pages', 'b', this.metrics.b.pagesCached);
+                this.updateMetricCell('pages', 'c', this.metrics.c.pagesCached);
+                this.compareMetric('pages', 'higher');
+
+                // Update Tile Completeness
+                this.updateMetricCell('tiles', 'a', this.metrics.a.tilesCached);
+                this.updateMetricCell('tiles', 'b', this.metrics.b.tilesCached);
+                this.updateMetricCell('tiles', 'c', this.metrics.c.tilesCached);
+                this.compareMetric('tiles', 'higher');
+            },
+
+            updateMetricCell(metric, version, value) {
+                const cell = document.getElementById(`${metric}-${version}`);
+                if (cell) {
+                    cell.textContent = value ?? '-';
+                }
+            },
+
+            compareMetric(metric, preference = 'lower') {
+                // Map metric IDs to property names
+                const propertyMap = {
+                    'loc': 'linesOfCode',
+                    'loadtime': 'loadTime',
+                    'errors': 'consoleErrors',
+                    'pages': 'pagesCached',
+                    'tiles': 'tilesCached'
+                };
+
+                const propertyName = propertyMap[metric] || metric;
+                const a = this.metrics.a[propertyName] || 0;
+                const c = this.metrics.c[propertyName] || 0;
+                const statusCell = document.getElementById(`${metric}-status`);
+
+                if (!a || !c || a === '-' || c === '-') {
+                    statusCell.textContent = '-';
+                    return;
+                }
+
+                const better = preference === 'lower' ? a < c : a > c;
+                const equal = a === c;
+
+                if (equal) {
+                    statusCell.innerHTML = '<span class="text-gray-400">≈ Equal</span>';
+                } else if (better) {
+                    const improvement = Math.round(Math.abs((a - c) / c * 100));
+                    statusCell.innerHTML = `<span class="metric-good">✓ ${improvement}% better</span>`;
+                } else {
+                    const regression = Math.round(Math.abs((a - c) / c * 100));
+                    statusCell.innerHTML = `<span class="metric-bad">⚠ ${regression}% worse</span>`;
+                }
+            },
+
+            log(message, type = 'info') {
+                const logDiv = document.getElementById('testLog');
+                const timestamp = new Date().toLocaleTimeString();
+                const colors = {
+                    info: 'text-gray-400',
+                    success: 'text-green-400',
+                    error: 'text-red-400',
+                    warn: 'text-yellow-400'
+                };
+                const entry = `<div class="${colors[type]}">[${timestamp}] ${message}</div>`;
+                logDiv.innerHTML += entry;
+                logDiv.scrollTop = logDiv.scrollHeight;
+            },
+
+            cleanup() {
+                // Reset metrics
+                this.metrics = { a: {}, b: {}, c: {} };
+                this.consoleInterceptors = { a: [], b: [], c: [] };
+
+                // Clear console outputs
+                ['a', 'b', 'c'].forEach(version => {
+                    const consoleDiv = document.getElementById(`console-${version}`);
+                    if (consoleDiv) {
+                        consoleDiv.innerHTML = '<div class="text-gray-500 text-xs">Console output will appear here...</div>';
+                    }
+                });
+
+                // Clear metrics table
+                const metricRows = document.querySelectorAll('#metricsTable tbody tr');
+                metricRows.forEach(row => {
+                    const cells = row.querySelectorAll('td');
+                    for (let i = 1; i < cells.length; i++) {
+                        cells[i].textContent = '-';
+                    }
+                });
+
+                this.log('Tester cleaned up and reset', 'info');
+            },
+
+            exportResults() {
+                const results = {
+                    timestamp: new Date().toISOString(),
+                    metrics: this.metrics,
+                    summary: {
+                        version_a: this.versions.a.src,
+                        version_b: this.versions.b.src,
+                        version_c: this.versions.c.src
+                    }
+                };
+
+                const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `test-results-${Date.now()}.json`;
+                a.click();
+
+                this.log('Results exported to JSON', 'success');
+            }
+        };
+
+        /**
+         * PlaywrightRunner - Handles execution of Playwright tests via server API
+         */
+        const PlaywrightRunner = {
+            API_BASE: 'http://localhost:8000/api',
+            eventSource: null,
+
+            async runTest() {
+                const btn = document.getElementById('playwrightBtn');
+                const stopBtn = document.getElementById('stopPlaywrightBtn');
+                const output = document.getElementById('playwrightOutput');
+                const outputContent = document.getElementById('playwrightOutputContent');
+                const testFileSelect = document.getElementById('testFileSelect');
+
+                // Get selected test file
+                const testFile = testFileSelect.value;
+
+                // Show output area
+                output.classList.remove('hidden');
+                btn.disabled = true;
+                btn.classList.add('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.remove('hidden');
+
+                // Clear previous output
+                outputContent.innerHTML = `<div class="text-yellow-400">⏳ Starting Playwright test: ${testFile}</div>`;
+
+                try {
+                    // Use EventSource for Server-Sent Events with test file as query parameter
+                    const url = `${this.API_BASE}/run-test?testFile=${encodeURIComponent(testFile)}`;
+                    this.eventSource = new EventSource(url);
+
+                    this.eventSource.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+
+                        if (data.type === 'start') {
+                            outputContent.innerHTML += `<div class="text-blue-400">${data.message}</div>`;
+                        } else if (data.type === 'stdout') {
+                            const line = data.message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            outputContent.innerHTML += `<div>${line}</div>`;
+                        } else if (data.type === 'stderr') {
+                            const line = data.message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            outputContent.innerHTML += `<div class="text-red-400">${line}</div>`;
+                        } else if (data.type === 'complete') {
+                            const statusClass = data.code === 0 ? 'text-green-400' : 'text-red-400';
+                            outputContent.innerHTML += `<div class="${statusClass}">✓ ${data.message}</div>`;
+                            outputContent.innerHTML += `<div class="text-blue-400 mt-2">Results: ${data.resultsPath}</div>`;
+                            outputContent.innerHTML += `<div class="text-gray-400 mt-2">Open <a href="supervisor.html" class="text-blue-400 underline">supervisor.html</a> to review results</div>`;
+                            this.testComplete();
+                        } else if (data.type === 'error') {
+                            outputContent.innerHTML += `<div class="text-red-400">✗ ${data.message}</div>`;
+                            this.testComplete();
+                        }
+
+                        // Auto-scroll to bottom
+                        output.querySelector('.console-output').scrollTop = output.querySelector('.console-output').scrollHeight;
+                    };
+
+                    this.eventSource.onerror = (error) => {
+                        console.error('[PlaywrightRunner] EventSource error:', error);
+                        outputContent.innerHTML += `<div class="text-red-400">✗ Connection error - ensure server is running on port 8000</div>`;
+                        outputContent.innerHTML += `<div class="text-gray-400 mt-2">Start server: <code>node server.js</code></div>`;
+                        this.testComplete();
+                    };
+
+                } catch (error) {
+                    console.error('[PlaywrightRunner] Error running test:', error);
+                    outputContent.innerHTML += `<div class="text-red-400">✗ Error: ${error.message}</div>`;
+                    this.testComplete();
+                }
+            },
+
+            stopTest() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                }
+
+                fetch(`${this.API_BASE}/stop-test`, { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        const outputContent = document.getElementById('playwrightOutputContent');
+                        outputContent.innerHTML += `<div class="text-yellow-400">⏹ Test stopped</div>`;
+                    })
+                    .catch(error => {
+                        console.error('[PlaywrightRunner] Error stopping test:', error);
+                    });
+
+                this.testComplete();
+            },
+
+            testComplete() {
+                const btn = document.getElementById('playwrightBtn');
+                const stopBtn = document.getElementById('stopPlaywrightBtn');
+
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.add('hidden');
+
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+            }
+        };
+
+        // Initialize tester when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            Tester.init();
+        });
+    </script>
+</body>
+</html>
