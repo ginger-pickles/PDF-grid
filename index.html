@@ -4,30 +4,17 @@
   PDF GRID VIEWER v1.9.6
 ================================================================================
 
-  FILE: index.html
+SETPOINT
+
   PURPOSE: Single-file web application for viewing PDFs in a staggered N×N grid
   ARCHITECTURE: Monolithic - all code in this file (client-side only)
+  LENGTH: Lines of code decreasing
+  USER INTERFACE FRONT END: Unchanging
 
   CURRENT STATUS: Undergoing Phase 2 refactoring (TileStreamer reduction)
   - Baseline: 6,500 LOC
   - Target: 4,000 LOC (38% reduction)
-  - Checkpoint saved: index-checkpoint.html (commit d94cfe9)
-
-  CORE MODULES (by line count):
-  - PDFGridViewer Component: 2,804 LOC (43%) - React UI + app logic
-  - TileStreamer Class: 2,047 LOC (31.5%) - Progressive tile rendering [REFACTORING TARGET]
-  - PageStreamer Class: 597 LOC (9%) - Page caching and rendering
-  - TileCache Class: 311 LOC (5%) - FIFO cache with LRU eviction
-  - PageCache Class: 222 LOC (3%) - Dual-resolution page cache
-  - CONFIG Object: 399 LOC (6%) - Application configuration
-  - ErrorBoundary: 54 LOC (1%) - React error boundary
-
-  TECHNOLOGY STACK:
-  - React 18 (CDN) - UI state management
-  - PDF.js 3.11.174 (CDN) - PDF parsing and rendering
-  - OpenSeadragon 4.1.0 (CDN) - Deep zoom/pan viewer
-  - Tailwind CSS (CDN) - Styling
-  - Babel Standalone (CDN) - In-browser JSX transpilation
+  - Checkpoint saved: index-checkpoint.html
 
   KEY FEATURES:
   - Staggered grid pattern for visual pattern discovery
@@ -45,19 +32,19 @@
   - Target: 410-440 LOC reduction from TileStreamer
 
   TESTING:
+  - Automated tests are authored and maintained in parallel with changes
   - Automated: npm test (Playwright test suite)
   - Manual: grid-tester.html (A/B/C version comparison)
-  - Supervisor: supervisor-tester.html (SETPOINT validation)
+  - AGENT_INTERFACE.md - Self-testing framework
+
 
   DOCUMENTATION:
   - CLAUDE.md - AI assistant guide and codebase overview
   - PRUNING_PLAN-v1.9.6.md - Detailed refactoring strategy
   - lessons.md - Development principles and patterns
-  - AGENT_INTERFACE.md - Self-testing framework
 
   LIVE DEMO: https://ginger-pickles.github.io/PDF-grid/
 
-  Last modified: 2025-11-22
 ================================================================================
 -->
 <html lang="en">
@@ -2716,24 +2703,23 @@
               levels = Array.from({ length: this.maxLevel + 1 }, (_, i) => i);
             }
 
-            console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.maxLevel})`);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.maxLevel})`);
+            }
 
             const report = {
               scanned: 0,
               incomplete: [],
               healed: [],
-              failed: [],
-              byLevel: {} // Track stats per level
+              failed: []
             };
 
             // For each level, identify which tiles should exist
             for (const level of levels) {
-              report.byLevel[level] = { scanned: 0, incomplete: 0, healed: 0, failed: 0 };
               const tilesAtLevel = this._identifyRequiredTiles(level);
 
               for (const tileSpec of tilesAtLevel) {
                 report.scanned++;
-                report.byLevel[level].scanned++;
                 const { x, y, key, neededPages, resolution } = tileSpec;
 
                 // Check if tile is cached (complete) or missing (incomplete)
@@ -2754,9 +2740,10 @@
                     missingPages,
                     missingCount: missingPages.length
                   });
-                  report.byLevel[level].incomplete++;
 
-                  console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
+                  }
 
                   // Attempt to heal: render missing pages and regenerate tile
                   try {
@@ -2774,8 +2761,10 @@
 
                     if (isNowCached) {
                       report.healed.push(key);
-                      report.byLevel[level].healed++;
-                      console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+
+                      if (CONFIG.VERBOSE_LOGGING) {
+                        console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+                      }
 
                       // Update registry to reflect successful healing
                       const registryEntry = this.tileRenderRegistry.get(key);
@@ -2789,29 +2778,18 @@
                       }
                     } else {
                       report.failed.push({ key, reason: 'still_not_cached' });
-                      report.byLevel[level].failed++;
                       console.warn(`[Tile Healing] ✗ FAILED: ${key} still incomplete after healing attempt`);
                     }
                   } catch (error) {
                     report.failed.push({ key, reason: error.message });
-                    report.byLevel[level].failed++;
                     console.error(`[Tile Healing] ✗ ERROR healing ${key}:`, error);
                   }
                 }
               }
             }
 
-            console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
-
-            // Log per-level breakdown
-            if (Object.keys(report.byLevel).length > 0) {
-              console.log('[Tile Healing] Per-level breakdown:');
-              for (const level of levels) {
-                const stats = report.byLevel[level];
-                if (stats.incomplete > 0 || stats.healed > 0 || stats.failed > 0) {
-                  console.log(`  L${level}: scanned=${stats.scanned}, incomplete=${stats.incomplete}, healed=${stats.healed}, failed=${stats.failed}`);
-                }
-              }
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
             }
 
             // Force OSD to redraw healed tiles
