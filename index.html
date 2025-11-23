@@ -2659,97 +2659,22 @@
           }
 
           /**
-           * Inspect tile quality in viewport area across ALL zoom levels
-           * Detects incomplete tiles, blank pages, and (future) blurry tiles
-           * Scans the current viewport bounds at every level (0 to maxLevel)
-           * @returns {Array} Quality issues found at all levels covering viewport
+           * Inspect tile quality in viewport area at current zoom level only
+           * Detects incomplete tiles and missing pages in visible tiles
+           * @returns {Array} Quality issues found in current viewport
            */
           inspectTileQuality() {
-            if (!window.osdViewerRef) {
-              console.warn('[Tile Inspector] OSD viewer not available');
-              return [];
-            }
+            // Reuse getVisibleTiles() logic and filter for quality issues
+            const visibleTiles = this.getVisibleTiles();
 
-            const viewer = window.osdViewerRef;
-            const viewport = viewer.viewport;
-            const tiledImage = viewer.world.getItemAt(0);
-            if (!tiledImage) {
-              console.warn('[Tile Inspector] No TiledImage available');
-              return [];
-            }
+            const issues = visibleTiles.filter(tile =>
+              tile.status === 'fallback' ||
+              tile.status === 'unknown' ||
+              (tile.missingPages && tile.missingPages.length > 0)
+            );
 
-            // Get viewport bounds in image coordinates
-            const bounds = viewport.getBounds(true);
-            const viewportRect = tiledImage.viewportToImageRectangle(bounds);
-
-            console.log(`[Tile Inspector] Scanning viewport area at ALL levels (0-${this.maxLevel})`);
-            console.log(`  Viewport bounds: x=${viewportRect.x.toFixed(0)}, y=${viewportRect.y.toFixed(0)}, w=${viewportRect.width.toFixed(0)}, h=${viewportRect.height.toFixed(0)}`);
-
-            const issues = [];
-            const stats = {
-              totalScanned: 0,
-              issuesFound: 0,
-              byLevel: {}
-            };
-
-            // Scan ALL zoom levels (0 to maxLevel)
-            for (let level = 0; level <= this.maxLevel; level++) {
-              stats.byLevel[level] = { scanned: 0, issues: 0 };
-
-              const scale = Math.pow(2, level);
-              const tileWidth = this.tileSize * scale;
-              const tileHeight = this.tileSize * scale;
-
-              // Calculate which tiles cover viewport at this level
-              const startX = Math.max(0, Math.floor(viewportRect.x / tileWidth));
-              const startY = Math.max(0, Math.floor(viewportRect.y / tileHeight));
-              const endX = Math.min(Math.ceil((viewportRect.x + viewportRect.width) / tileWidth), Math.ceil(this.gridDims.totalWidth / tileWidth));
-              const endY = Math.min(Math.ceil((viewportRect.y + viewportRect.height) / tileHeight), Math.ceil(this.gridDims.totalHeight / tileHeight));
-
-              // Check each tile in viewport at this level
-              for (let x = startX; x <= endX; x++) {
-                for (let y = startY; y <= endY; y++) {
-                  stats.totalScanned++;
-                  stats.byLevel[level].scanned++;
-
-                  const tileLeft = x * tileWidth;
-                  const tileTop = y * tileHeight;
-                  const tileRight = Math.min(tileLeft + tileWidth, this.gridDims.totalWidth);
-                  const tileBottom = Math.min(tileTop + tileHeight, this.gridDims.totalHeight);
-
-                  const neededPages = this._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
-                  const firstPage = Math.min(...neededPages);
-                  const lastPage = Math.max(...neededPages);
-                  const resolution = level < 4 ? 'low' : 'high';
-                  const key = `${level}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
-
-                  // Check tile render registry
-                  const renderStatus = this.tileRenderRegistry?.get(key);
-
-                  // Quality issue if: missing from registry, status=fallback, or has missing pages
-                  if (!renderStatus || renderStatus.status === 'fallback' || renderStatus.missingPages?.length > 0) {
-                    stats.issuesFound++;
-                    stats.byLevel[level].issues++;
-
-                    issues.push({
-                      key,
-                      level,
-                      x, y,
-                      resolution,
-                      neededPages,
-                      missingPages: renderStatus?.missingPages || neededPages,
-                      status: renderStatus?.status || 'unknown'
-                    });
-                  }
-                }
-              }
-            }
-
-            console.log(`[Tile Inspector] Scanned ${stats.totalScanned} tiles, found ${stats.issuesFound} quality issues`);
-            for (let level = 0; level <= this.maxLevel; level++) {
-              if (stats.byLevel[level].issues > 0) {
-                console.log(`  L${level}: ${stats.byLevel[level].issues}/${stats.byLevel[level].scanned} with issues`);
-              }
+            if (CONFIG.VERBOSE_LOGGING && issues.length > 0) {
+              console.log(`[Tile Inspector] Found ${issues.length}/${visibleTiles.length} tiles with quality issues at current level`);
             }
 
             return issues;
