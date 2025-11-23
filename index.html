@@ -10,6 +10,7 @@ SETPOINT
   ARCHITECTURE: Monolithic - all code in this file (client-side only)
   LENGTH: Lines of code decreasing
   USER INTERFACE FRONT END: Unchanging
+  LOAD TIME: Decreasing
 
   CURRENT STATUS: Undergoing Phase 2 refactoring (TileStreamer reduction)
   - Baseline: 6,500 LOC
@@ -2670,22 +2671,95 @@ SETPOINT
           }
 
           /**
-           * Inspect tile quality in viewport area at current zoom level only
-           * Detects incomplete tiles and missing pages in visible tiles
-           * @returns {Array} Quality issues found in current viewport
+           * Determine which zoom levels use low-res tiles (suitable for testing)
+           * Low-res tiles contain few pages and are cheap to render
+           * @param {number} maxPagesPerTile - Max pages per tile to be considered "low-res" (default: 4)
+           * @returns {Array<number>} Array of low-res zoom levels
            */
-          inspectTileQuality() {
-            // Reuse getVisibleTiles() logic and filter for quality issues
-            const visibleTiles = this.getVisibleTiles();
+          getLowResLevels(maxPagesPerTile = 4) {
+            const lowResLevels = [];
 
-            const issues = visibleTiles.filter(tile =>
-              tile.status === 'fallback' ||
-              tile.status === 'unknown' ||
-              (tile.missingPages && tile.missingPages.length > 0)
-            );
+            for (let level = 0; level <= this.maxLevel; level++) {
+              const scale = Math.pow(2, level);
+              // Estimate average pages per tile at this level
+              const avgPagesPerTile = (this.gridDims.cols / scale) * (this.gridDims.rows / scale);
+
+              if (avgPagesPerTile <= maxPagesPerTile) {
+                lowResLevels.push(level);
+              }
+            }
+
+            return lowResLevels;
+          }
+
+          /**
+           * Inspect tile quality - checks viewport + specified levels
+           * ALWAYS checks current viewport tiles, plus additional levels as specified
+           * @param {string|number|Array} additionalLevels - 'lowres' (default), 'all', 'none', specific level, or array
+           * @returns {Array} Quality issues found
+           */
+          inspectTileQuality(additionalLevels = 'lowres') {
+            const issues = [];
+            const checkedTiles = new Set(); // Avoid duplicates
+
+            // ALWAYS check current viewport tiles first
+            const visibleTiles = this.getVisibleTiles();
+            for (const tile of visibleTiles) {
+              if (tile.status === 'fallback' ||
+                  tile.status === 'unknown' ||
+                  (tile.missingPages && tile.missingPages.length > 0)) {
+                issues.push(tile);
+                checkedTiles.add(tile.key);
+              }
+            }
+
+            // Then check additional levels if specified
+            if (additionalLevels === 'none') {
+              // Only viewport tiles checked above
+              return issues;
+            }
+
+            // Determine which additional levels to check
+            let levelsToCheck;
+            if (additionalLevels === 'lowres') {
+              levelsToCheck = this.getLowResLevels();
+            } else if (additionalLevels === 'all') {
+              levelsToCheck = Array.from({length: this.maxLevel + 1}, (_, i) => i);
+            } else if (Array.isArray(additionalLevels)) {
+              levelsToCheck = additionalLevels;
+            } else {
+              levelsToCheck = [additionalLevels];
+            }
+
+            // Scan additional levels for quality issues
+            for (const lvl of levelsToCheck) {
+              const scale = Math.pow(2, lvl);
+              const cols = Math.ceil(this.gridDims.cols / scale);
+              const rows = Math.ceil(this.gridDims.rows / scale);
+
+              for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                  const key = `${lvl}/${x}_${y}`;
+
+                  // Skip if already checked in viewport
+                  if (checkedTiles.has(key)) continue;
+
+                  const renderStatus = this._tileRenderRegistry.get(key);
+
+                  if (renderStatus && (
+                    renderStatus.status === 'fallback' ||
+                    renderStatus.status === 'unknown' ||
+                    (renderStatus.missingPages && renderStatus.missingPages.length > 0)
+                  )) {
+                    issues.push({ key, ...renderStatus, level: lvl, x, y });
+                    checkedTiles.add(key);
+                  }
+                }
+              }
+            }
 
             if (CONFIG.VERBOSE_LOGGING && issues.length > 0) {
-              console.log(`[Tile Inspector] Found ${issues.length}/${visibleTiles.length} tiles with quality issues at current level`);
+              console.log(`[Tile Inspector] Found ${issues.length} quality issues (viewport + levels [${levelsToCheck.join(', ')}])`);
             }
 
             return issues;
@@ -5067,20 +5141,30 @@ SETPOINT
               };
             };
 
-            window.verifyNoIncompleteTiles = (level = null) => {
-              const issues = tileStreamer.inspectTileQuality();
+            window.verifyNoIncompleteTiles = (levels = 'lowres') => {
+              // Call inspectTileQuality with specified levels
+              const issues = tileStreamer.inspectTileQuality(levels);
 
-              // Filter by level if specified
-              const filtered = level !== null
-                ? issues.filter(t => t.level === level)
-                : issues;
+              // Determine what was checked for reporting
+              let levelDesc;
+              if (levels === 'lowres') {
+                const lowResLevels = tileStreamer.getLowResLevels();
+                levelDesc = `Viewport + Low-res levels [${lowResLevels.join(', ')}]`;
+              } else if (levels === 'all') {
+                levelDesc = 'Viewport + All Levels';
+              } else if (levels === 'none') {
+                levelDesc = 'Viewport Only';
+              } else {
+                const lvls = Array.isArray(levels) ? levels.join(', ') : levels;
+                levelDesc = `Viewport + Level(s) ${lvls}`;
+              }
 
-              console.log(`\n[Tile Quality Check]${level !== null ? ` Level ${level}` : ' All Levels'}`);
-              console.log(`Total quality issues: ${filtered.length}`);
+              console.log(`\n[Tile Quality Check] ${levelDesc}`);
+              console.log(`Total quality issues: ${issues.length}`);
 
-              if (filtered.length > 0) {
+              if (issues.length > 0) {
                 // Group by level
-                const byLevel = filtered.reduce((acc, t) => {
+                const byLevel = issues.reduce((acc, t) => {
                   if (!acc[t.level]) acc[t.level] = [];
                   acc[t.level].push(t);
                   return acc;
@@ -5092,17 +5176,19 @@ SETPOINT
 
                   // Show first 5 issues at this level
                   tiles.slice(0, 5).forEach(t => {
-                    console.log(`    ${t.key}: missing pages [${t.missingPages.join(',')}]`);
+                    const status = t.status || 'unknown';
+                    const missing = t.missingPages?.length ? ` (missing: ${t.missingPages.join(',')})` : '';
+                    console.log(`    ${t.key}: ${status}${missing}`);
                   });
                   if (tiles.length > 5) {
                     console.log(`    ... and ${tiles.length - 5} more`);
                   }
                 }
 
-                return { passed: false, issues: filtered };
+                return { passed: false, issues, count: issues.length };
               } else {
                 console.log('✓ No quality issues found - all tiles complete!');
-                return { passed: true, issues: [] };
+                return { passed: true, issues: [], count: 0 };
               }
             };
 
