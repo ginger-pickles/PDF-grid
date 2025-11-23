@@ -2486,54 +2486,6 @@
           }
 
           /**
-           * Analyze and report tile periodicity patterns
-           * Shows deduplication efficiency with content-based caching
-           */
-          analyzePeriodicityPatterns() {
-            if (!this._periodicityStats || this._periodicityStats.size === 0) {
-              console.log('[Periodicity] No statistics collected. Enable DEBUG_MODE and zoom around minimap levels.');
-              return;
-            }
-
-            const duplicateSignatures = [];
-            let totalTileRequests = 0;
-            let actualGenerations = 0;
-
-            for (const [signature, positions] of this._periodicityStats.entries()) {
-              totalTileRequests += positions.length;
-              actualGenerations++; // Only one generation per unique signature
-              if (positions.length > 1) {
-                duplicateSignatures.push({signature, positions});
-              }
-            }
-
-            const savedGenerations = totalTileRequests - actualGenerations;
-            const savingsPercent = (100 * savedGenerations / totalTileRequests).toFixed(1);
-
-            console.log(`\n[Deduplication Analysis]`);
-            console.log(`Unique page combinations: ${this._periodicityStats.size}`);
-            console.log(`Total tile requests: ${totalTileRequests}`);
-            console.log(`Actual tiles generated: ${actualGenerations}`);
-            console.log(`Tiles served from cache: ${savedGenerations} (${savingsPercent}% savings)`);
-
-            if (duplicateSignatures.length > 0) {
-              console.log(`\nTop ${Math.min(5, duplicateSignatures.length)} deduplicated patterns:`);
-              duplicateSignatures
-                .sort((a, b) => b.positions.length - a.positions.length)
-                .slice(0, 5)
-                .forEach(({signature, positions}, i) => {
-                  const pages = signature || '(empty)';
-                  const requests = positions.length;
-                  const savings = requests - 1;
-                  console.log(`  ${i+1}. Pages [${pages}]: ${requests} requests, ${savings} saved`);
-                  console.log(`     Positions: ${positions.slice(0, 3).map(p => `L${p.level}(${p.x},${p.y})`).join(', ')}${positions.length > 3 ? '...' : ''}`);
-                });
-            }
-
-            console.log(`\nCache efficiency: ${actualGenerations}/${totalTileRequests} unique tiles cached`);
-          }
-
-          /**
            * Async helper to request pages in background
            * When done, triggers OSD redraw
            */
@@ -4356,7 +4308,6 @@
               window.gridSize = null;
 
               // Clean up function references (closures)
-              window.analyzePeriodicityPatterns = null;
               window.osdShowNavigator = null;
 
               // Force a delay to allow cleanup to propagate and GC to run before allocating new memory
@@ -5284,9 +5235,6 @@
             );
             tileStreamerRef.current = tileStreamer;
             window.tileStreamerRef = tileStreamer; // Store globally for debugging
-
-            // Expose periodicity analysis function globally
-            window.analyzePeriodicityPatterns = () => tileStreamer.analyzePeriodicityPatterns();
 
             // Expose background rendering diagnostics globally
             window.backgroundRenderingStatus = () => {
