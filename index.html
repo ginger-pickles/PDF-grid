@@ -2814,137 +2814,24 @@
               }
             }
 
-            // CRITICAL: Escalating tickle strategies - start gentle, verify, escalate if needed
+            // Force OSD to redraw healed tiles
             if (report.healed.length > 0 && window.osdViewerRef) {
-              console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
-
-              await this._escalatingRefresh(report.healed);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
+              }
+              window.osdViewerRef.forceRedraw();
+              this.scheduleRedraw();
             }
 
             return report;
           }
 
           /**
-           * Escalating OSD refresh strategies - feedback-driven tickling
-           * Operates at ALL zoom levels, verifies viewport tiles across entire pyramid
+           * (METHOD REMOVED: _escalatingRefresh - Complex 4-level escalation deemed unnecessary)
+           * Escalating OSD refresh was questionable in effectiveness; OSD handles tile refresh automatically
+           * Replaced with simple forceRedraw() above
            */
-          async _escalatingRefresh(healedKeys) {
-            const viewer = window.osdViewerRef;
-            if (!viewer) return;
 
-            const tiledImage = viewer.world.getItemAt(0);
-            if (!tiledImage) return;
-
-            // Helper: Check tile quality at ALL levels in viewport
-            const checkAllLevels = () => {
-              const qualityIssues = this.inspectTileQuality();
-              const stillIncomplete = qualityIssues.filter(t => healedKeys.includes(t.key));
-              return {
-                total: qualityIssues.length,
-                incomplete: stillIncomplete.length,
-                incompleteKeys: stillIncomplete.map(t => t.key),
-                byLevel: stillIncomplete.reduce((acc, t) => {
-                  acc[t.level] = (acc[t.level] || 0) + 1;
-                  return acc;
-                }, {})
-              };
-            };
-
-            // Level 1: Gentle - Force redraw (ALL zoom levels)
-            console.log('[Tickle L1] Trying forceRedraw() at ALL levels...');
-            viewer.forceRedraw();
-            this.scheduleRedraw();
-            await new Promise(resolve => setTimeout(resolve, 100)); // Let it settle
-
-            let status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L1] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L1] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr})`);
-
-            // Level 2: Medium - Reset coverage (ALL zoom levels)
-            console.log('[Tickle L2] Trying resetCoverage() at ALL levels...');
-            tiledImage.resetCoverage();
-            viewer.forceRedraw();
-            await new Promise(resolve => setTimeout(resolve, 200)); // Let it settle
-
-            status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L2] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr2 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr2})`);
-
-            // Level 3: Aggressive - NUCLEAR clear of ALL OSD internal caches
-            console.log('[Tickle L3] AGGRESSIVE - Clearing ALL OSD caches...');
-
-            // Clear TiledImage tile cache (all tiles OSD has cached)
-            if (tiledImage._tileCache) {
-              tiledImage._tileCache._cachesLoaded = {};
-              tiledImage._tileCache._imagesLoaded = [];
-              tiledImage._tileCache._imagesLoading = {};
-            }
-
-            // Clear individual tiles
-            if (tiledImage._tiles) {
-              // Reset all cached tiles
-              for (const key in tiledImage._tiles) {
-                const tile = tiledImage._tiles[key];
-                if (tile && tile.loaded) {
-                  tile.loaded = false; // Force reload
-                  if (tile.image) {
-                    tile.image = null; // Clear cached image
-                  }
-                }
-              }
-            }
-
-            // Clear viewer-level image cache
-            if (viewer.imageLoader) {
-              viewer.imageLoader.clear(); // Clear all cached images
-            }
-
-            // Force complete reset
-            tiledImage.reset();  // More aggressive than resetCoverage
-            viewer.forceRedraw();
-
-            await new Promise(resolve => setTimeout(resolve, 500)); // Longer settle time
-
-            status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L3] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr3 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L3] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr3})`);
-
-            // Level 4: Nuclear - Recreate TiledImage (ALL zoom levels)
-            console.log('[Tickle L4] NUCLEAR - Recreating TiledImage at ALL levels...');
-            const currentZoom = viewer.viewport.getZoom();
-            const currentCenter = viewer.viewport.getCenter();
-
-            viewer.world.removeAll();
-            viewer.addTiledImage({
-              tileSource: this.getOSDConfig(),
-              success: async () => {
-                viewer.viewport.zoomTo(currentZoom, null, true);
-                viewer.viewport.panTo(currentCenter, true);
-                await new Promise(resolve => setTimeout(resolve, 500)); // Let it settle
-
-                status = checkAllLevels();
-                if (status.incomplete === 0) {
-                  console.log('[Tickle L4] ✓ SUCCESS - TiledImage recreation worked at all levels!');
-                } else {
-                  const byLevelStr4 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-                  console.error(`[Tickle L4] ✗ FAILED - ${status.incomplete} tiles STILL incomplete after recreation (${byLevelStr4}). Manual intervention needed.`);
-                  console.error('Incomplete tiles:', status.incompleteKeys);
-                }
-              }
-            });
-          }
 
           /**
            * Identify which tiles should exist at a given level
