@@ -1,4 +1,65 @@
 <!DOCTYPE html>
+<!--
+================================================================================
+  PDF GRID VIEWER v1.9.6
+================================================================================
+
+  FILE: index.html
+  PURPOSE: Single-file web application for viewing PDFs in a staggered N×N grid
+  ARCHITECTURE: Monolithic - all code in this file (client-side only)
+
+  CURRENT STATUS: Undergoing Phase 2 refactoring (TileStreamer reduction)
+  - Baseline: 6,500 LOC
+  - Target: 4,000 LOC (38% reduction)
+  - Checkpoint saved: index-checkpoint.html (commit d94cfe9)
+
+  CORE MODULES (by line count):
+  - PDFGridViewer Component: 2,804 LOC (43%) - React UI + app logic
+  - TileStreamer Class: 2,047 LOC (31.5%) - Progressive tile rendering [REFACTORING TARGET]
+  - PageStreamer Class: 597 LOC (9%) - Page caching and rendering
+  - TileCache Class: 311 LOC (5%) - FIFO cache with LRU eviction
+  - PageCache Class: 222 LOC (3%) - Dual-resolution page cache
+  - CONFIG Object: 399 LOC (6%) - Application configuration
+  - ErrorBoundary: 54 LOC (1%) - React error boundary
+
+  TECHNOLOGY STACK:
+  - React 18 (CDN) - UI state management
+  - PDF.js 3.11.174 (CDN) - PDF parsing and rendering
+  - OpenSeadragon 4.1.0 (CDN) - Deep zoom/pan viewer
+  - Tailwind CSS (CDN) - Styling
+  - Babel Standalone (CDN) - In-browser JSX transpilation
+
+  KEY FEATURES:
+  - Staggered grid pattern for visual pattern discovery
+  - Progressive tile streaming (L0→L5 bidirectional rendering)
+  - Hybrid storage (sessionStorage + IndexedDB fallback)
+  - Mobile-responsive with touch support
+  - URL parameters: ?url= (remote PDF) or ?pdf= (stored PDF)
+  - Debug mode: ?debug=1 for diagnostics panel
+
+  REFACTORING NOTES (Phase 2):
+  - Removing diagnostic methods from TileStreamer (~200 LOC)
+  - Simplifying bidirectional rendering strategy (~300 LOC)
+  - Consolidating tile generation logic (~200 LOC)
+  - Gating verbose logging behind CONFIG flags
+  - Target: 410-440 LOC reduction from TileStreamer
+
+  TESTING:
+  - Automated: npm test (Playwright test suite)
+  - Manual: grid-tester.html (A/B/C version comparison)
+  - Supervisor: supervisor-tester.html (SETPOINT validation)
+
+  DOCUMENTATION:
+  - CLAUDE.md - AI assistant guide and codebase overview
+  - PRUNING_PLAN-v1.9.6.md - Detailed refactoring strategy
+  - lessons.md - Development principles and patterns
+  - AGENT_INTERFACE.md - Self-testing framework
+
+  LIVE DEMO: https://ginger-pickles.github.io/PDF-grid/
+
+  Last modified: 2025-11-22
+================================================================================
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">

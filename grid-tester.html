@@ -1,4 +1,59 @@
 <!DOCTYPE html>
+<!--
+================================================================================
+  PDF GRID VIEWER - A/B/C Comparison Tester
+================================================================================
+
+  FILE: grid-tester.html
+  PURPOSE: Three-version side-by-side comparison tool for regression testing
+
+  FUNCTIONALITY:
+  - Displays Current/Checkpoint/Baseline versions in parallel iframes
+  - Real-time metrics collection and comparison
+  - Manual testing actions (zoom, pan, refresh)
+  - Visual regression detection
+  - Performance benchmarking
+
+  METRICS TRACKED (per version):
+  1. Lines of Code - Total LOC in index.html
+  2. Load Time - Page load duration (ms)
+  3. Console Errors - Error count during load
+  4. Pages Cached - Number of cached PDF pages
+  5. Tiles Completed - Successfully rendered tile count
+
+  MANUAL TEST ACTIONS:
+  - zoom-l0: Zoom to overview (home)
+  - zoom-l3: Zoom to level 3 (6x magnification)
+  - pan: Pan to center (0.5, 0.5)
+  - refresh-all: Reload all three versions
+  - capture-screenshot: Save visual state
+  - compare-dom: Diff DOM structures
+
+  PDF LOADING:
+  - File picker: Load local PDF files
+  - Dropdown: Auto-populated from /demo folder (via /api/list-pdfs)
+  - Synchronized across all three versions
+
+  COMPARISON LOGIC:
+  - GREEN: Metric improved vs checkpoint
+  - RED: Metric regressed vs checkpoint
+  - YELLOW: Metric unchanged
+  - Preferences: Lower for errors/time/LOC, higher for cache/tiles
+
+  TECHNOLOGY STACK:
+  - Tailwind CSS (CDN) - Styling
+  - Vanilla JavaScript - Testing framework
+  - Express API - PDF listing endpoint
+
+  RELATED FILES:
+  - index.html - Current version (under development)
+  - index-checkpoint.html - Stable checkpoint
+  - index-baseline.html - Original baseline
+  - server.js - API server for PDF listing
+
+  Created: 2025-11-22
+================================================================================
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">

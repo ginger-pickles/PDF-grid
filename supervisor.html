@@ -1,4 +1,68 @@
 <!DOCTYPE html>
+<!--
+================================================================================
+  SUPERVISOR - Feedback Control System Monitor
+================================================================================
+
+  FILE: supervisor.html
+  PURPOSE: Human-in-the-loop monitoring and control interface for automated testing
+
+  FUNCTIONALITY:
+  - Loads and displays SETPOINT.md requirements specification
+  - Shows latest test session results and metrics
+  - Provides manual override controls for test parameters
+  - Visualizes test performance trends over time
+  - Enables real-time adjustment of quality thresholds
+
+  SETPOINT SYSTEM (REQUIREMENTS):
+  - Description: What the system should achieve
+  - Requirements: YAML-formatted quality thresholds
+    * all_versions_load_successfully: true
+    * console_errors_max: 0
+    * max_load_time_ms: 15000
+    * performance_regression_percent: 10
+    * no_regressions: true
+
+  FEEDBACK CONTROL LOOP:
+  1. MEASURE: Collect metrics from test runs
+  2. COMPARE: Evaluate against SETPOINT thresholds
+  3. ACT: Trigger refactoring/fixes when out of spec
+  4. VERIFY: Re-test to confirm correction
+
+  SESSION DATA DISPLAYED:
+  - Test metadata (timestamp, duration, PDF used)
+  - Performance metrics (load time, cache stats, errors)
+  - Visual artifacts (screenshots, video, trace)
+  - Pass/fail status per requirement
+
+  FILE LOADING:
+  - SETPOINT.md: Fetched on page load with cache-busting (?t=timestamp)
+  - Session data: Latest results from tests/feedback-control/latest-session/
+  - Auto-refresh: Disabled (manual reload required)
+
+  API ENDPOINTS USED:
+  - GET /api/latest-session - Retrieve test session data
+  - POST /api/save-summary - Persist supervisor annotations
+
+  TECHNOLOGY STACK:
+  - Tailwind CSS (CDN) - Styling
+  - Vanilla JavaScript - Application logic
+  - YAML parsing - Custom parser for SETPOINT requirements
+
+  RELATED FILES:
+  - SETPOINT.md - Requirements specification (source of truth)
+  - tests/supervisor-setpoint.spec.js - Validation test
+  - supervisor-tester.html - Test execution interface
+  - server.js - API server for session data
+
+  DEBUG FEATURES:
+  - Console logging for SETPOINT.md fetch and parse
+  - Textarea shows raw SETPOINT.md content
+  - Status indicator for load success/failure
+
+  Last modified: 2025-11-22
+================================================================================
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -110,7 +174,7 @@
                 <div id="setpointEditorContainer">
                     <textarea id="setpointTextarea"
                               class="w-full h-64 p-4 border border-gray-600 bg-gray-800 text-gray-100 rounded font-mono text-sm"
-                              placeholder="# Setpoint Definition&#10;&#10;## Description&#10;Demo PDF loads successfully in all versions with no regressions&#10;&#10;## Requirements&#10;- all_versions_load_successfully: true&#10;- console_errors_max: 0&#10;- max_load_time_ms: 15000&#10;- warning_load_time_ms: 8000&#10;- performance_regression_percent: 10"></textarea>
+                              placeholder="Loading SETPOINT.md..."></textarea>
                     <div class="mt-2 text-sm text-gray-300">
                         <span id="setpointStatus">Ready to edit</span>
                     </div>
@@ -209,23 +273,19 @@
             currentFile: null,
             currentFileName: 'SETPOINT.md',
 
-            // SETPOINT: Requirements that must be met
+            // SETPOINT: Requirements that must be met (loaded from SETPOINT.md)
             SETPOINT: {
-                description: "Demo PDF loads successfully in all versions with no regressions",
-                requirements: {
-                    all_versions_load_successfully: true,
-                    console_errors_max: 0,
-                    console_errors_warning: 0,
-                    max_load_time_ms: 15000,         // Critical threshold
-                    warning_load_time_ms: 8000,      // Warning if exceeded
-                    performance_regression_percent: 10,  // Warn if >10% slower than baseline
-                    no_regressions: true
-                }
+                description: "",
+                requirements: {}
             },
 
             async init() {
                 await this.loadSetpointFromFile();
                 this.renderSetpoint();
+                // Populate textarea with loaded content
+                if (this.setpointRawContent) {
+                    document.getElementById('setpointTextarea').value = this.setpointRawContent;
+                }
                 await this.loadSessionData();
                 if (this.sessionData) {
                     this.renderSessionStatus();
@@ -242,8 +302,10 @@
                 try {
                     // Add timestamp to bypass browser cache and always fetch fresh copy from disk
                     const response = await fetch(`SETPOINT.md?t=${Date.now()}`);
+                    console.log('[Supervisor] SETPOINT.md fetch response:', response.status, response.statusText);
                     if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                     const text = await response.text();
+                    console.log('[Supervisor] SETPOINT.md raw content:', text);
                     this.setpointRawContent = text;
 
                     // Parse SETPOINT.md - extract description and requirements
@@ -268,6 +330,9 @@
                         }
                     }
 
+                    console.log('[Supervisor] Parsed description:', description);
+                    console.log('[Supervisor] Parsed YAML content:', yamlContent);
+
                     // Parse YAML requirements (simple key:value parser)
                     const requirements = {};
                     yamlContent.split('\n').forEach(line => {
@@ -284,15 +349,21 @@
                             requirements[key] = value;
                         }
                     });
+
+                    console.log('[Supervisor] Parsed requirements:', requirements);
+
                     // Update SETPOINT with loaded values
                     if (description) {
                         this.SETPOINT.description = description;
+                        console.log('[Supervisor] Updated SETPOINT.description:', this.SETPOINT.description);
                     }
                     if (Object.keys(requirements).length > 0) {
                         this.SETPOINT.requirements = { ...this.SETPOINT.requirements, ...requirements };
+                        console.log('[Supervisor] Updated SETPOINT.requirements:', this.SETPOINT.requirements);
                     }
 
                 } catch (error) {
+                    console.error('[Supervisor] Error loading SETPOINT.md:', error);
                 }
             },
 
@@ -350,15 +421,14 @@
                 try {
                     // Add timestamp to bypass browser cache and always fetch fresh copy from disk
                     const response = await fetch(`SETPOINT.md?t=${Date.now()}`);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                     const text = await response.text();
                     document.getElementById('setpointTextarea').value = text;
                     document.getElementById('setpointStatus').textContent = 'Loaded from SETPOINT.md';
                 } catch (error) {
                     console.error('[Supervisor] Error loading SETPOINT.md:', error);
-                    document.getElementById('setpointStatus').textContent = 'File not found - using default';
-
-                    const defaultSetpoint = `# Setpoint Definition\n## Description\n${this.SETPOINT.description}\n## Requirements\n\`\`\`yaml\nall_versions_load_successfully: ${this.SETPOINT.requirements.all_versions_load_successfully}\nconsole_errors_max: ${this.SETPOINT.requirements.console_errors_max}\nconsole_errors_warning: ${this.SETPOINT.requirements.console_errors_warning}\nmax_load_time_ms: ${this.SETPOINT.requirements.max_load_time_ms}\nwarning_load_time_ms: ${this.SETPOINT.requirements.warning_load_time_ms}\nperformance_regression_percent: ${this.SETPOINT.requirements.performance_regression_percent}\nno_regressions: ${this.SETPOINT.requirements.no_regressions}\n\`\`\``;
-                    document.getElementById('setpointTextarea').value = defaultSetpoint;
+                    document.getElementById('setpointStatus').textContent = `Error: ${error.message}`;
+                    alert('Failed to load SETPOINT.md. Please ensure the file exists.');
                 }
             },
 
