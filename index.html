@@ -1775,16 +1775,22 @@
            */
           startBackgroundRendering() {
             if (!this.backgroundQueue.enabled) {
-              console.log('[Background Rendering] Not enabled yet - waiting for OSD init');
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Not enabled yet - waiting for OSD init');
+              }
               return;
             }
 
             if (this.backgroundQueue.isRunning) {
-              console.log('[Background Rendering] Already running');
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Already running');
+              }
               return;
             }
 
-            console.log('[Background Rendering] Starting L0-down progressive rendering');
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log('[Background Rendering] Starting L0-down progressive rendering');
+            }
             this.backgroundQueue.isRunning = true;
             this.backgroundQueue.stopRequested = false;
             this.backgroundQueue.currentLevel = 0;
@@ -1800,7 +1806,9 @@
            */
           stopBackgroundRendering() {
             if (this.backgroundQueue.isRunning) {
-              console.log('[Background Rendering] Stopping at level', this.backgroundQueue.currentLevel);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Stopping at level', this.backgroundQueue.currentLevel);
+              }
               this.backgroundQueue.stopRequested = true;
               this.backgroundQueue.isRunning = false;
             }
@@ -1814,7 +1822,9 @@
               return;
             }
 
-            console.log('[Background Rendering] Resuming from level', this.backgroundQueue.currentLevel);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log('[Background Rendering] Resuming from level', this.backgroundQueue.currentLevel);
+            }
             this.backgroundQueue.isRunning = true;
             this.backgroundQueue.stopRequested = false;
             this._processBackgroundQueue();
@@ -1846,7 +1856,9 @@
 
               // Check if we've reached the max level
               if (queue.currentLevel > this.maxLevel) {
-                console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+                }
                 queue.isRunning = false;
                 return;
               }
@@ -1896,7 +1908,9 @@
                     }
                   }
 
-                  console.log(`[Background Rendering] Level ${queue.currentLevel} (HIGH-RES): ${queue.tilesInLevel.length} tiles grouped into ${tilesGroupedByBatch.length} page batches`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Level ${queue.currentLevel} (HIGH-RES): ${queue.tilesInLevel.length} tiles grouped into ${tilesGroupedByBatch.length} page batches`);
+                  }
                   queue.tilesInLevel = tilesGroupedByBatch;
                   queue.highResBatchIndex = 0;
                 } else {
@@ -1904,7 +1918,9 @@
                   if (queue.currentLevel >= 2) {
                     queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
                   }
-                  console.log(`[Background Rendering] Level ${queue.currentLevel} (LOW-RES): ${queue.tilesInLevel.length} tiles to render`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Level ${queue.currentLevel} (LOW-RES): ${queue.tilesInLevel.length} tiles to render`);
+                  }
                 }
               }
 
@@ -1916,7 +1932,9 @@
                 // HIGH-RES PROCESSING: Work through page batches
                 if (queue.levelIndex >= queue.tilesInLevel.length) {
                   // All batches processed, move to next level
-                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  }
                   queue.currentLevel++;
                   queue.levelIndex = 0;
                   queue.tilesInLevel = [];
@@ -1928,7 +1946,9 @@
                 const [startPage, endPage] = currentBatch.pageRange;
                 const pagesToLoad = Array.from({length: endPage - startPage + 1}, (_, i) => startPage + i);
 
-                console.log(`[Background Rendering] Processing page batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length}: pages ${startPage}-${endPage} (${currentBatch.tiles.length} tiles)`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Background Rendering] Processing page batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length}: pages ${startPage}-${endPage} (${currentBatch.tiles.length} tiles)`);
+                }
 
                 // Preload all pages for this batch
                 this.pageStreamer.requestPages(pagesToLoad, 'high').then(() => {
@@ -1938,7 +1958,9 @@
 
                   // Now render all tiles in this batch (asynchronously to avoid blocking UI)
                   this._renderTilesAsync(currentBatch.tiles, 0, () => {
-                    console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
+                    }
 
                     // Move to next batch
                     queue.levelIndex++;
@@ -1967,7 +1989,9 @@
 
                 // If finished current level, move to next level
                 if (queue.levelIndex >= queue.tilesInLevel.length) {
-                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  }
                   queue.currentLevel++;
                   queue.levelIndex = 0;
                   queue.tilesInLevel = [];
