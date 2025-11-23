@@ -1,4 +1,53 @@
 <!DOCTYPE html>
+<!--
+================================================================================
+  PDF GRID VIEWER v1.9.6
+================================================================================
+
+SETPOINT
+
+  PURPOSE: Single-file web application for viewing PDFs in a staggered N×N grid
+  ARCHITECTURE: Monolithic - all code in this file (client-side only)
+  LENGTH: Lines of code decreasing
+  USER INTERFACE FRONT END: Unchanging
+  LOAD TIME: Decreasing
+
+  CURRENT STATUS: Undergoing Phase 2 refactoring (TileStreamer reduction)
+  - Baseline: 6,500 LOC
+  - Target: 4,000 LOC (38% reduction)
+  - Checkpoint saved: index-checkpoint.html
+
+  KEY FEATURES:
+  - Staggered grid pattern for visual pattern discovery
+  - Progressive tile streaming (L0→L5 bidirectional rendering)
+  - Hybrid storage (sessionStorage + IndexedDB fallback)
+  - Mobile-responsive with touch support
+  - URL parameters: ?url= (remote PDF) or ?pdf= (stored PDF)
+  - Debug mode: ?debug=1 for diagnostics panel
+
+  REFACTORING NOTES (Phase 2):
+  - Removing diagnostic methods from TileStreamer (~200 LOC)
+  - Simplifying bidirectional rendering strategy (~300 LOC)
+  - Consolidating tile generation logic (~200 LOC)
+  - Gating verbose logging behind CONFIG flags
+  - Target: 410-440 LOC reduction from TileStreamer
+
+  TESTING:
+  - Automated tests are authored and maintained in parallel with changes
+  - Automated: npm test (Playwright test suite)
+  - Manual: grid-tester.html (A/B/C version comparison)
+  - AGENT_INTERFACE.md - Self-testing framework
+
+
+  DOCUMENTATION:
+  - CLAUDE.md - AI assistant guide and codebase overview
+  - PRUNING_PLAN-v1.9.6.md - Detailed refactoring strategy
+  - lessons.md - Development principles and patterns
+
+  LIVE DEMO: https://ginger-pickles.github.io/PDF-grid/
+
+================================================================================
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -64,7 +113,7 @@
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.6',
+          VERSION: '1.10.0',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -621,9 +670,24 @@
 
             if (numPages <= dynamicMax) {
               // PDF fits in memory budget: Cache all pages for complete minimap tiles
-              lowResSize = numPages;
+              // IMPORTANT: PageCache evicts at 95% capacity (line 538), so we need to allocate
+              // extra capacity to ensure we can actually cache all numPages
+              // However, only apply this correction for small PDFs to avoid memory pressure on heavy PDFs
+              if (numPages <= 30) {
+                // Small PDFs: Apply 95% correction for complete coverage
+                lowResSize = Math.ceil(numPages / 0.95);
+              } else {
+                // Medium PDFs: Use exact count to maintain memory safety
+                // (95% threshold means we'll cache ~95% of pages, which is acceptable)
+                lowResSize = numPages;
+              }
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching all pages for complete L0/L1/L2 tiles`);
+                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching ${numPages <= 30 ? 'all' : 'most'} pages for complete L0/L1/L2 tiles`);
+                if (numPages <= 30) {
+                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ${numPages} pages at 95% eviction threshold)`);
+                } else {
+                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ~${Math.floor(numPages * 0.95)} pages at 95% threshold)`);
+                }
                 console.log(`[Cache Sizing] Device memory: ${deviceMemoryGB}GB, low-res budget: ${lowResMemoryBudgetMB.toFixed(0)}MB, max pages: ${dynamicMax}`);
               }
             } else {
@@ -643,7 +707,8 @@
           if (numPages <= 20) {
             // Small PDF in grid layout: ALL pages visible simultaneously at deep zoom
             // Must cache all pages + buffer to prevent thrashing
-            highResSize = numPages + 5; // +5 buffer for smooth panning
+            // IMPORTANT: Account for 95% eviction threshold (line 538)
+            highResSize = Math.ceil((numPages + 5) / 0.95); // +5 buffer for smooth panning
           } else {
             // Large PDF: viewport-based caching (user zooms into sections)
             highResSize = Math.min(100, Math.ceil(numPages * 0.3)); // 30% of pages or 100, whichever is smaller
@@ -1641,7 +1706,14 @@
               tilesRenderedFallback: 0,  // Tiles rendered with fallback to other resolution
               cacheMisses: 0,            // Pages requested but not in cache
               onDemandRenders: 0,        // Pages rendered on-demand (triggered by cache miss)
-              onDemandHits: 0            // On-demand renders that completed before tile re-render
+              onDemandHits: 0,           // On-demand renders that completed before tile re-render
+              // Render rate tracking (tiles/second)
+              renderRateWindowMs: 1000,  // Time window for rate calculation (1 second)
+              renderWindowStart: Date.now(), // Timestamp when current window started
+              fullRendersInWindow: 0,    // Full renders in current time window
+              fallbackRendersInWindow: 0, // Fallback renders in current time window
+              fullRenderRate: 0,         // Calculated tiles/sec for full renders
+              fallbackRenderRate: 0      // Calculated tiles/sec for fallback renders
             };
 
             // Tile size = (page + spacing) / renderScale
@@ -1680,6 +1752,66 @@
           }
 
           /**
+           * Update render rate statistics
+           * Called whenever a tile is rendered to track tiles/second
+           * Uses a sliding 1-second window to calculate current render rate
+           */
+          _updateRenderRate(isFull) {
+            const now = Date.now();
+            const elapsed = now - this.stats.renderWindowStart;
+
+            // Increment counter for current window
+            if (isFull) {
+              this.stats.fullRendersInWindow++;
+            } else {
+              this.stats.fallbackRendersInWindow++;
+            }
+
+            // If window has elapsed, calculate rate and reset window
+            if (elapsed >= this.stats.renderRateWindowMs) {
+              const seconds = elapsed / 1000;
+
+              // Calculate rates (tiles per second)
+              this.stats.fullRenderRate = this.stats.fullRendersInWindow / seconds;
+              this.stats.fallbackRenderRate = this.stats.fallbackRendersInWindow / seconds;
+
+              // Reset window
+              this.stats.renderWindowStart = now;
+              this.stats.fullRendersInWindow = 0;
+              this.stats.fallbackRendersInWindow = 0;
+            }
+          }
+
+          /**
+           * Update render rate to zero when no rendering is happening
+           * Called periodically to ensure rate drops to zero when idle
+           */
+          _checkRenderRateIdle() {
+            const now = Date.now();
+            const elapsed = now - this.stats.renderWindowStart;
+
+            // If window has elapsed, calculate current rate and reset window
+            if (elapsed >= this.stats.renderRateWindowMs) {
+              const seconds = elapsed / 1000;
+
+              // If there were NO renders in this window, rate is zero
+              if (this.stats.fullRendersInWindow === 0 && this.stats.fallbackRendersInWindow === 0) {
+                this.stats.fullRenderRate = 0;
+                this.stats.fallbackRenderRate = 0;
+              } else {
+                // Calculate rates from this window
+                this.stats.fullRenderRate = this.stats.fullRendersInWindow / seconds;
+                this.stats.fallbackRenderRate = this.stats.fallbackRendersInWindow / seconds;
+              }
+
+              // Reset window
+              this.stats.renderWindowStart = now;
+              this.stats.fullRendersInWindow = 0;
+              this.stats.fallbackRendersInWindow = 0;
+            }
+          }
+
+          /**
            * Schedule a debounced tile redraw
            * Batches multiple on-demand page renders to avoid excessive forceRedraw() calls
            * Uses 30ms debounce to batch renders that complete in quick succession
@@ -1714,16 +1846,22 @@
            */
           startBackgroundRendering() {
             if (!this.backgroundQueue.enabled) {
-              console.log('[Background Rendering] Not enabled yet - waiting for OSD init');
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Not enabled yet - waiting for OSD init');
+              }
               return;
             }
 
             if (this.backgroundQueue.isRunning) {
-              console.log('[Background Rendering] Already running');
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Already running');
+              }
               return;
             }
 
-            console.log('[Background Rendering] Starting L0-down progressive rendering');
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log('[Background Rendering] Starting L0-down progressive rendering');
+            }
             this.backgroundQueue.isRunning = true;
             this.backgroundQueue.stopRequested = false;
             this.backgroundQueue.currentLevel = 0;
@@ -1739,7 +1877,9 @@
            */
           stopBackgroundRendering() {
             if (this.backgroundQueue.isRunning) {
-              console.log('[Background Rendering] Stopping at level', this.backgroundQueue.currentLevel);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Background Rendering] Stopping at level', this.backgroundQueue.currentLevel);
+              }
               this.backgroundQueue.stopRequested = true;
               this.backgroundQueue.isRunning = false;
             }
@@ -1753,7 +1893,9 @@
               return;
             }
 
-            console.log('[Background Rendering] Resuming from level', this.backgroundQueue.currentLevel);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log('[Background Rendering] Resuming from level', this.backgroundQueue.currentLevel);
+            }
             this.backgroundQueue.isRunning = true;
             this.backgroundQueue.stopRequested = false;
             this._processBackgroundQueue();
@@ -1785,7 +1927,9 @@
 
               // Check if we've reached the max level
               if (queue.currentLevel > this.maxLevel) {
-                console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log('[Background Rendering] Completed all levels (L0 to L' + this.maxLevel + ')');
+                }
                 queue.isRunning = false;
                 return;
               }
@@ -1835,7 +1979,9 @@
                     }
                   }
 
-                  console.log(`[Background Rendering] Level ${queue.currentLevel} (HIGH-RES): ${queue.tilesInLevel.length} tiles grouped into ${tilesGroupedByBatch.length} page batches`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Level ${queue.currentLevel} (HIGH-RES): ${queue.tilesInLevel.length} tiles grouped into ${tilesGroupedByBatch.length} page batches`);
+                  }
                   queue.tilesInLevel = tilesGroupedByBatch;
                   queue.highResBatchIndex = 0;
                 } else {
@@ -1843,7 +1989,9 @@
                   if (queue.currentLevel >= 2) {
                     queue.tilesInLevel = this._sortTilesByPageLocality(queue.tilesInLevel);
                   }
-                  console.log(`[Background Rendering] Level ${queue.currentLevel} (LOW-RES): ${queue.tilesInLevel.length} tiles to render`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Level ${queue.currentLevel} (LOW-RES): ${queue.tilesInLevel.length} tiles to render`);
+                  }
                 }
               }
 
@@ -1855,7 +2003,9 @@
                 // HIGH-RES PROCESSING: Work through page batches
                 if (queue.levelIndex >= queue.tilesInLevel.length) {
                   // All batches processed, move to next level
-                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  }
                   queue.currentLevel++;
                   queue.levelIndex = 0;
                   queue.tilesInLevel = [];
@@ -1867,7 +2017,9 @@
                 const [startPage, endPage] = currentBatch.pageRange;
                 const pagesToLoad = Array.from({length: endPage - startPage + 1}, (_, i) => startPage + i);
 
-                console.log(`[Background Rendering] Processing page batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length}: pages ${startPage}-${endPage} (${currentBatch.tiles.length} tiles)`);
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Background Rendering] Processing page batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length}: pages ${startPage}-${endPage} (${currentBatch.tiles.length} tiles)`);
+                }
 
                 // Preload all pages for this batch
                 this.pageStreamer.requestPages(pagesToLoad, 'high').then(() => {
@@ -1877,7 +2029,9 @@
 
                   // Now render all tiles in this batch (asynchronously to avoid blocking UI)
                   this._renderTilesAsync(currentBatch.tiles, 0, () => {
-                    console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log(`[Background Rendering] Completed batch ${queue.levelIndex + 1}/${queue.tilesInLevel.length} with ${currentBatch.tiles.length} tiles`);
+                    }
 
                     // Move to next batch
                     queue.levelIndex++;
@@ -1906,7 +2060,9 @@
 
                 // If finished current level, move to next level
                 if (queue.levelIndex >= queue.tilesInLevel.length) {
-                  console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Background Rendering] Completed level ${queue.currentLevel}`);
+                  }
                   queue.currentLevel++;
                   queue.levelIndex = 0;
                   queue.tilesInLevel = [];
@@ -2378,8 +2534,10 @@
             if (allPagesCached) {
               this.tileCache.set(key, tileUrl);
               this.stats.tilesRenderedFull++;
+              this._updateRenderRate(true);  // Update full render rate
             } else {
               this.stats.tilesRenderedFallback++;
+              this._updateRenderRate(false); // Update fallback render rate
             }
 
             // CRITICAL: Track tile render status for viewport-based healing
@@ -2422,54 +2580,6 @@
             }
 
             return tileUrl;
-          }
-
-          /**
-           * Analyze and report tile periodicity patterns
-           * Shows deduplication efficiency with content-based caching
-           */
-          analyzePeriodicityPatterns() {
-            if (!this._periodicityStats || this._periodicityStats.size === 0) {
-              console.log('[Periodicity] No statistics collected. Enable DEBUG_MODE and zoom around minimap levels.');
-              return;
-            }
-
-            const duplicateSignatures = [];
-            let totalTileRequests = 0;
-            let actualGenerations = 0;
-
-            for (const [signature, positions] of this._periodicityStats.entries()) {
-              totalTileRequests += positions.length;
-              actualGenerations++; // Only one generation per unique signature
-              if (positions.length > 1) {
-                duplicateSignatures.push({signature, positions});
-              }
-            }
-
-            const savedGenerations = totalTileRequests - actualGenerations;
-            const savingsPercent = (100 * savedGenerations / totalTileRequests).toFixed(1);
-
-            console.log(`\n[Deduplication Analysis]`);
-            console.log(`Unique page combinations: ${this._periodicityStats.size}`);
-            console.log(`Total tile requests: ${totalTileRequests}`);
-            console.log(`Actual tiles generated: ${actualGenerations}`);
-            console.log(`Tiles served from cache: ${savedGenerations} (${savingsPercent}% savings)`);
-
-            if (duplicateSignatures.length > 0) {
-              console.log(`\nTop ${Math.min(5, duplicateSignatures.length)} deduplicated patterns:`);
-              duplicateSignatures
-                .sort((a, b) => b.positions.length - a.positions.length)
-                .slice(0, 5)
-                .forEach(({signature, positions}, i) => {
-                  const pages = signature || '(empty)';
-                  const requests = positions.length;
-                  const savings = requests - 1;
-                  console.log(`  ${i+1}. Pages [${pages}]: ${requests} requests, ${savings} saved`);
-                  console.log(`     Positions: ${positions.slice(0, 3).map(p => `L${p.level}(${p.x},${p.y})`).join(', ')}${positions.length > 3 ? '...' : ''}`);
-                });
-            }
-
-            console.log(`\nCache efficiency: ${actualGenerations}/${totalTileRequests} unique tiles cached`);
           }
 
           /**
@@ -2646,97 +2756,95 @@
           }
 
           /**
-           * Inspect tile quality in viewport area across ALL zoom levels
-           * Detects incomplete tiles, blank pages, and (future) blurry tiles
-           * Scans the current viewport bounds at every level (0 to maxLevel)
-           * @returns {Array} Quality issues found at all levels covering viewport
+           * Determine which zoom levels use low-res tiles (suitable for testing)
+           * Low-res tiles contain few pages and are cheap to render
+           * @param {number} maxPagesPerTile - Max pages per tile to be considered "low-res" (default: 4)
+           * @returns {Array<number>} Array of low-res zoom levels
            */
-          inspectTileQuality() {
-            if (!window.osdViewerRef) {
-              console.warn('[Tile Inspector] OSD viewer not available');
-              return [];
-            }
+          getLowResLevels(maxPagesPerTile = 4) {
+            const lowResLevels = [];
 
-            const viewer = window.osdViewerRef;
-            const viewport = viewer.viewport;
-            const tiledImage = viewer.world.getItemAt(0);
-            if (!tiledImage) {
-              console.warn('[Tile Inspector] No TiledImage available');
-              return [];
-            }
-
-            // Get viewport bounds in image coordinates
-            const bounds = viewport.getBounds(true);
-            const viewportRect = tiledImage.viewportToImageRectangle(bounds);
-
-            console.log(`[Tile Inspector] Scanning viewport area at ALL levels (0-${this.maxLevel})`);
-            console.log(`  Viewport bounds: x=${viewportRect.x.toFixed(0)}, y=${viewportRect.y.toFixed(0)}, w=${viewportRect.width.toFixed(0)}, h=${viewportRect.height.toFixed(0)}`);
-
-            const issues = [];
-            const stats = {
-              totalScanned: 0,
-              issuesFound: 0,
-              byLevel: {}
-            };
-
-            // Scan ALL zoom levels (0 to maxLevel)
             for (let level = 0; level <= this.maxLevel; level++) {
-              stats.byLevel[level] = { scanned: 0, issues: 0 };
-
               const scale = Math.pow(2, level);
-              const tileWidth = this.tileSize * scale;
-              const tileHeight = this.tileSize * scale;
+              // Estimate average pages per tile at this level
+              const avgPagesPerTile = (this.gridDims.cols / scale) * (this.gridDims.rows / scale);
 
-              // Calculate which tiles cover viewport at this level
-              const startX = Math.max(0, Math.floor(viewportRect.x / tileWidth));
-              const startY = Math.max(0, Math.floor(viewportRect.y / tileHeight));
-              const endX = Math.min(Math.ceil((viewportRect.x + viewportRect.width) / tileWidth), Math.ceil(this.gridDims.totalWidth / tileWidth));
-              const endY = Math.min(Math.ceil((viewportRect.y + viewportRect.height) / tileHeight), Math.ceil(this.gridDims.totalHeight / tileHeight));
+              if (avgPagesPerTile <= maxPagesPerTile) {
+                lowResLevels.push(level);
+              }
+            }
 
-              // Check each tile in viewport at this level
-              for (let x = startX; x <= endX; x++) {
-                for (let y = startY; y <= endY; y++) {
-                  stats.totalScanned++;
-                  stats.byLevel[level].scanned++;
+            return lowResLevels;
+          }
 
-                  const tileLeft = x * tileWidth;
-                  const tileTop = y * tileHeight;
-                  const tileRight = Math.min(tileLeft + tileWidth, this.gridDims.totalWidth);
-                  const tileBottom = Math.min(tileTop + tileHeight, this.gridDims.totalHeight);
+          /**
+           * Inspect tile quality - checks viewport + specified levels
+           * ALWAYS checks current viewport tiles, plus additional levels as specified
+           * @param {string|number|Array} additionalLevels - 'lowres' (default), 'all', 'none', specific level, or array
+           * @returns {Array} Quality issues found
+           */
+          inspectTileQuality(additionalLevels = 'lowres') {
+            const issues = [];
+            const checkedTiles = new Set(); // Avoid duplicates
 
-                  const neededPages = this._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
-                  const firstPage = Math.min(...neededPages);
-                  const lastPage = Math.max(...neededPages);
-                  const resolution = level < 4 ? 'low' : 'high';
-                  const key = `${level}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+            // ALWAYS check current viewport tiles first
+            const visibleTiles = this.getVisibleTiles();
+            for (const tile of visibleTiles) {
+              if (tile.status === 'fallback' ||
+                  tile.status === 'unknown' ||
+                  (tile.missingPages && tile.missingPages.length > 0)) {
+                issues.push(tile);
+                checkedTiles.add(tile.key);
+              }
+            }
 
-                  // Check tile render registry
-                  const renderStatus = this.tileRenderRegistry?.get(key);
+            // Then check additional levels if specified
+            if (additionalLevels === 'none') {
+              // Only viewport tiles checked above
+              return issues;
+            }
 
-                  // Quality issue if: missing from registry, status=fallback, or has missing pages
-                  if (!renderStatus || renderStatus.status === 'fallback' || renderStatus.missingPages?.length > 0) {
-                    stats.issuesFound++;
-                    stats.byLevel[level].issues++;
+            // Determine which additional levels to check
+            let levelsToCheck;
+            if (additionalLevels === 'lowres') {
+              levelsToCheck = this.getLowResLevels();
+            } else if (additionalLevels === 'all') {
+              levelsToCheck = Array.from({length: this.maxLevel + 1}, (_, i) => i);
+            } else if (Array.isArray(additionalLevels)) {
+              levelsToCheck = additionalLevels;
+            } else {
+              levelsToCheck = [additionalLevels];
+            }
 
-                    issues.push({
-                      key,
-                      level,
-                      x, y,
-                      resolution,
-                      neededPages,
-                      missingPages: renderStatus?.missingPages || neededPages,
-                      status: renderStatus?.status || 'unknown'
-                    });
+            // Scan additional levels for quality issues
+            for (const lvl of levelsToCheck) {
+              const scale = Math.pow(2, lvl);
+              const cols = Math.ceil(this.gridDims.cols / scale);
+              const rows = Math.ceil(this.gridDims.rows / scale);
+
+              for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                  const key = `${lvl}/${x}_${y}`;
+
+                  // Skip if already checked in viewport
+                  if (checkedTiles.has(key)) continue;
+
+                  const renderStatus = this._tileRenderRegistry.get(key);
+
+                  if (renderStatus && (
+                    renderStatus.status === 'fallback' ||
+                    renderStatus.status === 'unknown' ||
+                    (renderStatus.missingPages && renderStatus.missingPages.length > 0)
+                  )) {
+                    issues.push({ key, ...renderStatus, level: lvl, x, y });
+                    checkedTiles.add(key);
                   }
                 }
               }
             }
 
-            console.log(`[Tile Inspector] Scanned ${stats.totalScanned} tiles, found ${stats.issuesFound} quality issues`);
-            for (let level = 0; level <= this.maxLevel; level++) {
-              if (stats.byLevel[level].issues > 0) {
-                console.log(`  L${level}: ${stats.byLevel[level].issues}/${stats.byLevel[level].scanned} with issues`);
-              }
+            if (CONFIG.VERBOSE_LOGGING && issues.length > 0) {
+              console.log(`[Tile Inspector] Found ${issues.length} quality issues (viewport + levels [${levelsToCheck.join(', ')}])`);
             }
 
             return issues;
@@ -2754,24 +2862,23 @@
               levels = Array.from({ length: this.maxLevel + 1 }, (_, i) => i);
             }
 
-            console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.maxLevel})`);
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.maxLevel})`);
+            }
 
             const report = {
               scanned: 0,
               incomplete: [],
               healed: [],
-              failed: [],
-              byLevel: {} // Track stats per level
+              failed: []
             };
 
             // For each level, identify which tiles should exist
             for (const level of levels) {
-              report.byLevel[level] = { scanned: 0, incomplete: 0, healed: 0, failed: 0 };
               const tilesAtLevel = this._identifyRequiredTiles(level);
 
               for (const tileSpec of tilesAtLevel) {
                 report.scanned++;
-                report.byLevel[level].scanned++;
                 const { x, y, key, neededPages, resolution } = tileSpec;
 
                 // Check if tile is cached (complete) or missing (incomplete)
@@ -2792,9 +2899,10 @@
                     missingPages,
                     missingCount: missingPages.length
                   });
-                  report.byLevel[level].incomplete++;
 
-                  console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Tile Healing] INCOMPLETE: ${key} missing ${missingPages.length}/${neededPages.length} pages: [${missingPages.join(',')}]`);
+                  }
 
                   // Attempt to heal: render missing pages and regenerate tile
                   try {
@@ -2812,8 +2920,10 @@
 
                     if (isNowCached) {
                       report.healed.push(key);
-                      report.byLevel[level].healed++;
-                      console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+
+                      if (CONFIG.VERBOSE_LOGGING) {
+                        console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
+                      }
 
                       // Update registry to reflect successful healing
                       const registryEntry = this.tileRenderRegistry.get(key);
@@ -2827,162 +2937,38 @@
                       }
                     } else {
                       report.failed.push({ key, reason: 'still_not_cached' });
-                      report.byLevel[level].failed++;
                       console.warn(`[Tile Healing] ✗ FAILED: ${key} still incomplete after healing attempt`);
                     }
                   } catch (error) {
                     report.failed.push({ key, reason: error.message });
-                    report.byLevel[level].failed++;
                     console.error(`[Tile Healing] ✗ ERROR healing ${key}:`, error);
                   }
                 }
               }
             }
 
-            console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
-
-            // Log per-level breakdown
-            if (Object.keys(report.byLevel).length > 0) {
-              console.log('[Tile Healing] Per-level breakdown:');
-              for (const level of levels) {
-                const stats = report.byLevel[level];
-                if (stats.incomplete > 0 || stats.healed > 0 || stats.failed > 0) {
-                  console.log(`  L${level}: scanned=${stats.scanned}, incomplete=${stats.incomplete}, healed=${stats.healed}, failed=${stats.failed}`);
-                }
-              }
+            if (CONFIG.VERBOSE_LOGGING) {
+              console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
             }
 
-            // CRITICAL: Escalating tickle strategies - start gentle, verify, escalate if needed
+            // Force OSD to redraw healed tiles
             if (report.healed.length > 0 && window.osdViewerRef) {
-              console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
-
-              await this._escalatingRefresh(report.healed);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
+              }
+              window.osdViewerRef.forceRedraw();
+              this.scheduleRedraw();
             }
 
             return report;
           }
 
           /**
-           * Escalating OSD refresh strategies - feedback-driven tickling
-           * Operates at ALL zoom levels, verifies viewport tiles across entire pyramid
+           * (METHOD REMOVED: _escalatingRefresh - Complex 4-level escalation deemed unnecessary)
+           * Escalating OSD refresh was questionable in effectiveness; OSD handles tile refresh automatically
+           * Replaced with simple forceRedraw() above
            */
-          async _escalatingRefresh(healedKeys) {
-            const viewer = window.osdViewerRef;
-            if (!viewer) return;
 
-            const tiledImage = viewer.world.getItemAt(0);
-            if (!tiledImage) return;
-
-            // Helper: Check tile quality at ALL levels in viewport
-            const checkAllLevels = () => {
-              const qualityIssues = this.inspectTileQuality();
-              const stillIncomplete = qualityIssues.filter(t => healedKeys.includes(t.key));
-              return {
-                total: qualityIssues.length,
-                incomplete: stillIncomplete.length,
-                incompleteKeys: stillIncomplete.map(t => t.key),
-                byLevel: stillIncomplete.reduce((acc, t) => {
-                  acc[t.level] = (acc[t.level] || 0) + 1;
-                  return acc;
-                }, {})
-              };
-            };
-
-            // Level 1: Gentle - Force redraw (ALL zoom levels)
-            console.log('[Tickle L1] Trying forceRedraw() at ALL levels...');
-            viewer.forceRedraw();
-            this.scheduleRedraw();
-            await new Promise(resolve => setTimeout(resolve, 100)); // Let it settle
-
-            let status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L1] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L1] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr})`);
-
-            // Level 2: Medium - Reset coverage (ALL zoom levels)
-            console.log('[Tickle L2] Trying resetCoverage() at ALL levels...');
-            tiledImage.resetCoverage();
-            viewer.forceRedraw();
-            await new Promise(resolve => setTimeout(resolve, 200)); // Let it settle
-
-            status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L2] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr2 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L2] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr2})`);
-
-            // Level 3: Aggressive - NUCLEAR clear of ALL OSD internal caches
-            console.log('[Tickle L3] AGGRESSIVE - Clearing ALL OSD caches...');
-
-            // Clear TiledImage tile cache (all tiles OSD has cached)
-            if (tiledImage._tileCache) {
-              tiledImage._tileCache._cachesLoaded = {};
-              tiledImage._tileCache._imagesLoaded = [];
-              tiledImage._tileCache._imagesLoading = {};
-            }
-
-            // Clear individual tiles
-            if (tiledImage._tiles) {
-              // Reset all cached tiles
-              for (const key in tiledImage._tiles) {
-                const tile = tiledImage._tiles[key];
-                if (tile && tile.loaded) {
-                  tile.loaded = false; // Force reload
-                  if (tile.image) {
-                    tile.image = null; // Clear cached image
-                  }
-                }
-              }
-            }
-
-            // Clear viewer-level image cache
-            if (viewer.imageLoader) {
-              viewer.imageLoader.clear(); // Clear all cached images
-            }
-
-            // Force complete reset
-            tiledImage.reset();  // More aggressive than resetCoverage
-            viewer.forceRedraw();
-
-            await new Promise(resolve => setTimeout(resolve, 500)); // Longer settle time
-
-            status = checkAllLevels();
-            if (status.incomplete === 0) {
-              console.log('[Tickle L3] ✓ SUCCESS - all tiles complete at all levels');
-              return;
-            }
-            const byLevelStr3 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-            console.log(`[Tickle L3] ✗ FAILED - ${status.incomplete} tiles still incomplete (${byLevelStr3})`);
-
-            // Level 4: Nuclear - Recreate TiledImage (ALL zoom levels)
-            console.log('[Tickle L4] NUCLEAR - Recreating TiledImage at ALL levels...');
-            const currentZoom = viewer.viewport.getZoom();
-            const currentCenter = viewer.viewport.getCenter();
-
-            viewer.world.removeAll();
-            viewer.addTiledImage({
-              tileSource: this.getOSDConfig(),
-              success: async () => {
-                viewer.viewport.zoomTo(currentZoom, null, true);
-                viewer.viewport.panTo(currentCenter, true);
-                await new Promise(resolve => setTimeout(resolve, 500)); // Let it settle
-
-                status = checkAllLevels();
-                if (status.incomplete === 0) {
-                  console.log('[Tickle L4] ✓ SUCCESS - TiledImage recreation worked at all levels!');
-                } else {
-                  const byLevelStr4 = Object.entries(status.byLevel).map(([l, c]) => `L${l}:${c}`).join(', ');
-                  console.error(`[Tickle L4] ✗ FAILED - ${status.incomplete} tiles STILL incomplete after recreation (${byLevelStr4}). Manual intervention needed.`);
-                  console.error('Incomplete tiles:', status.incompleteKeys);
-                }
-              }
-            });
-          }
 
           /**
            * Identify which tiles should exist at a given level
@@ -4295,7 +4281,6 @@
               window.gridSize = null;
 
               // Clean up function references (closures)
-              window.analyzePeriodicityPatterns = null;
               window.osdShowNavigator = null;
 
               // Force a delay to allow cleanup to propagate and GC to run before allocating new memory
@@ -5224,9 +5209,6 @@
             tileStreamerRef.current = tileStreamer;
             window.tileStreamerRef = tileStreamer; // Store globally for debugging
 
-            // Expose periodicity analysis function globally
-            window.analyzePeriodicityPatterns = () => tileStreamer.analyzePeriodicityPatterns();
-
             // Expose background rendering diagnostics globally
             window.backgroundRenderingStatus = () => {
               const queue = tileStreamer.backgroundQueue;
@@ -5244,20 +5226,30 @@
               };
             };
 
-            window.verifyNoIncompleteTiles = (level = null) => {
-              const issues = tileStreamer.inspectTileQuality();
+            window.verifyNoIncompleteTiles = (levels = 'lowres') => {
+              // Call inspectTileQuality with specified levels
+              const issues = tileStreamer.inspectTileQuality(levels);
 
-              // Filter by level if specified
-              const filtered = level !== null
-                ? issues.filter(t => t.level === level)
-                : issues;
+              // Determine what was checked for reporting
+              let levelDesc;
+              if (levels === 'lowres') {
+                const lowResLevels = tileStreamer.getLowResLevels();
+                levelDesc = `Viewport + Low-res levels [${lowResLevels.join(', ')}]`;
+              } else if (levels === 'all') {
+                levelDesc = 'Viewport + All Levels';
+              } else if (levels === 'none') {
+                levelDesc = 'Viewport Only';
+              } else {
+                const lvls = Array.isArray(levels) ? levels.join(', ') : levels;
+                levelDesc = `Viewport + Level(s) ${lvls}`;
+              }
 
-              console.log(`\n[Tile Quality Check]${level !== null ? ` Level ${level}` : ' All Levels'}`);
-              console.log(`Total quality issues: ${filtered.length}`);
+              console.log(`\n[Tile Quality Check] ${levelDesc}`);
+              console.log(`Total quality issues: ${issues.length}`);
 
-              if (filtered.length > 0) {
+              if (issues.length > 0) {
                 // Group by level
-                const byLevel = filtered.reduce((acc, t) => {
+                const byLevel = issues.reduce((acc, t) => {
                   if (!acc[t.level]) acc[t.level] = [];
                   acc[t.level].push(t);
                   return acc;
@@ -5269,17 +5261,19 @@
 
                   // Show first 5 issues at this level
                   tiles.slice(0, 5).forEach(t => {
-                    console.log(`    ${t.key}: missing pages [${t.missingPages.join(',')}]`);
+                    const status = t.status || 'unknown';
+                    const missing = t.missingPages?.length ? ` (missing: ${t.missingPages.join(',')})` : '';
+                    console.log(`    ${t.key}: ${status}${missing}`);
                   });
                   if (tiles.length > 5) {
                     console.log(`    ... and ${tiles.length - 5} more`);
                   }
                 }
 
-                return { passed: false, issues: filtered };
+                return { passed: false, issues, count: issues.length };
               } else {
                 console.log('✓ No quality issues found - all tiles complete!');
-                return { passed: true, issues: [] };
+                return { passed: true, issues: [], count: 0 };
               }
             };
 
@@ -5365,6 +5359,13 @@
               getPageCacheSize: () => (pageStreamer?.lowResPageCache.size || 0) + (pageStreamer?.highResPageCache.size || 0),
               getTileCacheSize: () => tileStreamer?.tileCache.cache.size || 0,
               getCacheStats: () => {
+                // Check if render rate should reset to zero when idle
+                if (tileStreamer && tileStreamer._checkRenderRateIdle) {
+                  tileStreamer._checkRenderRateIdle();
+                } else if (window.tileStreamerRef && window.tileStreamerRef._checkRenderRateIdle) {
+                  window.tileStreamerRef._checkRenderRateIdle();
+                }
+
                 const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
                 const tileStats = tileStreamer?.stats || {
                   tilesRenderedFull: 0,
@@ -5381,11 +5382,11 @@
                   },
                   tiles: tileStreamer?.tileCache.cache.size || 0,
                   tileRenderStats: {
-                    full: tileStats.tilesRenderedFull,
-                    fallback: tileStats.tilesRenderedFallback,
-                    total: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback,
-                    fallbackPercentage: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback > 0
-                      ? ((tileStats.tilesRenderedFallback / (tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback)) * 100).toFixed(1)
+                    fullRate: tileStats.fullRenderRate,
+                    fallbackRate: tileStats.fallbackRenderRate,
+                    totalRate: tileStats.fullRenderRate + tileStats.fallbackRenderRate,
+                    fallbackPercentage: (tileStats.fullRenderRate + tileStats.fallbackRenderRate) > 0
+                      ? ((tileStats.fallbackRenderRate / (tileStats.fullRenderRate + tileStats.fallbackRenderRate)) * 100).toFixed(1)
                       : 0
                   },
                   cacheMisses: tileStats.cacheMisses,
@@ -5509,7 +5510,7 @@
               showDebug: () => {
                 const stats = window.__PDFGridDiagnostics.getCacheStats();
                 const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
-                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
+                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nRender Rate:\n  Full: ${stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec\n  Fallback: ${stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
               },
               // Test tile intersection calculation
               getTileIntersections: (level, x, y) => {
@@ -6416,7 +6417,7 @@
                               {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
                             </div>
                             <div className="pl-2 text-gray-400">
-                              Rendered: <span className="text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</span>
+                              Render Rate: <span className="text-white">Full: {stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec, Fallback: {stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec ({stats.tileRenderStats.fallbackPercentage}%)</span>
                             </div>
                             <div className="pl-2 text-gray-400">
                               Cache Misses: <span className="text-white">{stats.cacheMisses}</span>

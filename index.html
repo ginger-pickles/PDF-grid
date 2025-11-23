@@ -113,7 +113,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.9.6',
+          VERSION: '1.10.0',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -670,9 +670,24 @@ SETPOINT
 
             if (numPages <= dynamicMax) {
               // PDF fits in memory budget: Cache all pages for complete minimap tiles
-              lowResSize = numPages;
+              // IMPORTANT: PageCache evicts at 95% capacity (line 538), so we need to allocate
+              // extra capacity to ensure we can actually cache all numPages
+              // However, only apply this correction for small PDFs to avoid memory pressure on heavy PDFs
+              if (numPages <= 30) {
+                // Small PDFs: Apply 95% correction for complete coverage
+                lowResSize = Math.ceil(numPages / 0.95);
+              } else {
+                // Medium PDFs: Use exact count to maintain memory safety
+                // (95% threshold means we'll cache ~95% of pages, which is acceptable)
+                lowResSize = numPages;
+              }
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching all pages for complete L0/L1/L2 tiles`);
+                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching ${numPages <= 30 ? 'all' : 'most'} pages for complete L0/L1/L2 tiles`);
+                if (numPages <= 30) {
+                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ${numPages} pages at 95% eviction threshold)`);
+                } else {
+                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ~${Math.floor(numPages * 0.95)} pages at 95% threshold)`);
+                }
                 console.log(`[Cache Sizing] Device memory: ${deviceMemoryGB}GB, low-res budget: ${lowResMemoryBudgetMB.toFixed(0)}MB, max pages: ${dynamicMax}`);
               }
             } else {
@@ -692,7 +707,8 @@ SETPOINT
           if (numPages <= 20) {
             // Small PDF in grid layout: ALL pages visible simultaneously at deep zoom
             // Must cache all pages + buffer to prevent thrashing
-            highResSize = numPages + 5; // +5 buffer for smooth panning
+            // IMPORTANT: Account for 95% eviction threshold (line 538)
+            highResSize = Math.ceil((numPages + 5) / 0.95); // +5 buffer for smooth panning
           } else {
             // Large PDF: viewport-based caching (user zooms into sections)
             highResSize = Math.min(100, Math.ceil(numPages * 0.3)); // 30% of pages or 100, whichever is smaller
@@ -1690,7 +1706,14 @@ SETPOINT
               tilesRenderedFallback: 0,  // Tiles rendered with fallback to other resolution
               cacheMisses: 0,            // Pages requested but not in cache
               onDemandRenders: 0,        // Pages rendered on-demand (triggered by cache miss)
-              onDemandHits: 0            // On-demand renders that completed before tile re-render
+              onDemandHits: 0,           // On-demand renders that completed before tile re-render
+              // Render rate tracking (tiles/second)
+              renderRateWindowMs: 1000,  // Time window for rate calculation (1 second)
+              renderWindowStart: Date.now(), // Timestamp when current window started
+              fullRendersInWindow: 0,    // Full renders in current time window
+              fallbackRendersInWindow: 0, // Fallback renders in current time window
+              fullRenderRate: 0,         // Calculated tiles/sec for full renders
+              fallbackRenderRate: 0      // Calculated tiles/sec for fallback renders
             };
 
             // Tile size = (page + spacing) / renderScale
@@ -1725,6 +1748,66 @@ SETPOINT
               console.log(`Grid cell: ${cellWidth.toFixed(0)}×${cellHeight.toFixed(0)} (page ${pageWidth}×${pageHeight} + ${spacing}px spacing)`);
               console.log(`Max level: ${this.maxLevel}, At max zoom: each page+gutter = ${CONFIG.PDF_RENDER_SCALE}×${CONFIG.PDF_RENDER_SCALE} tiles`);
               console.log(`Canvas interpolation: low-zoom=${CONFIG.IMAGE_SMOOTHING_LOW_ZOOM}, high-zoom=${CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM}, threshold=level ${CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL}`);
+            }
+          }
+
+          /**
+           * Update render rate statistics
+           * Called whenever a tile is rendered to track tiles/second
+           * Uses a sliding 1-second window to calculate current render rate
+           */
+          _updateRenderRate(isFull) {
+            const now = Date.now();
+            const elapsed = now - this.stats.renderWindowStart;
+
+            // Increment counter for current window
+            if (isFull) {
+              this.stats.fullRendersInWindow++;
+            } else {
+              this.stats.fallbackRendersInWindow++;
+            }
+
+            // If window has elapsed, calculate rate and reset window
+            if (elapsed >= this.stats.renderRateWindowMs) {
+              const seconds = elapsed / 1000;
+
+              // Calculate rates (tiles per second)
+              this.stats.fullRenderRate = this.stats.fullRendersInWindow / seconds;
+              this.stats.fallbackRenderRate = this.stats.fallbackRendersInWindow / seconds;
+
+              // Reset window
+              this.stats.renderWindowStart = now;
+              this.stats.fullRendersInWindow = 0;
+              this.stats.fallbackRendersInWindow = 0;
+            }
+          }
+
+          /**
+           * Update render rate to zero when no rendering is happening
+           * Called periodically to ensure rate drops to zero when idle
+           */
+          _checkRenderRateIdle() {
+            const now = Date.now();
+            const elapsed = now - this.stats.renderWindowStart;
+
+            // If window has elapsed, calculate current rate and reset window
+            if (elapsed >= this.stats.renderRateWindowMs) {
+              const seconds = elapsed / 1000;
+
+              // If there were NO renders in this window, rate is zero
+              if (this.stats.fullRendersInWindow === 0 && this.stats.fallbackRendersInWindow === 0) {
+                this.stats.fullRenderRate = 0;
+                this.stats.fallbackRenderRate = 0;
+              } else {
+                // Calculate rates from this window
+                this.stats.fullRenderRate = this.stats.fullRendersInWindow / seconds;
+                this.stats.fallbackRenderRate = this.stats.fallbackRendersInWindow / seconds;
+              }
+
+              // Reset window
+              this.stats.renderWindowStart = now;
+              this.stats.fullRendersInWindow = 0;
+              this.stats.fallbackRendersInWindow = 0;
             }
           }
 
@@ -2451,8 +2534,10 @@ SETPOINT
             if (allPagesCached) {
               this.tileCache.set(key, tileUrl);
               this.stats.tilesRenderedFull++;
+              this._updateRenderRate(true);  // Update full render rate
             } else {
               this.stats.tilesRenderedFallback++;
+              this._updateRenderRate(false); // Update fallback render rate
             }
 
             // CRITICAL: Track tile render status for viewport-based healing
@@ -5274,6 +5359,13 @@ SETPOINT
               getPageCacheSize: () => (pageStreamer?.lowResPageCache.size || 0) + (pageStreamer?.highResPageCache.size || 0),
               getTileCacheSize: () => tileStreamer?.tileCache.cache.size || 0,
               getCacheStats: () => {
+                // Check if render rate should reset to zero when idle
+                if (tileStreamer && tileStreamer._checkRenderRateIdle) {
+                  tileStreamer._checkRenderRateIdle();
+                } else if (window.tileStreamerRef && window.tileStreamerRef._checkRenderRateIdle) {
+                  window.tileStreamerRef._checkRenderRateIdle();
+                }
+
                 const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
                 const tileStats = tileStreamer?.stats || {
                   tilesRenderedFull: 0,
@@ -5290,11 +5382,11 @@ SETPOINT
                   },
                   tiles: tileStreamer?.tileCache.cache.size || 0,
                   tileRenderStats: {
-                    full: tileStats.tilesRenderedFull,
-                    fallback: tileStats.tilesRenderedFallback,
-                    total: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback,
-                    fallbackPercentage: tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback > 0
-                      ? ((tileStats.tilesRenderedFallback / (tileStats.tilesRenderedFull + tileStats.tilesRenderedFallback)) * 100).toFixed(1)
+                    fullRate: tileStats.fullRenderRate,
+                    fallbackRate: tileStats.fallbackRenderRate,
+                    totalRate: tileStats.fullRenderRate + tileStats.fallbackRenderRate,
+                    fallbackPercentage: (tileStats.fullRenderRate + tileStats.fallbackRenderRate) > 0
+                      ? ((tileStats.fallbackRenderRate / (tileStats.fullRenderRate + tileStats.fallbackRenderRate)) * 100).toFixed(1)
                       : 0
                   },
                   cacheMisses: tileStats.cacheMisses,
@@ -5418,7 +5510,7 @@ SETPOINT
               showDebug: () => {
                 const stats = window.__PDFGridDiagnostics.getCacheStats();
                 const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
-                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nTiles Rendered:\n  Full: ${stats.tileRenderStats.full}\n  Fallback: ${stats.tileRenderStats.fallback}\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
+                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nRender Rate:\n  Full: ${stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec\n  Fallback: ${stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
               },
               // Test tile intersection calculation
               getTileIntersections: (level, x, y) => {
@@ -6325,7 +6417,7 @@ SETPOINT
                               {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
                             </div>
                             <div className="pl-2 text-gray-400">
-                              Rendered: <span className="text-white">Full: {stats.tileRenderStats.full}, Fallback: {stats.tileRenderStats.fallback} ({stats.tileRenderStats.fallbackPercentage}%)</span>
+                              Render Rate: <span className="text-white">Full: {stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec, Fallback: {stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec ({stats.tileRenderStats.fallbackPercentage}%)</span>
                             </div>
                             <div className="pl-2 text-gray-400">
                               Cache Misses: <span className="text-white">{stats.cacheMisses}</span>
