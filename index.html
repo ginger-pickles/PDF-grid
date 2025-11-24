@@ -1,22 +1,23 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-  PDF GRID VIEWER v1.10.0
+  PDF GRID VIEWER v1.11.0
 ================================================================================
 
 SETPOINT
 
   PURPOSE: Single-file web application for viewing PDFs in a staggered N×N grid
   ARCHITECTURE: Modular classes within single file (client-side only)
-  LENGTH: 6,461 lines (Phase 2 & 3 complete, 11% reduction achieved)
+  LENGTH: 6,473 lines (Phase 4.1 complete - OSDManager extracted)
   USER INTERFACE FRONT END: Unchanged
   LOAD TIME: Optimized with progressive rendering
 
-  CURRENT STATUS: Phase 3 cleanup COMPLETE ✓
+  CURRENT STATUS: Phase 4.1 COMPLETE ✓
   - Baseline: 6,609 LOC (v1.9.6)
   - After Phase 2 extraction: 7,242 LOC (+633 lines for modularization)
   - After Phase 3 cleanup: 6,461 LOC (-781 lines by removing duplicates)
-  - Net change: -148 LOC (-2.2% reduction vs baseline)
+  - After Phase 4.1: 6,473 LOC (+12 lines for OSDManager separation)
+  - Net change: -136 LOC (-2.1% reduction vs baseline)
 
   KEY FEATURES:
   - Staggered grid pattern for visual pattern discovery
@@ -41,10 +42,10 @@ SETPOINT
   ✓ Maintained full backward compatibility (all tests pass)
   ✓ Performance unchanged (delegation overhead negligible)
 
-  PHASE 4 OPPORTUNITIES:
-  - Extract OSDManager object to separate class (~180 lines)
-  - Consolidate CONFIG constants into proper configuration class
-  - Refactor React component state management (reduce redundancy)
+  PHASE 4 IN PROGRESS:
+  ✓ Phase 4.1: OSDManager object extracted (182 lines - device detection & viewer init)
+  ⏳ Phase 4.2: Consolidate CONFIG into configuration class (pending)
+  ⏳ Phase 4.3: Refactor React component state management (pending)
   - Target: 5,500-6,000 LOC range (~15-20% total reduction)
 
   TESTING:
@@ -129,7 +130,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.10.0',
+          VERSION: '1.11.0',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -3397,6 +3398,18 @@ SETPOINT
           _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
             return this.tileGenerator._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level);
           }
+        }
+
+        // ╔══════════════════════════════════════════════════════════════════════════╗
+        // ║                      OPENSEADRAGON MANAGER MODULE                        ║
+        // ╚══════════════════════════════════════════════════════════════════════════╝
+
+        /**
+         * OSDManager: OpenSeadragon viewer initialization and configuration
+         * Extracted from TileStreamer in Phase 4 modularization
+         * Handles device detection and viewer setup
+         */
+        const OSDManager = {
           isTouchDevice() {
             // Check multiple signals for touch devices
             const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
