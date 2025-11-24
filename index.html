@@ -3062,21 +3062,11 @@ SETPOINT
            * @param {number} y - Tile y coordinate at this level
            * @returns {Object} Tile bounds {left, top, right, bottom, width, height, scale}
            */
+          /**
+           * Phase 2.1: Delegate to TileGenerator module
+           */
           _getTileBounds(level, x, y) {
-            // Bit shift optimization: 2-3x faster than Math.pow(2, n)
-            const scale = 1 << (this.maxLevel - level);
-            const width = this.tileWidth * scale;
-            const height = this.tileHeight * scale;
-
-            return {
-              left: x * width,
-              top: y * height,
-              right: Math.min((x + 1) * width, this.gridDims.totalWidth),
-              bottom: Math.min((y + 1) * height, this.gridDims.totalHeight),
-              width,
-              height,
-              scale
-            };
+            return this.tileGenerator._getTileBounds(level, x, y);
           }
 
           /**
@@ -3131,31 +3121,10 @@ SETPOINT
           }
 
           /**
-           * Schedule a debounced tile redraw
-           * Batches multiple on-demand page renders to avoid excessive forceRedraw() calls
-           * Uses 30ms debounce to batch renders that complete in quick succession
-           * OPTIMIZED: Reduced from 100ms to 30ms for faster visual feedback
+           * Phase 2.2: Delegate to CacheManager module
            */
           scheduleRedraw() {
-            // Clear any pending redraw
-            if (this.redrawTimeout) {
-              clearTimeout(this.redrawTimeout);
-            }
-
-            // Schedule new redraw after 30ms of inactivity
-            this.redrawTimeout = setTimeout(() => {
-              if (window.viewer) {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log('[TileStreamer] Forcing tile redraw after on-demand page renders');
-                }
-                window.viewer.forceRedraw();
-                // Also redraw navigator/minimap to show updated tiles
-                if (window.viewer.navigator) {
-                  window.viewer.navigator.forceRedraw();
-                }
-              }
-              this.redrawTimeout = null;
-            }, 30);
+            return this.cacheManager.scheduleRedraw();
           }
 
           /**
@@ -3315,53 +3284,12 @@ SETPOINT
            * Returns a signature based on page layout within the tile
            * Tiles with identical page arrangements get identical fingerprints
            */
-          _generateTileFingerprint(neededPages, tileLeft, tileTop) {
-            if (neededPages.length === 0) return 'empty';
-
-            const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
-            const pagePositions = [];
-
-            // For each needed page, find its grid position and calculate relative offset
-            for (const pageNum of neededPages) {
-              // Find (row, col) for this pageNum in the pattern
-              let row = -1, col = -1;
-              for (let r = 0; r < gridRows; r++) {
-                for (let c = 0; c < gridCols; c++) {
-                  if (this.pattern[r][c] === pageNum) {
-                    row = r;
-                    col = c;
-                    break;
-                  }
-                }
-                if (row !== -1) break;
-              }
-
-              if (row === -1) continue; // Page not found in pattern (shouldn't happen)
-
-              // Calculate page's absolute position in grid
-              const pageLeft = col * (pageWidth + spacing);
-              const pageTop = row * (pageHeight + spacing);
-
-              // Calculate relative position within tile (rounded to avoid float precision issues)
-              const relX = Math.round(pageLeft - tileLeft);
-              const relY = Math.round(pageTop - tileTop);
-
-              pagePositions.push({ pageNum, relX, relY });
-            }
-
-            // Sort by relative position for deterministic fingerprint
-            pagePositions.sort((a, b) => {
-              if (a.relY !== b.relY) return a.relY - b.relY;
-              return a.relX - b.relX;
-            });
-
-            // Create compact fingerprint: p{num}@{x},{y}_p{num}@{x},{y}_...
-            return pagePositions.map(p => `p${p.pageNum}@${p.relX},${p.relY}`).join('_');
-          }
-
           /**
-           * Get OpenSeadragon tile source configuration
-           * Uses rectangular tiles via getTileWidth/getTileHeight
+           * Phase 2.1: Delegate to TileGenerator module
+           */
+          _generateTileFingerprint(neededPages, tileLeft, tileTop) {
+            return this.tileGenerator._generateTileFingerprint(neededPages, tileLeft, tileTop);
+          }
            * Phase 2: Delegates tile generation to TileGenerator module
            */
           getOSDConfig() {
@@ -3379,359 +3307,28 @@ SETPOINT
           }
 
           /**
-           * Generate a tile at specified level and coordinates
+           * Phase 2.1: Delegate to TileGenerator module
            */
           generateTile(level, x, y) {
-            // Prevent duplicate initial L0 tile generation requests
-            // OSD often requests L0 tile multiple times in rapid succession during initial load
-            // We block duplicates within first 500ms, but allow regeneration after that
-            // This allows forceRedraw() to regenerate L0 tile when on-demand renders complete
-            if (level === 0) {
-              const now = Date.now();
-
-              // Track L0 tile generation attempts for diagnostics
-              if (!window.__L0TileGeneration) {
-                window.__L0TileGeneration = { calls: [], delayed: 0, firstRequestTime: now };
-              }
-
-              const timeSinceFirst = now - window.__L0TileGeneration.firstRequestTime;
-
-              // Block duplicate requests within first 500ms (initial load period)
-              // After 500ms, allow regeneration for forceRedraw() calls
-              if (timeSinceFirst < 500) {
-                // Check if we already have a cached L0 tile from first request
-                for (const [cacheKey, cachedTile] of this.tileCache.cache.entries()) {
-                  if (cacheKey.startsWith('0_')) {
-                    // Found cached L0 tile - return it to block duplicate generation
-                    if (!window.__L0TileGeneration.delayed) window.__L0TileGeneration.delayed = 0;
-                    window.__L0TileGeneration.delayed++;
-                    return cachedTile;
-                  }
-                }
-                // No cached tile yet - this is the first request, allow it to proceed
-              }
-
-              // Track L0 tile generation for diagnostics
-              const totalPages = this.pageCount;
-              const lowResCache = this.pageStreamer._getPageCache('low');
-              const cachedPageCount = lowResCache.size;
-              const cacheCompleteness = totalPages ? (cachedPageCount / totalPages) : 0;
-
-              if (!window.__L0TileGeneration.calls) window.__L0TileGeneration.calls = [];
-              window.__L0TileGeneration.calls.push({
-                time: now,
-                level, x, y,
-                timeSinceFirst,
-                cachedPages: cachedPageCount,
-                totalPages: totalPages,
-                completeness: Math.round(cacheCompleteness * 100) + '%',
-                timestamp: new Date().toISOString()
-              });
-            }
-
-            // Calculate which pages this tile needs
-            const scale = Math.pow(2, level - this.maxLevel);
-            const tileWidthInGrid = this.tileWidth / scale;
-            const tileHeightInGrid = this.tileHeight / scale;
-
-            // Base tile boundaries (for cache keys)
-            const tileLeft = x * tileWidthInGrid;
-            const tileTop = y * tileHeightInGrid;
-            const tileRight = Math.min(tileLeft + tileWidthInGrid, this.gridDims.totalWidth);
-            const tileBottom = Math.min(tileTop + tileHeightInGrid, this.gridDims.totalHeight);
-
-            // Extended boundaries with overlap for rendering (helps iOS Safari)
-            const overlapInGrid = this.tileOverlap / scale;
-            const renderLeft = tileLeft - overlapInGrid;
-            const renderTop = tileTop - overlapInGrid;
-            const renderRight = tileRight + overlapInGrid;
-            const renderBottom = tileBottom + overlapInGrid;
-
-            // Calculate which pages this tile intersects (use base boundaries, not extended)
-            // Using extended boundaries causes tiles to detect pages they barely overlap (1px)
-            // resulting in incorrect cache keys like "p1-3" instead of "p1"
-            const neededPages = this._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
-
-            // Two-tier cache key strategy:
-            // 1. Whole pages → page-range keys (max dedup), with position for fractional tile levels
-            // 2. Page portions → position (correctness for deep zoom)
-            let key;
-            const wholePagesLevel = this.maxLevel - Math.log2(CONFIG.PDF_RENDER_SCALE);
-
-            if (level <= wholePagesLevel && neededPages.length > 0) {
-              // Tile shows whole pages - use page-range keys for deduplication
-              // Edge tiles get "_edge" marker to prevent collisions with interior tiles
-              const sortedPages = [...neededPages].sort((a, b) => a - b);
-              const firstPage = sortedPages[0];
-              const lastPage = sortedPages[sortedPages.length - 1];
-
-              // Detect edge tiles: tiles at the boundary of the grid that may have partial/irregular content
-              // These need disambiguation from interior tiles AND from each other based on which edge(s) they're on
-              const tilesWide = Math.ceil(this.gridDims.totalWidth / (this.tileWidth / scale));
-              const tilesHigh = Math.ceil(this.gridDims.totalHeight / (this.tileHeight / scale));
-
-              const isRightEdge = (x >= tilesWide - 1);
-              const isBottomEdge = (y >= tilesHigh - 1);
-              const isEdgeTile = isRightEdge || isBottomEdge;
-
-              const pageRange = firstPage === lastPage ? `p${firstPage}` : `p${firstPage}-${lastPage}`;
-
-              if (isEdgeTile) {
-                // Edge tile: specify which edge(s) to prevent collisions
-                let edgeMarker = '';
-                if (isRightEdge) edgeMarker += 'r';
-                if (isBottomEdge) edgeMarker += 'b';
-                key = `${level}_edge${edgeMarker}_${pageRange}`;
-              } else {
-                // Interior tile: pure page-range key for maximum deduplication
-                key = `${level}_${pageRange}`;
-              }
-
-            } else {
-              // Partial pages or page portions at deep zoom
-              // If tile shows portion of a single page, use page-relative position for deduplication
-              if (neededPages.length === 1) {
-                const pageNum = neededPages[0];
-
-                // Find which occurrence of this page the tile intersects
-                // (pages can appear multiple times in staggered grid)
-                const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
-                let pageLeft = 0, pageTop = 0;
-                let found = false;
-
-                for (let row = 0; row < gridRows && !found; row++) {
-                  for (let col = 0; col < gridCols && !found; col++) {
-                    if (this.pattern[row][col] === pageNum) {
-                      const candidateLeft = col * (pageWidth + spacing);
-                      const candidateTop = row * (pageHeight + spacing);
-                      const candidateRight = candidateLeft + pageWidth;
-                      const candidateBottom = candidateTop + pageHeight;
-
-                      // Check if tile intersects this occurrence of the page
-                      if (!(tileRight <= candidateLeft || tileLeft >= candidateRight ||
-                            tileBottom <= candidateTop || tileTop >= candidateBottom)) {
-                        pageLeft = candidateLeft;
-                        pageTop = candidateTop;
-                        found = true;
-                      }
-                    }
-                  }
-                }
-
-                // Calculate tile index within this page (not pixel offset)
-                const tileWidthInGrid = this.tileWidth / scale;
-                const tileHeightInGrid = this.tileHeight / scale;
-                const tileIndexX = Math.floor((tileLeft - pageLeft) / tileWidthInGrid);
-                const tileIndexY = Math.floor((tileTop - pageTop) / tileHeightInGrid);
-
-                key = `${level}_p${pageNum}_x${tileIndexX}_y${tileIndexY}`;
-              } else {
-                // Multiple pages or complex intersection - use position
-                key = `${level}_${x}_${y}`;
-              }
-            }
-
-            // Periodicity diagnostic: track tile requests at minimap levels
-            if (CONFIG.DEBUG_MODE && level <= this.minimapMaxLevel) {
-              const pageSignature = [...neededPages].sort((a, b) => a - b).join(',');
-              if (!this._periodicityStats) {
-                this._periodicityStats = new Map(); // pageSignature -> [{level, x, y}]
-              }
-              if (!this._periodicityStats.has(pageSignature)) {
-                this._periodicityStats.set(pageSignature, []);
-              }
-              this._periodicityStats.get(pageSignature).push({level, x, y});
-            }
-
-            // Check tile cache first
-            const cached = this.tileCache.get(key);
-            if (cached) {
-              return cached;
-            }
-            const resolution = this._getResolutionForLevel(level);
-
-            // Check if all needed pages are cached at desired resolution
-            const allPagesCached = neededPages.every(pageNum =>
-              this.pageStreamer.hasPage(pageNum, resolution)
-            );
-
-            // Progressive loading: Always render tile with whatever pages are available
-            // If some pages aren't ready, render partial tile and trigger async load
-            // Cache will be invalidated periodically as pages render, causing re-requests
-            const availablePages = neededPages.filter(pageNum =>
-              this.pageStreamer.hasPage(pageNum, resolution) ||
-              this.pageStreamer.hasPage(pageNum, resolution === 'high' ? 'low' : 'high')
-            );
-
-            if (availablePages.length < neededPages.length) {
-              // Some pages missing - render partial tile
-              const missingPages = neededPages.filter(p => !availablePages.includes(p));
-              if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[TileStreamer] PARTIAL TILE: ${key} has ${availablePages.length}/${neededPages.length} pages (missing: ${missingPages.join(',')})`);
-              }
-
-              // Trigger on-demand rendering for missing pages
-              // Low-res: Safe to render on-demand now that eviction threshold is 95%
-              // High-res: User actively viewing specific area (viewport-based)
-              this._requestPagesAsync(missingPages, resolution);
-            }
-
-            // If not all high-res pages available, trigger background loading
-            if (!allPagesCached && resolution === 'high') {
-              if (CONFIG.VERBOSE_LOGGING) {
-                const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, 'high'));
-                console.log(`[TileStreamer] FALLBACK: ${key} missing high-res pages: ${missingPages.join(',')}`);
-              }
-              this._requestPagesAsync(neededPages, 'high');
-            }
-
-            // Render tile (will use fallback if needed) - pass extended boundaries for overlap
-            const tileUrl = this._renderTile(level, x, y, scale, key, neededPages, resolution, renderLeft, renderTop, renderRight, renderBottom);
-
-            // Only cache tiles that have all pages at correct resolution
-            // Don't cache fallback tiles - they'll be regenerated when proper pages are ready
-            if (allPagesCached) {
-              this.tileCache.set(key, tileUrl);
-              this.stats.tilesRenderedFull++;
-              this._updateRenderRate(true);  // Update full render rate
-            } else {
-              this.stats.tilesRenderedFallback++;
-              this._updateRenderRate(false); // Update fallback render rate
-            }
-
-            // CRITICAL: Track tile render status for viewport-based healing
-            // This allows us to query what the user actually sees, not just what's cached
-            const missingPages = neededPages.filter(p => !this.pageStreamer.hasPage(p, resolution));
-            this.tileRenderRegistry.set(key, {
-              status: allPagesCached ? 'full' : 'fallback',
-              level,
-              x,
-              y,
-              resolution,
-              neededPages,
-              missingPages,
-              timestamp: Date.now()
-            });
-
-            if (CONFIG.VERBOSE_LOGGING) {
-              const status = allPagesCached ? 'FULL' : 'FALLBACK';
-              const cacheStatus = allPagesCached ? 'cached' : 'not cached (will regenerate)';
-              console.log(`[TileStreamer] RENDER ${status}: ${key} (pages: ${neededPages.join(',')}, resolution: ${resolution}) - ${cacheStatus}`);
-
-              // On-screen diagnostic for iOS (show last 5 tile renders)
-              if (isIOSSafari) {
-                if (!window.__tileDebugLog) window.__tileDebugLog = [];
-                window.__tileDebugLog.push(`L${level} ${resolution} ${status} p${neededPages.join(',')}`);
-                if (window.__tileDebugLog.length > 5) window.__tileDebugLog.shift();
-
-                // Update on-screen display
-                let debugDiv = document.getElementById('ios-tile-debug');
-                if (!debugDiv) {
-                  debugDiv = document.createElement('div');
-                  debugDiv.id = 'ios-tile-debug';
-                  debugDiv.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.8);color:#0f0;padding:10px;font-family:monospace;font-size:10px;z-index:10000;max-width:300px;';
-                  document.body.appendChild(debugDiv);
-                }
-                debugDiv.innerHTML = `<div style="color:#ff0;margin-bottom:5px;">Tile Debug (last 5):</div>` +
-                  window.__tileDebugLog.map(log => `<div>${log}</div>`).join('') +
-                  `<div style="color:#0ff;margin-top:5px;">minimapMaxLvl: ${this.minimapMaxLevel}</div>`;
-              }
-            }
-
-            return tileUrl;
+            return this.tileGenerator.generateTile(level, x, y);
           }
 
           /**
            * Async helper to request pages in background
            * When done, triggers OSD redraw
            */
+          /**
+           * Phase 2.2: Delegate to CacheManager module
+           */
           _requestPagesAsync(pageNums, resolution) {
-            // Deduplicate: don't request if already in progress
-            const key = `${pageNums.join(',')}_${resolution}`;
-            if (this._pendingRequests && this._pendingRequests.has(key)) {
-              return;
-            }
-
-            if (!this._pendingRequests) {
-              this._pendingRequests = new Set();
-            }
-            this._pendingRequests.add(key);
-
-            this.pageStreamer.requestPages(pageNums, resolution).then(() => {
-              this._pendingRequests.delete(key);
-
-              // Invalidate tiles that used these pages (so they'll be regenerated with complete pages)
-              this._invalidateTilesUsingPages(pageNums, resolution);
-
-              // Pages are now cached - trigger OSD to redraw with fresh tiles
-              // Note: On iOS, we skip the aggressive reset to avoid memory spikes
-              if (!isIOSSafari) {
-                try {
-                  if (window.osdViewerRef && window.osdViewerRef.world) {
-                    // Force OSD to re-request tiles by resetting the tiled image
-                    const tiledImage = window.osdViewerRef.world.getItemAt(0);
-                    if (tiledImage) {
-                      tiledImage.reset();
-                    }
-                  }
-                } catch (err) {
-                  // Silently ignore if OSD not ready yet
-                }
-              } else {
-                // On iOS: Just invalidate cache and rely on natural refresh
-                // This avoids memory spikes from forcing all tiles to re-render
-                try {
-                  if (window.osdViewerRef && window.osdViewerRef.world) {
-                    window.osdViewerRef.world.needsDraw();
-                  }
-                } catch (err) {
-                  // Silently ignore if OSD not ready yet
-                }
-              }
-            }).catch(err => {
-              this._pendingRequests.delete(key);
-              console.error('Error requesting pages:', err);
-            });
+            return this.cacheManager._requestPagesAsync(pageNums, resolution);
           }
 
           /**
-           * Invalidate cached tiles that depend on specific pages
-           * This ensures tiles get regenerated after pages finish rendering
+           * Phase 2.2: Delegate to CacheManager module
            */
           _invalidateTilesUsingPages(pageNums, resolution) {
-            const pageSet = new Set(pageNums);
-            let invalidated = 0;
-
-            // Iterate through cached tiles and remove ones that used these pages
-            for (const [key, value] of this.tileCache.cache.entries()) {
-              // Parse key to determine which pages it needs
-              // Key formats: "level_pX" or "level_pX-Y" or "level_pX_xN_yN" or "level_edger_pX-Y" etc.
-              // FIXED: Regex now handles edge tiles (edger, edgeb, edgerb prefix)
-              const pageMatch = key.match(/p(\d+)(?:-(\d+))?/);
-              if (pageMatch) {
-                const firstPage = parseInt(pageMatch[1]);
-                const lastPage = pageMatch[2] ? parseInt(pageMatch[2]) : firstPage;
-
-                // Check if this tile used any of the newly-rendered pages
-                for (let p = firstPage; p <= lastPage; p++) {
-                  if (pageSet.has(p)) {
-                    this.tileCache.cache.delete(key);
-                    invalidated++;
-                    if (CONFIG.VERBOSE_LOGGING) {
-                      console.log(`[TileStreamer] INVALIDATE: ${key} (page ${p} now ready)`);
-                    }
-                    break;
-                  }
-                }
-              } else if (CONFIG.VERBOSE_LOGGING) {
-                // Log tiles that don't match expected pattern (potential bug indicator)
-                console.warn(`[TileStreamer] Cannot parse page numbers from key: ${key}`);
-              }
-            }
-
-            if (invalidated > 0 && CONFIG.VERBOSE_LOGGING) {
-              console.log(`[TileStreamer] Invalidated ${invalidated} tiles after rendering pages: ${pageNums.join(',')}`);
-            }
+            return this.cacheManager._invalidateTilesUsingPages(pageNums, resolution);
           }
 
           /**
@@ -3772,421 +3369,27 @@ SETPOINT
           /**
            * Render tile content
            */
+
+          /**
+           * Phase 2.1: Delegate to TileGenerator module
+           */
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
-            const { totalWidth, totalHeight, pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
-
-            // Track L0 tile rendering for diagnostics
-            if (level === 0) {
-              if (!window.__L0TileGeneration) window.__L0TileGeneration = { calls: [], renders: [] };
-              if (!window.__L0TileGeneration.renders) window.__L0TileGeneration.renders = [];
-              window.__L0TileGeneration.renders.push({
-                time: Date.now(),
-                key,
-                neededPages: [...neededPages],
-                resolution
-              });
-            }
-
-            // Tile boundaries (extended with overlap) in grid coordinates
-
-            // Configure interpolation based on zoom level
-            if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
-              // Low zoom (minimap): use smoothing
-              this.tileCtx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_LOW_ZOOM;
-            } else {
-              // High zoom (deep zoom): disable smoothing for crisp pixels
-              this.tileCtx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM;
-            }
-            if (this.tileCtx.imageSmoothingEnabled) {
-              this.tileCtx.imageSmoothingQuality = CONFIG.IMAGE_SMOOTHING_QUALITY;
-            }
-
-            // Clear tile with background color
-            this.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
-            this.tileCtx.fillRect(0, 0, this.tileCanvas.width, this.tileCanvas.height);
-
-            // Draw portions of pages that intersect this tile
-            let pagesDrawnCount = 0;
-
-            for (let row = 0; row < gridRows; row++) {
-              for (let col = 0; col < gridCols; col++) {
-                const wasDrawn = this._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, key, resolution, level);
-                if (wasDrawn) pagesDrawnCount++;
-              }
-            }
-
-
-            // DEBUG: Draw colored borders on each edge to verify overlap
-            if (CONFIG.TILE_LABELS) {
-              this.tileCtx.lineWidth = 3;
-
-              // Top edge - RED
-              this.tileCtx.strokeStyle = '#FF0000';
-              this.tileCtx.beginPath();
-              this.tileCtx.moveTo(0, 1.5);
-              this.tileCtx.lineTo(this.tileCanvas.width, 1.5);
-              this.tileCtx.stroke();
-
-              // Right edge - GREEN
-              this.tileCtx.strokeStyle = '#00FF00';
-              this.tileCtx.beginPath();
-              this.tileCtx.moveTo(this.tileCanvas.width - 1.5, 0);
-              this.tileCtx.lineTo(this.tileCanvas.width - 1.5, this.tileCanvas.height);
-              this.tileCtx.stroke();
-
-              // Bottom edge - BLUE
-              this.tileCtx.strokeStyle = '#0000FF';
-              this.tileCtx.beginPath();
-              this.tileCtx.moveTo(0, this.tileCanvas.height - 1.5);
-              this.tileCtx.lineTo(this.tileCanvas.width, this.tileCanvas.height - 1.5);
-              this.tileCtx.stroke();
-
-              // Left edge - YELLOW
-              this.tileCtx.strokeStyle = '#FFFF00';
-              this.tileCtx.beginPath();
-              this.tileCtx.moveTo(1.5, 0);
-              this.tileCtx.lineTo(1.5, this.tileCanvas.height);
-              this.tileCtx.stroke();
-
-              // Draw level number at center
-              this.tileCtx.font = 'bold 60px monospace';
-              this.tileCtx.textAlign = 'center';
-              this.tileCtx.textBaseline = 'middle';
-
-              // Black outline for contrast
-              this.tileCtx.strokeStyle = '#000000';
-              this.tileCtx.lineWidth = 5;
-              this.tileCtx.strokeText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 100);
-
-              // White text
-              this.tileCtx.fillStyle = '#FFFFFF';
-              this.tileCtx.fillText(`L${level}`, this.tileCanvas.width / 2, this.tileCanvas.height / 2 - 100);
-
-              // Draw cache key below level, wrapped across multiple lines
-              this.tileCtx.font = 'bold 48px monospace';
-              const maxWidth = this.tileCanvas.width - 20; // Leave 10px margin on each side
-              const lineHeight = 56;
-
-              // Split key into words/chunks at underscores
-              const chunks = key.split('_');
-              const lines = [];
-              let currentLine = '';
-
-              for (const chunk of chunks) {
-                const testLine = currentLine ? currentLine + '_' + chunk : chunk;
-                const metrics = this.tileCtx.measureText(testLine);
-
-                if (metrics.width > maxWidth && currentLine) {
-                  // Line is too long, save current line and start new one
-                  lines.push(currentLine);
-                  currentLine = chunk;
-                } else {
-                  currentLine = testLine;
-                }
-              }
-              if (currentLine) lines.push(currentLine);
-
-              // Draw each line
-              const startY = this.tileCanvas.height / 2 - 20;
-              this.tileCtx.strokeStyle = '#000000';
-              this.tileCtx.lineWidth = 6;
-
-              lines.forEach((line, i) => {
-                const y = startY + (i * lineHeight);
-                this.tileCtx.strokeText(line, this.tileCanvas.width / 2, y);
-                this.tileCtx.fillStyle = '#FFFF00'; // Yellow for key
-                this.tileCtx.fillText(line, this.tileCanvas.width / 2, y);
-              });
-            }
-
-            // Convert to data URL
-            let dataUrl;
-            if (CONFIG.TILE_FORMAT === 'png') {
-              dataUrl = this.tileCanvas.toDataURL('image/png');
-            } else {
-              dataUrl = this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
-            }
-
-            return dataUrl;
+            return this.tileGenerator._renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom);
           }
 
           /**
-           * Render a blank tile (for when no page data is available yet)
+           * Phase 2.1: Delegate to TileGenerator module
            */
           _renderBlankTile() {
-            // DEBUG: Fill with bright green instead of background color
-            this.tileCtx.fillStyle = '#00FF00'; // Bright green
-            this.tileCtx.fillRect(0, 0, this.tileCanvas.width, this.tileCanvas.height);
-
-            // Return blank tile as data URL
-            if (CONFIG.TILE_FORMAT === 'png') {
-              return this.tileCanvas.toDataURL('image/png');
-            } else {
-              return this.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
-            }
+            return this.tileGenerator._renderBlankTile();
           }
 
           /**
-           * Draw page intersection with tile
+           * Phase 2.1: Delegate to TileGenerator module
            */
           _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
-            const { pageWidth, pageHeight, spacing } = this.gridDims;
-
-            // Calculate page position in grid
-            const pageLeft = col * (pageWidth + spacing);
-            const pageTop = row * (pageHeight + spacing);
-            const pageRight = pageLeft + pageWidth;
-            const pageBottom = pageTop + pageHeight;
-
-            // Check intersection
-            if (pageRight <= tileLeft || pageLeft >= tileRight ||
-                pageBottom <= tileTop || pageTop >= tileBottom) {
-              return false;
-            }
-
-            // Get page canvas
-            const pageNum = this.pattern[row][col];
-
-            // Skip blank cells in staggered grid pattern
-            if (pageNum === 0) {
-              return false;
-            }
-
-            // Get canvas from PageStreamer cache with conditional fallback
-            const pageCache = this.pageStreamer._getPageCache(resolution);
-            let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
-
-            // Track cache misses and trigger on-demand rendering
-            if (!pageCanvas) {
-              this.stats.cacheMisses++;
-
-              // On-demand rendering: Immediately start rendering the missing page
-              // This is fire-and-forget - we use fallback now, but the page will be ready soon
-              // Deduplicate: Only trigger if not already rendering (exploit page periodicity)
-              const renderKey = `${pageNum}_${resolution}`;
-              const alreadyRendering = this.pageStreamer.renderingInProgress.has(renderKey);
-
-              // Track why on-demand was skipped for L0 diagnostics
-              if (level === 0 && !window.__L0OnDemandSkipped) {
-                window.__L0OnDemandSkipped = { enabled: CONFIG.ON_DEMAND_RENDERING_ENABLED, skipped: [] };
-              }
-
-              if (!CONFIG.ON_DEMAND_RENDERING_ENABLED && level === 0) {
-                window.__L0OnDemandSkipped.skipped.push({pageNum, reason: 'disabled'});
-              } else if (alreadyRendering && level === 0) {
-                window.__L0OnDemandSkipped.skipped.push({pageNum, reason: 'already_rendering'});
-              }
-
-              if (CONFIG.ON_DEMAND_RENDERING_ENABLED && !alreadyRendering) {
-                this.stats.onDemandRenders++;
-
-                // Track on-demand render for L0 diagnostics
-                if (level === 0) {
-                  if (!window.__L0OnDemandTracking) window.__L0OnDemandTracking = { triggered: [], completed: [], failed: [] };
-                  window.__L0OnDemandTracking.triggered.push({pageNum, resolution, time: Date.now()});
-                }
-
-                // Fire async render (don't await - use fallback for now)
-                this.pageStreamer.renderPage(pageNum, resolution)
-                  .then(() => {
-                    this.stats.onDemandHits++;
-
-                    // Track completion for L0 diagnostics
-                    if (level === 0) {
-                      window.__L0OnDemandTracking.completed.push({pageNum, resolution, time: Date.now()});
-                    }
-
-                    if (CONFIG.VERBOSE_LOGGING) {
-                      console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, scheduling tile refresh`);
-                    }
-
-                    // CRITICAL: Invalidate cached tiles that used this page
-                    // Without this, old tiles (with black pages) stay in cache and get reused
-                    this._invalidateTilesUsingPages([pageNum], resolution);
-
-                    // CRITICAL: Schedule tile refresh to show newly-rendered pages
-                    // Without this, tiles with blank pages won't update even though pages are now rendered
-                    // Uses debounced refresh to batch multiple page renders (30ms timeout)
-                    this.scheduleRedraw();
-                  })
-                  .catch(err => {
-                    // Track failure for L0 diagnostics
-                    if (level === 0) {
-                      window.__L0OnDemandTracking.failed.push({pageNum, resolution, error: err.message, time: Date.now()});
-                    }
-                    console.warn(`[On-Demand] Failed to render page ${pageNum} at ${resolution}:`, err);
-                  });
-              }
-            }
-
-            // Debug: iOS diagnostic - show cache access details
-            if (isIOSSafari && CONFIG.DEBUG_MODE) {
-              const cacheStatus = pageCanvas ? 'HIT' : 'MISS';
-              const cacheSize = `L:${this.pageStreamer.lowResPageCache.size} H:${this.pageStreamer.highResPageCache.size}`;
-              if (!window.__tileCacheDebug) window.__tileCacheDebug = [];
-              window.__tileCacheDebug.push(`L${level} p${pageNum}_${resolution} ${cacheStatus} (${cacheSize})`);
-              if (window.__tileCacheDebug.length > 8) window.__tileCacheDebug.shift();
-            }
-
-            // Fallback logic: prevent excessive downsampling in either direction
-            if (CONFIG.FALLBACK_RENDERING_ENABLED) {
-              if (!pageCanvas && resolution === 'high') {
-                // High-res requested but not available - try low-res fallback
-                // canvasScaleFactor with low-res = PDF_LOW_RES_SCALE / PDF_RENDER_SCALE
-                // = 0.3 / 4.0 = 0.075
-                // Show downsampled content rather than empty tiles
-                pageCanvas = this.pageStreamer.lowResPageCache.get(`${pageNum}_low`);
-                // On-demand rendering will eventually replace with high-res
-              } else if (!pageCanvas && resolution === 'low') {
-                // Low-res requested but not available - check if high-res would be acceptable
-                // Calculate sampling ratio: how much would we downsample high-res?
-                // Sampling ratio = scale / PDF_RENDER_SCALE
-                // Only use high-res if sampling ratio >= 0.5 (no more than 2x downsampling)
-                const minSafeScale = 0.5 * CONFIG.PDF_RENDER_SCALE; // 0.5 * 4.0 = 2.0
-                if (scale >= minSafeScale) {
-                  pageCanvas = this.pageStreamer.highResPageCache.get(`${pageNum}_high`);
-                }
-              }
-              // Note: If fallback would require excessive downsampling, we leave blank
-              // rather than show extremely blurry content. On-demand rendering will fill it in.
-            }
-            // Note: If fallback is disabled, tiles will remain blank until correct resolution is rendered
-
-            if (!pageCanvas) {
-              // Track why drawing failed for diagnostics
-              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
-              window.__drawPageDebug.failures.push({
-                level, pageNum, resolution,
-                reason: 'no_canvas',
-                requestedRes: resolution,
-                highAvail: this.pageStreamer.hasPage(pageNum, 'high'),
-                lowAvail: this.pageStreamer.hasPage(pageNum, 'low')
-              });
-
-              // Neither resolution available yet - tile will be blank
-              return false;
-            }
-
-            // Debug: Disabled per-page canvas validation
-
-            // Calculate intersection rectangle
-            const intersectLeft = Math.max(tileLeft, pageLeft);
-            const intersectTop = Math.max(tileTop, pageTop);
-            const intersectRight = Math.min(tileRight, pageRight);
-            const intersectBottom = Math.min(tileBottom, pageBottom);
-
-            // Calculate canvas scale factor
-            // Grid dimensions are based on high-res, but canvas might be low-res
-            const canvasScaleFactor = pageCanvas.width / pageWidth;
-
-            // Diagnostic: Warn if scale factor is unexpectedly small (indicates wrong resolution)
-            if (CONFIG.DEBUG_MODE && level > this.minimapMaxLevel && canvasScaleFactor < 0.5) {
-              // Detect actual resolution being used (not just requested)
-              const actualResolution = canvasScaleFactor < 0.15 ? 'low' : 'high';
-              const resolutionMatch = actualResolution === resolution ? 'as requested' : `fallback (requested ${resolution})`;
-              console.warn(`[TileStreamer] L${level} page ${pageNum}: Using ${actualResolution}-res ${resolutionMatch} at deep zoom. canvasScaleFactor=${canvasScaleFactor.toFixed(3)} (canvas ${pageCanvas.width}px / grid ${pageWidth}px). Expected high-res (≥0.5).`);
-            }
-
-            // Source coordinates (within the page canvas, adjusted for resolution)
-            const srcX = (intersectLeft - pageLeft) * canvasScaleFactor;
-            const srcY = (intersectTop - pageTop) * canvasScaleFactor;
-            const srcW = (intersectRight - intersectLeft) * canvasScaleFactor;
-            const srcH = (intersectBottom - intersectTop) * canvasScaleFactor;
-
-            // Destination coordinates (within the tile canvas)
-            // Grid coords → canvas pixels
-            const destX = (intersectLeft - tileLeft) * scale;
-            const destY = (intersectTop - tileTop) * scale;
-            const destW = (intersectRight - intersectLeft) * scale;
-            const destH = (intersectBottom - intersectTop) * scale;
-
-            // Debug: Check if drawing outside canvas bounds (disabled to reduce noise)
-            // if (CONFIG.DEBUG_MODE && this.cacheGeneration >= 2) {
-            //   if (destX >= this.tileCanvas.width || destY >= this.tileCanvas.height) {
-            //     console.warn(`[Drawing] Page ${pageNum} at level ${level} gen${this.cacheGeneration}: destX=${destX.toFixed(1)}, destY=${destY.toFixed(1)} >= canvas ${this.tileCanvas.width}x${this.tileCanvas.height}`);
-            //   }
-            //   if (destW <= 0 || destH <= 0) {
-            //     console.warn(`[Drawing] Page ${pageNum} at level ${level} gen${this.cacheGeneration}: zero destW/H: ${destW.toFixed(1)}x${destH.toFixed(1)}`);
-            //   }
-            // }
-
-            // Debug: Check tile context state before drawing (first draw only)
-            if (CONFIG.DEBUG_MODE && level === 1 && !this._contextStateChecked) {
-              this._contextStateChecked = true;
-              console.log(`[L1 Context] globalAlpha=${this.tileCtx.globalAlpha}, globalCompositeOperation=${this.tileCtx.globalCompositeOperation}, imageSmoothingEnabled=${this.tileCtx.imageSmoothingEnabled}`);
-            }
-
-            // Debug: Disabled per-draw bounds checking
-
-            // Validate drawing coordinates before attempting draw
-            if (srcW <= 0 || srcH <= 0 || destW <= 0 || destH <= 0) {
-              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
-              window.__drawPageDebug.failures.push({
-                level, pageNum, resolution,
-                reason: 'invalid_dimensions',
-                srcW, srcH, destW, destH,
-                canvasScaleFactor
-              });
-              return false;
-            }
-
-            // Clamp source rectangle to canvas bounds
-            // Handle dimension mismatches gracefully instead of rejecting draw
-            // This can happen when PDF pages have unexpected dimensions
-            const clampedSrcX = Math.max(0, Math.min(srcX, pageCanvas.width));
-            const clampedSrcY = Math.max(0, Math.min(srcY, pageCanvas.height));
-            const clampedSrcW = Math.max(0, Math.min(srcW, pageCanvas.width - clampedSrcX));
-            const clampedSrcH = Math.max(0, Math.min(srcH, pageCanvas.height - clampedSrcY));
-
-            // Track if clamping occurred (for diagnostics)
-            const wasClamped = clampedSrcX !== srcX || clampedSrcY !== srcY ||
-                              clampedSrcW !== srcW || clampedSrcH !== srcH;
-
-            if (wasClamped && CONFIG.VERBOSE_LOGGING) {
-              console.warn(`[TileStreamer] Clamped source rect for page ${pageNum}: original (${srcX.toFixed(1)}, ${srcY.toFixed(1)}, ${srcW.toFixed(1)}, ${srcH.toFixed(1)}) → clamped (${clampedSrcX.toFixed(1)}, ${clampedSrcY.toFixed(1)}, ${clampedSrcW.toFixed(1)}, ${clampedSrcH.toFixed(1)})`);
-            }
-
-            // Draw using clamped values
-            try {
-              this.tileCtx.drawImage(
-                pageCanvas,
-                clampedSrcX, clampedSrcY, clampedSrcW, clampedSrcH,
-                destX, destY, destW, destH
-              );
-
-              // Track successful draw for L0 diagnostics
-              if (level === 0) {
-                if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [], successes: [] };
-                if (!window.__drawPageDebug.successes) window.__drawPageDebug.successes = [];
-                window.__drawPageDebug.successes.push({ pageNum, resolution });
-              }
-
-              return true;
-            } catch (err) {
-              if (!window.__drawPageDebug) window.__drawPageDebug = { failures: [] };
-              window.__drawPageDebug.failures.push({
-                level, pageNum, resolution,
-                reason: 'draw_exception',
-                error: err.message
-              });
-              return false;
-            }
+            return this.tileGenerator._drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level);
           }
-        }
-
-        // ╔══════════════════════════════════════════════════════════════════════════╗
-        // ║                      OPENSEADRAGON MANAGER MODULE                        ║
-        // ╚══════════════════════════════════════════════════════════════════════════╝
-
-        /**
-         * OpenSeadragon viewer initialization and configuration
-         * Handles device detection, viewport setup, and navigator management
-         */
-        const OSDManager = {
-          /**
-           * Detect if device is a small phone (not tablet/iPad)
-           * Uses physical screen size, not just pixels
-           */
           isTouchDevice() {
             // Check multiple signals for touch devices
             const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
