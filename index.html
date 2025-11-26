@@ -146,7 +146,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.10.2',
+          VERSION: '1.10.3',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -252,13 +252,15 @@ SETPOINT
           (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent))
         );
         if (isIOSSafari) {
-          console.log('iOS Safari detected - using aggressive limits to prevent crashes');
-          console.log(`  TileCache: ${CONFIG.MOBILE_MAX_CACHE_SIZE} tiles (vs ${CONFIG.MAX_CACHE_SIZE} on desktop)`);
-          console.log(`  PageCache Low-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_LOW} on desktop)`);
-          console.log(`  PageCache High-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_HIGH} on desktop)`);
-          console.log(`  Render batch: ${CONFIG.MOBILE_RENDER_BATCH_SIZE} page at a time (vs ${CONFIG.RENDER_BATCH_SIZE} on desktop)`);
-          console.log(`  Render scale: ${CONFIG.MOBILE_PDF_RENDER_SCALE}x (vs ${CONFIG.PDF_RENDER_SCALE}x on desktop) - 4x less memory per page`);
-          console.log(`  Low-res scale: ${CONFIG.MOBILE_PDF_LOWRES_SCALE}x (vs ${CONFIG.PDF_LOWRES_SCALE}x on desktop)`);
+          if (CONFIG.VERBOSE_LOGGING) {
+            console.log('iOS Safari detected - using aggressive limits to prevent crashes');
+            console.log(`  TileCache: ${CONFIG.MOBILE_MAX_CACHE_SIZE} tiles (vs ${CONFIG.MAX_CACHE_SIZE} on desktop)`);
+            console.log(`  PageCache Low-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_LOW} on desktop)`);
+            console.log(`  PageCache High-res: ${CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH} pages (vs ${CONFIG.PAGE_CACHE_MAX_SIZE_HIGH} on desktop)`);
+            console.log(`  Render batch: ${CONFIG.MOBILE_RENDER_BATCH_SIZE} page at a time (vs ${CONFIG.RENDER_BATCH_SIZE} on desktop)`);
+            console.log(`  Render scale: ${CONFIG.MOBILE_PDF_RENDER_SCALE}x (vs ${CONFIG.PDF_RENDER_SCALE}x on desktop) - 4x less memory per page`);
+            console.log(`  Low-res scale: ${CONFIG.MOBILE_PDF_LOWRES_SCALE}x (vs ${CONFIG.PDF_LOWRES_SCALE}x on desktop)`);
+          }
           CONFIG.MAX_CACHE_SIZE = CONFIG.MOBILE_MAX_CACHE_SIZE;
           CONFIG.PAGE_CACHE_MAX_SIZE_LOW = CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_LOW;
           CONFIG.PAGE_CACHE_MAX_SIZE_HIGH = CONFIG.MOBILE_PAGE_CACHE_MAX_SIZE_HIGH;
@@ -939,15 +941,15 @@ SETPOINT
             // If we await first, fast renders could complete before map.set() executes
             this.renderingInProgress.set(key, renderPromise);
 
-            // Safety timeout: auto-cleanup if promise hangs for >10 seconds
+            // Safety timeout: auto-cleanup if promise hangs for >60 seconds
             // Prevents stuck promises from permanently blocking on-demand rendering
-            // Most pages render in <1s, so 10s indicates a genuine stuck promise
+            // Heavy PDFs with complex pages can take 30-60s under load
             const timeoutHandle = setTimeout(() => {
               if (this.renderingInProgress.has(key)) {
-                console.warn(`[PageStreamer] TIMEOUT: page ${pageNum} at ${resolution} took >10s, removing from renderingInProgress`);
+                console.warn(`[PageStreamer] TIMEOUT: page ${pageNum} at ${resolution} took >60s, removing from renderingInProgress`);
                 this.renderingInProgress.delete(key);
               }
-            }, 10000);
+            }, 60000);
 
             try {
               const result = await renderPromise;
@@ -1021,6 +1023,35 @@ SETPOINT
             }
 
             return null;
+          }
+
+          /**
+           * Ensure a page is fully decoded and ready for drawImage()
+           * Returns a Promise that resolves when the Image is ready
+           * This is the elegant async replacement for setTimeout delays
+           */
+          async ensureDecoded(pageNum, resolution) {
+            const key = this._getCacheKey(pageNum, resolution);
+
+            // Already decoded? Return immediately
+            const decodedImg = this.decodedImageCache.get(key);
+            if (decodedImg) {
+              return decodedImg;
+            }
+
+            // JPEG cached but not decoded? Decode now
+            const pageCache = this._getPageCache(resolution);
+            const dataUrl = pageCache.get(key);
+            if (dataUrl) {
+              const img = new Image();
+              img.src = dataUrl;
+              await img.decode();
+              this.decodedImageCache.set(key, img);
+              return img;
+            }
+
+            // Not cached at all - render (which also decodes)
+            return await this.renderPage(pageNum, resolution);
           }
 
           /**
@@ -1144,8 +1175,12 @@ SETPOINT
             const gridRows = pattern.length;
             const gridCols = pattern[0].length;
 
-            const totalWidth = gridCols * pageWidth + (gridCols - 1) * spacing;
-            const totalHeight = gridRows * pageHeight + (gridRows - 1) * spacing;
+            // Center pages within cells: each cell is (pageWidth + spacing) wide
+            // Page starts at spacing/2 within cell, providing gutter on ALL 4 edges
+            const cellWidth = pageWidth + spacing;
+            const cellHeight = pageHeight + spacing;
+            const totalWidth = gridCols * cellWidth;
+            const totalHeight = gridRows * cellHeight;
 
             return {
               gridSize,      // Legacy: equals numPages
@@ -1208,8 +1243,10 @@ SETPOINT
                 const pageNum = pattern[row][col];
                 if (pageNum === 0) continue;
 
-                const pageLeft = col * (pageWidth + spacing);
-                const pageTop = row * (pageHeight + spacing);
+                // Page centered within cell: half-spacing on each edge
+                const halfSpacing = spacing / 2;
+                const pageLeft = col * (pageWidth + spacing) + halfSpacing;
+                const pageTop = row * (pageHeight + spacing) + halfSpacing;
                 const pageRight = pageLeft + pageWidth;
                 const pageBottom = pageTop + pageHeight;
 
@@ -1585,17 +1622,17 @@ SETPOINT
             // Try sessionStorage first (auto-clears on tab close)
             try {
               sessionStorage.setItem(this.STORAGE_KEY, JSON.stringify(data));
-              console.log('Saved PDF to sessionStorage:', filename);
+              if (CONFIG.VERBOSE_LOGGING) console.log('Saved PDF to sessionStorage:', filename);
               return;
             } catch (e) {
               // Quota exceeded or other error - fall back to IndexedDB
-              console.log('sessionStorage failed, using IndexedDB:', e.message);
+              if (CONFIG.VERBOSE_LOGGING) console.log('sessionStorage failed, using IndexedDB:', e.message);
             }
 
             // Fall back to IndexedDB for large files
             try {
               await this._saveToIndexedDB(data);
-              console.log('Saved PDF to IndexedDB:', filename);
+              if (CONFIG.VERBOSE_LOGGING) console.log('Saved PDF to IndexedDB:', filename);
             } catch (e) {
               console.error('Failed to save PDF to storage:', e);
             }
@@ -1613,7 +1650,7 @@ SETPOINT
               if (item) {
                 const data = JSON.parse(item);
                 if (this._isValid(data, expiryMs)) {
-                  console.log('Loaded PDF from sessionStorage:', data.filename);
+                  if (CONFIG.VERBOSE_LOGGING) console.log('Loaded PDF from sessionStorage:', data.filename);
                   return {
                     pdfData: new Uint8Array(data.pdfData).buffer,
                     filename: data.filename
@@ -1662,7 +1699,7 @@ SETPOINT
               console.error('Error clearing IndexedDB:', e);
             }
 
-            console.log('Cleared all stored PDFs');
+            if (CONFIG.VERBOSE_LOGGING) console.log('Cleared all stored PDFs');
           },
 
           /**
@@ -2786,12 +2823,14 @@ SETPOINT
 
             for (let row = 0; row < gridRows; row++) {
               for (let col = 0; col < gridCols; col++) {
-                const pageLeft = col * (pageWidth + spacing);
-                const pageTop = row * (pageHeight + spacing);
+                // Page centered within cell: half-spacing on each edge
+                const halfSpacing = spacing / 2;
+                const pageLeft = col * (pageWidth + spacing) + halfSpacing;
+                const pageTop = row * (pageHeight + spacing) + halfSpacing;
                 const pageRight = pageLeft + pageWidth;
                 const pageBottom = pageTop + pageHeight;
 
-                // Check intersection
+                // Check intersection (positive area)
                 if (pageRight > tileLeft && pageLeft < tileRight &&
                     pageBottom > tileTop && pageTop < tileBottom) {
                   const pageNum = ts.pattern[row][col];
@@ -2826,13 +2865,14 @@ SETPOINT
             const pageCache = ts.pageStreamer._getPageCache(resolution);
             const missingPages = neededPages.filter(p => !pageCache.has(`${p}_${resolution}`));
 
-            // If missing pages, request them asynchronously
-            // Return null to tell OSD "tile not ready" - OSD will show placeholder and retry
-            // Previously we returned blank tiles which OSD cached, causing stale tiles
+            // If missing pages, request them asynchronously and return placeholder
+            // Return a valid data URL (not null) to avoid OSD logging "Tile failed to load" errors
+            // Don't cache the placeholder - when pages are ready, tile will be regenerated
             if (missingPages.length > 0) {
               ts.cacheManager._requestPagesAsync(missingPages, resolution);
-              // Return null - OSD will use placeholder and may retry on next draw
-              return null;
+              // Return uncached placeholder tile (red stripes indicate incomplete)
+              // This avoids null URL errors while still showing visual indicator
+              return this._renderBlankTile();
             }
 
             // Render tile
@@ -2999,9 +3039,10 @@ SETPOINT
             const ts = this.tileStreamer;
             const { pageWidth, pageHeight, spacing } = ts.gridDims;
 
-            // Calculate page position in grid
-            const pageLeft = col * (pageWidth + spacing);
-            const pageTop = row * (pageHeight + spacing);
+            // Calculate page position in grid (centered within cell)
+            const halfSpacing = spacing / 2;
+            const pageLeft = col * (pageWidth + spacing) + halfSpacing;
+            const pageTop = row * (pageHeight + spacing) + halfSpacing;
             const pageRight = pageLeft + pageWidth;
             const pageBottom = pageTop + pageHeight;
 
@@ -3126,6 +3167,51 @@ SETPOINT
 
             // Draw the page portion onto tile
             try {
+              // DEBUG: Detect and log potential tile duplication issues
+              // Only flags SAME-LEVEL tiles with different fingerprints drawing identical content
+              // Cross-level overlap is expected (lower levels show same content zoomed out)
+              if (level >= 6) {
+                if (!window.__tileDiagnostics) {
+                  window.__tileDiagnostics = { tiles: new Map(), duplicates: [] };
+                }
+                // Include level in srcKey to only detect same-level duplications
+                const srcKey = `L${level}_${pageNum}_${Math.round(srcLeft)}_${Math.round(srcTop)}`;
+                const existing = window.__tileDiagnostics.tiles.get(srcKey);
+                if (existing && existing.key !== debugKey) {
+                  // Different tiles at SAME LEVEL mapping to same source position - this is a real bug
+                  window.__tileDiagnostics.duplicates.push({
+                    srcKey,
+                    tile1: existing,
+                    tile2: { key: debugKey, tileLeft, pageLeft, srcLeft, canvasWidth: pageCanvas.width, pageWidth }
+                  });
+                  console.warn(`[TILE-DUP] Same-level tiles with identical content but different keys! ` +
+                    `${existing.key} and ${debugKey} both draw page ${pageNum} at src=(${Math.round(srcLeft)},${Math.round(srcTop)}) ` +
+                    `tile1.tileLeft=${existing.tileLeft.toFixed(0)} tile2.tileLeft=${tileLeft.toFixed(0)}`);
+                }
+                window.__tileDiagnostics.tiles.set(srcKey, {
+                  key: debugKey,
+                  tileLeft,
+                  pageLeft,
+                  srcLeft,
+                  canvasWidth: pageCanvas.width,
+                  pageWidth
+                });
+              }
+
+              // DEBUG: Log tile drawing details for high-zoom tiles
+              if (level >= 6 && CONFIG.VERBOSE_LOGGING) {
+                console.log(`[DrawPage] L${level} key=${debugKey} page=${pageNum} ` +
+                  `src=(${srcLeft.toFixed(0)},${srcTop.toFixed(0)},${srcWidth.toFixed(0)},${srcHeight.toFixed(0)}) ` +
+                  `dest=(${(destLeft + ts.tileOverlap).toFixed(0)},${(destTop + ts.tileOverlap).toFixed(0)},${destWidth.toFixed(0)},${destHeight.toFixed(0)}) ` +
+                  `tileLeft=${tileLeft.toFixed(0)} pageLeft=${pageLeft.toFixed(0)} ` +
+                  `canvasW=${pageCanvas.width} ratio=${canvasToGridRatio.toFixed(4)}`);
+              }
+
+              // Bounds check: warn if srcLeft exceeds canvas width
+              if (srcLeft >= pageCanvas.width || srcTop >= pageCanvas.height) {
+                console.error(`[BOUNDS-ERROR] srcLeft=${srcLeft.toFixed(0)} exceeds canvas width=${pageCanvas.width} for tile ${debugKey}`);
+              }
+
               ts.tileCtx.drawImage(
                 pageCanvas,
                 srcLeft, srcTop, srcWidth, srcHeight,
@@ -3219,10 +3305,13 @@ SETPOINT
             const cellWidth = pageWidth + spacing;
             const cellHeight = pageHeight + spacing;
 
-            // Position within the page grid cell (0 to cellWidth/cellHeight)
-            // This enables deduplication: tiles at same position within ANY page cell are equivalent
-            const posInCellX = Math.floor((tileLeft % cellWidth) / tileWidthInGrid);
-            const posInCellY = Math.floor((tileTop % cellHeight) / tileHeightInGrid);
+            // FIX: Use tile index modulo tiles-per-cell instead of position-based calculation
+            // The old formula (tileLeft % cellWidth) / tileWidthInGrid fails when tileWidthInGrid ≈ cellWidth
+            // because adjacent tiles both get floor() to 0, causing fingerprint collisions
+            const tilesPerCellX = Math.max(1, Math.ceil(cellWidth / tileWidthInGrid));
+            const tilesPerCellY = Math.max(1, Math.ceil(cellHeight / tileHeightInGrid));
+            const posInCellX = x % tilesPerCellX;
+            const posInCellY = y % tilesPerCellY;
 
             // Pages are contiguous - use min-max range
             const minPage = Math.min(...neededPages);
@@ -3230,7 +3319,9 @@ SETPOINT
             const pageRange = minPage === maxPage ? `${minPage}` : `${minPage}-${maxPage}`;
 
             // Check if tile is smaller than a page (high zoom)
-            const tileIsSmallerThanPage = (tileWidthInGrid < pageWidth) || (tileHeightInGrid < pageHeight);
+            // Must be smaller in BOTH dimensions to be truly sub-page
+            // A tile wider than pageWidth can span multiple pages horizontally
+            const tileIsSmallerThanPage = (tileWidthInGrid < pageWidth) && (tileHeightInGrid < pageHeight);
 
             if (tileIsSmallerThanPage) {
               // High zoom: include position within page cell for deduplication
@@ -3348,19 +3439,15 @@ SETPOINT
               // Invalidate tiles that used these pages
               this._invalidateTilesUsingPages(pageNums, resolution);
 
-              // Schedule debounced reset to prevent race conditions
-              // Multiple page renders completing in sequence will only trigger one reset
-              if (!isIOSSafari) {
-                this._scheduleReset();
-              } else {
-                // On iOS: Just request redraw (reset causes issues)
-                try {
-                  if (window.osdViewerRef && window.osdViewerRef.world) {
-                    window.osdViewerRef.world.needsDraw();
-                  }
-                } catch (err) {
-                  // Silently ignore
+              // SCALED BACK: Use lightweight needsDraw() instead of aggressive tiledImage.reset()
+              // tiledImage.reset() causes flickering by forcing OSD to re-request all tiles
+              // needsDraw() just marks the viewport as needing a repaint
+              try {
+                if (window.osdViewerRef && window.osdViewerRef.world) {
+                  window.osdViewerRef.world.needsDraw();
                 }
+              } catch (err) {
+                // Silently ignore
               }
             }).catch(err => {
               this._pendingRequests.delete(key);
@@ -3379,7 +3466,10 @@ SETPOINT
             // Iterate through cached tiles and remove ones that used these pages
             for (const [key, value] of ts.tileCache.cache.entries()) {
               // Parse key to determine which pages it needs
-              const pageMatch = key.match(/p(\d+)(?:-(\d+))?/);
+              // Cache key format: "level_pageRange_posX_posY" or "level_pageRange_edge"
+              // Example: "7_1_0_0" (page 1), "7_1-3_0_0" (pages 1-3), "7_empty" (no pages)
+              // Match: level_ followed by page number(s), then anything
+              const pageMatch = key.match(/^\d+_(\d+)(?:-(\d+))?/);
               if (pageMatch) {
                 const firstPage = parseInt(pageMatch[1]);
                 const lastPage = pageMatch[2] ? parseInt(pageMatch[2]) : firstPage;
@@ -3395,6 +3485,8 @@ SETPOINT
                     break;
                   }
                 }
+              } else if (key.includes('empty')) {
+                // Skip empty tiles - they don't depend on page content
               } else if (CONFIG.VERBOSE_LOGGING) {
                 // Log tiles that don't match expected pattern
                 console.log(`[TileStreamer] Unknown cache key format: ${key}`);
@@ -3707,12 +3799,12 @@ SETPOINT
 
           /**
            * Calculate which pages intersect a tile
-           * Returns array of page numbers
+           * Returns array of page numbers that have POSITIVE-AREA intersection
+           * (not just bounding-box touch - must actually contribute visible content)
            */
           _calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom) {
             const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
             const intersectingPages = new Set(); // Use Set to avoid duplicates
-            const debugInfo = []; // Track intersection details for debugging
 
             for (let row = 0; row < gridRows; row++) {
               for (let col = 0; col < gridCols; col++) {
@@ -3721,17 +3813,25 @@ SETPOINT
                 // Skip blank cells
                 if (pageNum === 0) continue;
 
-                // Calculate page position in grid
-                const pageLeft = col * (pageWidth + spacing);
-                const pageTop = row * (pageHeight + spacing);
+                // Calculate page position in grid (centered within cell)
+                const halfSpacing = spacing / 2;
+                const pageLeft = col * (pageWidth + spacing) + halfSpacing;
+                const pageTop = row * (pageHeight + spacing) + halfSpacing;
                 const pageRight = pageLeft + pageWidth;
                 const pageBottom = pageTop + pageHeight;
 
-                // Check intersection
-                const intersects = !(pageRight <= tileLeft || pageLeft >= tileRight ||
-                      pageBottom <= tileTop || pageTop >= tileBottom);
+                // Calculate actual intersection region
+                const intersectLeft = Math.max(tileLeft, pageLeft);
+                const intersectTop = Math.max(tileTop, pageTop);
+                const intersectRight = Math.min(tileRight, pageRight);
+                const intersectBottom = Math.min(tileBottom, pageBottom);
 
-                if (intersects) {
+                // Only include page if intersection has POSITIVE AREA
+                // This filters out tiles that only touch at edges (zero width/height)
+                const hasPositiveArea = (intersectRight > intersectLeft) &&
+                                        (intersectBottom > intersectTop);
+
+                if (hasPositiveArea) {
                   intersectingPages.add(pageNum);
                 }
               }
@@ -4471,22 +4571,22 @@ SETPOINT
               if (!mounted) return; // Exit if unmounted
 
               if (!CONFIG.AUTO_LOAD_PDF) {
-                console.log('No PDF to auto-load. Waiting for manual upload or URL parameters.');
+                if (CONFIG.VERBOSE_LOGGING) console.log('No PDF to auto-load. Waiting for manual upload or URL parameters.');
                 return;
               }
 
               // Skip auto-load for file:// protocol (browser security restrictions)
               if (window.location.protocol === 'file:') {
-                console.log('Auto-load disabled for file:// protocol. Please serve via HTTP (e.g., python -m http.server) to use auto-load, or drag & drop a PDF to get started.');
+                if (CONFIG.VERBOSE_LOGGING) console.log('Auto-load disabled for file:// protocol. Please serve via HTTP (e.g., python -m http.server) to use auto-load, or drag & drop a PDF to get started.');
                 return;
               }
 
               try {
-                console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
+                if (CONFIG.VERBOSE_LOGGING) console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
                 if (!mounted) return; // Check before async operation
                 await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF, false, true); // skipHistory=false, suppressAlerts=true
               } catch (error) {
-                console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
+                if (CONFIG.VERBOSE_LOGGING) console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
                 // Silently fail - user can upload manually
               }
             };
@@ -4852,7 +4952,7 @@ SETPOINT
                   await pageStreamer.renderBatch(
                     pagesToRender,
                     'low',
-                    20,
+                    5,  // Reduced from 20 to prevent overwhelming PDF.js
                     (current, total) => {
                       // Update progress overlay
                       const progressText = document.getElementById('nav-progress-text');
@@ -4868,8 +4968,8 @@ SETPOINT
                   );
                 }
 
+                const finalCacheStats = pageStreamer.getCacheStats();
                 if (CONFIG.VERBOSE_LOGGING) {
-                  const finalCacheStats = pageStreamer.getCacheStats();
                   console.log('[Background] Initial batch complete. Refreshing viewer...');
                   console.log(`[Background] Cache status: low-res ${finalCacheStats.low}/${pdf.numPages} pages`);
                   if (pagesDeferred > 0) {
@@ -4877,135 +4977,131 @@ SETPOINT
                   }
                 }
 
-                // Recreate main viewer TiledImage with fresh tiles
+                // ASYNC REFRESH: Await actual JPEG decode completion, then recreate TiledImage
+                // Instead of setTimeout delays, use Promise-based decode completion
                 if (window.viewer && window.tileStreamerRef) {
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log('[Background] Recreating viewer TiledImage with initial page batch...');
-                  }
+                  // Ensure all rendered pages are fully decoded before refresh
+                  const decodePromises = pagesToRender.map(pageNum =>
+                    pageStreamer.ensureDecoded(pageNum, 'low')
+                  );
 
-                  // CRITICAL: Clear tile cache before recreation
-                  // Old L0/L1/L2 tiles were generated before background rendering → incomplete pages
-                  const tileCount = window.tileStreamerRef.tileCache.cache.size;
-                  if (tileCount > 0) {
-                    window.tileStreamerRef.tileCache.clear();
+                  Promise.all(decodePromises).then(async () => {
+                    if (!window.viewer || !window.tileStreamerRef) return;
+
                     if (CONFIG.VERBOSE_LOGGING) {
-                      console.log(`[Background] Cleared ${tileCount} old tiles (rendered before batch complete)`);
+                      console.log('[Background] All pages decoded, recreating TiledImage...');
                     }
+
+                    // Clear stale tiles from cache
+                    window.tileStreamerRef.tileCache?.clear();
+
+                    // Save viewport state
+                    const viewport = window.viewer.viewport;
+                    const currentZoom = viewport.getZoom();
+                    const currentCenter = viewport.getCenter();
+
+                    // Remove old TiledImage
+                    const oldTiledImage = window.viewer.world.getItemAt(0);
+                    if (oldTiledImage) {
+                      window.viewer.world.removeItem(oldTiledImage);
+                    }
+
+                    // Wait for cleanup
+                    await new Promise(resolve => setTimeout(resolve, 50));
+
+                    // Add fresh TiledImage with proper config
+                    window.viewer.addTiledImage({
+                      tileSource: window.tileStreamerRef.getOSDConfig(),
+                      success: () => {
+                        // Restore viewport position
+                        viewport.zoomTo(currentZoom, null, true);
+                        viewport.panTo(currentCenter, true);
+                        if (CONFIG.VERBOSE_LOGGING) {
+                          console.log('[Background] TiledImage recreated with fresh tiles');
+                        }
+                      },
+                      error: (event) => {
+                        console.error('[Background] Error recreating TiledImage:', event);
+                      }
+                    });
+                  }).catch(err => {
+                    console.warn('[Background] Decode wait failed:', err);
+                  });
+
+                  // Remove progress overlay
+                  if (overlayDiv && overlayDiv.parentNode) {
+                    overlayDiv.parentNode.removeChild(overlayDiv);
                   }
 
-                  // Save current viewport state
-                  const currentBounds = window.viewer.viewport.getBounds();
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    const stats = pageStreamer.getCacheStats();
+                    console.log(`[Background] Initial batch done (${stats.low}/${pdf.numPages} pages cached)`);
+                  }
 
-                  // Remove old TiledImage from main viewer
-                  console.log('[TiledImage] Recreating after background render completion');
-                  window.viewer.world.removeAll();
+                  // SLOW BACKGROUND CONTINUATION: Render remaining pages gradually
+                  // This ensures minimap eventually becomes complete without memory spikes
+                  if (pagesDeferred > 0) {
+                    // Wait 3 seconds for user to settle, then start slow rendering
+                    const initialTimer = setTimeout(() => {
+                      if (!pageStreamer || !backgroundTimersRef.current) return; // Component may have unmounted
 
-                  // Add fresh TiledImage with initial page coverage
-                  // Missing pages will render on-demand and tiles will auto-regenerate
-                  window.viewer.addTiledImage({
-                    tileSource: window.tileStreamerRef.getOSDConfig(),
-                    success: () => {
-                      // Restore viewport position
-                      window.viewer.viewport.fitBounds(currentBounds, true);
-
-                      // CRITICAL: Force navigator to regenerate tiles with new pages
-                      if (window.viewer.navigator) {
-                        window.viewer.navigator.forceRedraw();
-                        if (CONFIG.VERBOSE_LOGGING) {
-                          console.log('[Background] Forced navigator redraw with updated pages');
+                      // Collect all pages not yet cached
+                      const stillMissing = [];
+                      for (let i = 1; i <= pdf.numPages; i++) {
+                        if (!pageStreamer.hasPage(i, 'low')) {
+                          stillMissing.push(i);
                         }
                       }
 
-                      // Remove progress overlay
-                      if (overlayDiv && overlayDiv.parentNode) {
-                        overlayDiv.parentNode.removeChild(overlayDiv);
+                      if (stillMissing.length === 0) {
+                        if (CONFIG.VERBOSE_LOGGING) console.log('[Background Continuation] All pages already rendered');
+                        return;
                       }
 
-                      if (CONFIG.VERBOSE_LOGGING) {
-                        const stats = pageStreamer.getCacheStats();
-                        console.log(`[Background] Viewer TiledImage recreated! (${stats.low}/${pdf.numPages} pages cached)`);
-                      }
+                      if (CONFIG.VERBOSE_LOGGING) console.log(`[Background Continuation] Slowly rendering ${stillMissing.length} remaining pages...`);
 
-                      // SLOW BACKGROUND CONTINUATION: Render remaining pages gradually
-                      // This ensures minimap eventually becomes complete without memory spikes
-                      if (pagesDeferred > 0) {
-                        // Wait 3 seconds for user to settle, then start slow rendering
-                        const initialTimer = setTimeout(() => {
-                          if (!pageStreamer || !backgroundTimersRef.current) return; // Component may have unmounted
+                      // Render slowly: 10 pages every 2 seconds to avoid memory spike
+                      let batchIndex = 0;
+                      const batchSize = 10;
+                      const batchDelay = 2000; // 2 seconds between batches
 
-                          // Collect all pages not yet cached
-                          const stillMissing = [];
-                          for (let i = 1; i <= pdf.numPages; i++) {
-                            if (!pageStreamer.hasPage(i, 'low')) {
-                              stillMissing.push(i);
-                            }
-                          }
+                      const renderNextBatch = async () => {
+                        if (!pageStreamer || !backgroundTimersRef.current) return; // Check if still valid
 
-                          if (stillMissing.length === 0) {
-                            if (CONFIG.VERBOSE_LOGGING) {
-                              console.log('[Background Continuation] All pages already rendered');
-                            }
-                            return;
-                          }
+                        const startIdx = batchIndex * batchSize;
+                        const batch = stillMissing.slice(startIdx, startIdx + batchSize);
+
+                        if (batch.length === 0) {
+                          if (CONFIG.VERBOSE_LOGGING) console.log('[Background Continuation] All remaining pages rendered! Minimap now complete');
+                          return;
+                        }
+
+                        try {
+                          await pageStreamer.renderBatch(batch, 'low', 5);
 
                           if (CONFIG.VERBOSE_LOGGING) {
-                            console.log(`[Background Continuation] Slowly rendering ${stillMissing.length} remaining pages...`);
+                            const progress = Math.min(startIdx + batch.length, stillMissing.length);
+                            console.log(`[Background Continuation] Progress: ${progress}/${stillMissing.length} pages`);
                           }
 
-                          // Render slowly: 10 pages every 2 seconds to avoid memory spike
-                          let batchIndex = 0;
-                          const batchSize = 10;
-                          const batchDelay = 2000; // 2 seconds between batches
+                          batchIndex++;
+                          // Store timer ID so it can be cancelled on unmount
+                          const nextTimer = setTimeout(renderNextBatch, batchDelay);
+                          if (backgroundTimersRef.current) {
+                            backgroundTimersRef.current.push(nextTimer);
+                          }
+                        } catch (error) {
+                          console.error('[Background Continuation] Error rendering batch:', error);
+                        }
+                      };
 
-                          const renderNextBatch = async () => {
-                            if (!pageStreamer || !backgroundTimersRef.current) return; // Check if still valid
+                      // Start slow rendering
+                      renderNextBatch();
+                    }, 3000); // Wait 3 seconds before starting
 
-                            const startIdx = batchIndex * batchSize;
-                            const batch = stillMissing.slice(startIdx, startIdx + batchSize);
-
-                            if (batch.length === 0) {
-                              if (CONFIG.VERBOSE_LOGGING) {
-                                console.log('[Background Continuation] All remaining pages rendered!');
-                                console.log('[Background Continuation] Minimap now complete');
-                              }
-                              return;
-                            }
-
-                            try {
-                              await pageStreamer.renderBatch(batch, 'low', 5);
-
-                              if (CONFIG.VERBOSE_LOGGING) {
-                                const progress = Math.min(startIdx + batch.length, stillMissing.length);
-                                console.log(`[Background Continuation] Progress: ${progress}/${stillMissing.length} pages`);
-                              }
-
-                              batchIndex++;
-                              // Store timer ID so it can be cancelled on unmount
-                              const nextTimer = setTimeout(renderNextBatch, batchDelay);
-                              if (backgroundTimersRef.current) {
-                                backgroundTimersRef.current.push(nextTimer);
-                              }
-                            } catch (error) {
-                              console.error('[Background Continuation] Error rendering batch:', error);
-                            }
-                          };
-
-                          // Start slow rendering
-                          renderNextBatch();
-                        }, 3000); // Wait 3 seconds before starting
-
-                        // Store initial timer ID for cleanup
-                        backgroundTimersRef.current.push(initialTimer);
-                      }
-                    },
-                    error: (event) => {
-                      console.error('[Background] Failed to recreate viewer TiledImage:', event);
-                      // Remove overlay even on error
-                      if (overlayDiv && overlayDiv.parentNode) {
-                        overlayDiv.parentNode.removeChild(overlayDiv);
-                      }
-                    }
-                  });
+                    // Store initial timer ID for cleanup
+                    backgroundTimersRef.current.push(initialTimer);
+                  }
                 }
               }, 100);
 
@@ -5278,7 +5374,7 @@ SETPOINT
 
               // Check if loading was cancelled
               if (loadingCancelledRef.current) {
-                console.log('[Background] Rendering cancelled by user');
+                if (CONFIG.VERBOSE_LOGGING) console.log('[Background] Rendering cancelled by user');
                 return;
               }
 
