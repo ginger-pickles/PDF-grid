@@ -117,6 +117,20 @@ SETPOINT
         }
         /* Let browser handle image rendering naturally - no forced overrides
            Our canvas code controls smoothing at the tile generation level */
+
+        /* Button blink animation - very visible scale + color flash */
+        @keyframes button-blink {
+            0% { transform: scale(1); background-color: inherit; }
+            20% { transform: scale(1.3); background-color: #fff !important; }
+            40% { transform: scale(1); background-color: inherit; }
+            60% { transform: scale(1.3); background-color: #fff !important; }
+            80% { transform: scale(1); background-color: inherit; }
+            100% { transform: scale(1); background-color: inherit; }
+        }
+        .blink-active {
+            animation: button-blink 0.5s ease-in-out !important;
+            z-index: 100;
+        }
     </style>
 </head>
 <body>
@@ -200,19 +214,22 @@ SETPOINT
           // On-Demand Rendering (cache miss handling)
           ON_DEMAND_RENDERING_ENABLED: true, // Render immediately when tile requests missing page
 
-          // Predictive Rendering (velocity-based)
-          PREDICTIVE_RENDERING_ENABLED: true,  // Enable velocity-based predictive rendering
+          // Predictive Rendering (velocity-based) - DISABLED for simplification
+          PREDICTIVE_RENDERING_ENABLED: false,  // Disabled: simplifying to on-demand only
           VELOCITY_HISTORY_SIZE: 3,            // Number of viewport positions to track for velocity calculation (smaller = more responsive)
           VELOCITY_LOOKAHEAD_MULTIPLIER: 8.0,  // How far ahead to predict (multiplier of velocity magnitude)
           VELOCITY_DIRECTION_WEIGHT: 2.5,      // Weight for directional prediction (higher = more aggressive ahead-of-motion rendering)
 
-          // Upfront Rendering (Phase 3)
-          UPFRONT_RENDERING_ENABLED: true,     // Render all pages before viewer initialization to prevent blank tiles
+          // Upfront Rendering (Phase 3) - DISABLED for simplification
+          UPFRONT_RENDERING_ENABLED: false,    // Disabled: viewer starts immediately, on-demand renders pages
           UPFRONT_RENDERING_PAGE_THRESHOLD: 100, // Skip Phase 3 for PDFs with more pages than this (performance optimization)
 
-          // Resolution Mode and Fallback
-          RESOLUTION_MODE: 'dual',             // 'high', 'low', or 'dual' (both resolutions)
-          FALLBACK_RENDERING_ENABLED: true,    // Allow fallback to low-res when high-res unavailable
+          // Two-Tier Rendering System (replaces old dual low/high resolution)
+          // - Initial tier: ~1x scale (tileSize/pageSize), JPEG compressed, for all low/mid zoom
+          // - Detail tier: 4x scale, JPEG compressed, for deep zoom only
+          RESOLUTION_MODE: 'dual',             // Keep 'dual' for now - will be simplified in refactor
+          PAGE_CACHE_JPEG_QUALITY: 0.92,       // JPEG compression quality for page cache (150x memory reduction)
+          FALLBACK_RENDERING_ENABLED: true,    // Use other tier as placeholder while correct tier renders
 
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
@@ -770,9 +787,12 @@ SETPOINT
           constructor(pdfDoc) {
             this.pdfDoc = pdfDoc;
             // Separate caches for low-res and high-res to prevent eviction conflicts
+            // NOW STORES: JPEG data URLs instead of raw canvases (150x memory reduction)
             this.lowResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_LOW);
             this.highResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH);
             this.renderingInProgress = new Map(); // Key: "pageNum_resolution" → Promise
+            // Image decode cache (decoded Images ready for drawImage)
+            this.decodedImageCache = new Map(); // Key: "pageNum_resolution" → Image
           }
 
           /**
@@ -805,10 +825,20 @@ SETPOINT
             const key = this._getCacheKey(pageNum, resolution);
             const pageCache = this._getPageCache(resolution);
 
-            // Check cache first
-            const cached = pageCache.get(key);
-            if (cached) {
-              return cached;
+            // Check cache first - cache now stores JPEG data URLs
+            const cachedDataUrl = pageCache.get(key);
+            if (cachedDataUrl) {
+              // Check decoded image cache first (faster)
+              const decodedImg = this.decodedImageCache.get(key);
+              if (decodedImg) {
+                return decodedImg;
+              }
+              // Decode the JPEG data URL to an Image
+              const img = new Image();
+              img.src = cachedDataUrl;
+              await img.decode();
+              this.decodedImageCache.set(key, img);
+              return img;
             }
 
             // Check if already rendering (avoid duplicate work)
@@ -834,11 +864,21 @@ SETPOINT
                 if (CONFIG.VERBOSE_LOGGING) {
                   console.log(`[PageStreamer] THROTTLE: Skipping page ${pageNum} high-res (${highResInProgress} already rendering)`);
                 }
-                // Return existing low-res as fallback if available
+                // Return existing low-res as fallback if available (decode JPEG)
                 const lowResKey = this._getCacheKey(pageNum, 'low');
-                const lowResCanvas = this.lowResPageCache.get(lowResKey);
-                if (lowResCanvas) {
-                  return lowResCanvas;
+                const lowResDataUrl = this.lowResPageCache.get(lowResKey);
+                if (lowResDataUrl) {
+                  // Check decoded cache first
+                  const decodedImg = this.decodedImageCache.get(lowResKey);
+                  if (decodedImg) {
+                    return decodedImg;
+                  }
+                  // Decode JPEG
+                  const img = new Image();
+                  img.src = lowResDataUrl;
+                  await img.decode();
+                  this.decodedImageCache.set(lowResKey, img);
+                  return img;
                 }
                 // No fallback available - return null (tile will show black)
                 return null;
@@ -853,9 +893,25 @@ SETPOINT
               try {
                 const page = await this.pdfDoc.getPage(pageNum);
                 const canvas = await PDFUtils.renderPageToCanvas(page, scale);
-                pageCache.set(key, canvas);
+
+                // JPEG compression: Convert canvas to data URL (150x memory reduction)
+                // Raw canvas: 2448×3168×4 bytes = 31MB
+                // JPEG data URL: ~200-500KB
+                const jpegQuality = CONFIG.PAGE_CACHE_JPEG_QUALITY || 0.92;
+                const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+
+                // Store compressed data URL instead of raw canvas
+                pageCache.set(key, dataUrl);
+
+                // Also cache the decoded Image for immediate use
+                const img = new Image();
+                img.src = dataUrl;
+                await img.decode();
+                this.decodedImageCache.set(key, img);
+
                 if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[PageStreamer] RENDERED: page ${pageNum} at ${resolution} resolution (${canvas.width}x${canvas.height})`);
+                  const sizeKB = Math.round(dataUrl.length / 1024);
+                  console.log(`[PageStreamer] RENDERED+COMPRESSED: page ${pageNum} at ${resolution} (${canvas.width}x${canvas.height}) → ${sizeKB}KB JPEG`);
                 }
 
                 // CRITICAL: Invalidate tiles that used this page
@@ -867,7 +923,8 @@ SETPOINT
                   window.tileStreamerRef.scheduleRedraw();
                 }
 
-                return canvas;
+                // Return decoded Image (works with drawImage just like canvas)
+                return img;
               } catch (error) {
                 console.error(`[PageStreamer] ERROR rendering page ${pageNum} at ${resolution}:`, error);
                 throw error;
@@ -942,6 +999,31 @@ SETPOINT
           }
 
           /**
+           * Get a decoded page Image from cache (sync if already decoded, null if not cached)
+           * This is for tile generation - returns Image ready for drawImage()
+           */
+          getDecodedPage(pageNum, resolution) {
+            const key = this._getCacheKey(pageNum, resolution);
+
+            // Check decoded image cache first
+            const decodedImg = this.decodedImageCache.get(key);
+            if (decodedImg) {
+              return decodedImg;
+            }
+
+            // Check if JPEG is cached but not decoded
+            const pageCache = this._getPageCache(resolution);
+            const dataUrl = pageCache.get(key);
+            if (dataUrl) {
+              // Need to decode - but this is async, so return null for now
+              // The caller should trigger renderPage() to get the decoded version
+              return null;
+            }
+
+            return null;
+          }
+
+          /**
            * Check if a page is cached at specified resolution
            */
           hasPage(pageNum, resolution) {
@@ -967,6 +1049,7 @@ SETPOINT
             this.lowResPageCache.clear();
             this.highResPageCache.clear();
             this.renderingInProgress.clear();
+            this.decodedImageCache.clear();
           }
 
           /**
@@ -1733,27 +1816,19 @@ SETPOINT
                 const tileRight = Math.min(tileLeft + tileWidth, this.tileStreamer.gridDims.totalWidth);
                 const tileBottom = Math.min(tileTop + tileHeight, this.tileStreamer.gridDims.totalHeight);
 
-                const neededPages = this.tileStreamer._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
-                const firstPage = Math.min(...neededPages);
-                const lastPage = Math.max(...neededPages);
-                const resolution = currentLevel < 4 ? 'low' : 'high';
-                const key = `${currentLevel}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+                const neededPages = this.tileStreamer._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                if (neededPages.length === 0) continue;
 
-                // Get render status from registry
-                const renderStatus = this.tileStreamer.tileRenderRegistry?.get(key) || {
-                  status: 'unknown',
-                  level: currentLevel,
-                  x, y,
-                  resolution,
-                  neededPages,
-                  missingPages: [],
-                  timestamp: null
-                };
+                const resolution = currentLevel < 4 ? 'low' : 'high';
+                const pageCache = this.tileStreamer.pageStreamer._getPageCache(resolution);
+                const missingPages = neededPages.filter(p => !pageCache.has(`${p}_${resolution}`));
 
                 visibleTiles.push({
-                  key,
-                  ...renderStatus,
-                  isVisible: true
+                  level: currentLevel,
+                  x, y,
+                  neededPages,
+                  missingPages,
+                  status: missingPages.length === 0 ? 'complete' : 'incomplete'
                 });
               }
             }
@@ -1784,73 +1859,168 @@ SETPOINT
           }
 
           /**
-           * Inspect tile quality - checks viewport + specified levels
-           * ALWAYS checks current viewport tiles, plus additional levels as specified
+           * Visual inspection of OSD canvas for red stripe patterns (incomplete tiles)
+           * Detects SEMI-TRANSPARENT red overlay specifically (not solid red PDF content)
+           * The incomplete tile indicator uses rgba(255, 0, 0, 0.3) diagonal stripes
+           * @returns {Object} { hasRedStripes: boolean, sampleCount: number, stripePatternCount: number }
+           */
+          inspectVisual() {
+            const viewer = window.osdViewerRef;
+            if (!viewer) return { hasRedStripes: false, error: 'No viewer' };
+
+            // Get the OSD canvas (main viewer only, not navigator)
+            const canvas = viewer.drawer.canvas;
+            if (!canvas) return { hasRedStripes: false, error: 'No canvas' };
+
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            let sampleCount = 0;
+            let stripePatternCount = 0;
+
+            // Helper to check if a pixel looks like our SPECIFIC stripe pattern
+            // Our stripes use rgba(255,0,0,0.3) which when blended creates:
+            // - Strong red channel elevation (r - g > 40 and r - b > 40)
+            // - NOT pure red (PDF content red is typically 255,0,0)
+            // - Requires BOTH high red AND suppressed green/blue
+            const isIncompleteStripeRed = (r, g, b) => {
+              // Must have significant red dominance over both g and b
+              const redDominance = Math.min(r - g, r - b);
+              if (redDominance < 40) return false;
+
+              // Must not be pure PDF red (which would be ~255,0,0 or similar)
+              if (r > 250 && g < 20 && b < 20) return false;
+
+              // Must have moderate red intensity (not too dark, not white)
+              if (r < 100 || r > 240) return false;
+
+              // Green and blue should be similar (stripe over content)
+              if (Math.abs(g - b) > 30) return false;
+
+              return true;
+            };
+
+            // Sample along diagonal lines to detect the stripe pattern
+            // The stripe uses 8px width with 32px spacing at 45 degrees
+            for (let startX = 0; startX < width; startX += 80) {
+              for (let startY = 0; startY < height; startY += 80) {
+                let stripePixelsFound = 0;
+                let totalSampled = 0;
+
+                // Sample a grid within this region
+                for (let dx = 0; dx < 64 && startX + dx < width; dx += 8) {
+                  for (let dy = 0; dy < 64 && startY + dy < height; dy += 8) {
+                    const pixel = ctx.getImageData(startX + dx, startY + dy, 1, 1).data;
+                    sampleCount++;
+                    totalSampled++;
+
+                    if (isIncompleteStripeRed(pixel[0], pixel[1], pixel[2])) {
+                      stripePixelsFound++;
+                    }
+                  }
+                }
+
+                // Stripe pattern covers ~25% of area (8px stripe, 32px spacing)
+                // If 15-40% of samples are stripe-red, it's likely our pattern
+                const stripeRatio = stripePixelsFound / totalSampled;
+                if (stripeRatio > 0.10 && stripeRatio < 0.50 && stripePixelsFound >= 3) {
+                  stripePatternCount++;
+                }
+              }
+            }
+
+            // Consider stripes detected if found in multiple regions
+            // Require more regions to reduce false positives
+            const hasStripes = stripePatternCount >= 3;
+            return {
+              hasRedStripes: hasStripes,
+              sampleCount,
+              stripePatternCount,
+              regionsChecked: Math.ceil(width / 80) * Math.ceil(height / 80),
+              note: hasStripes ? 'Incomplete tile stripes detected' : 'No stripe pattern found'
+            };
+          }
+
+          /**
+           * Inspect tile quality by querying tile cache directly
+           * Bypasses registry (which may be stale) and checks actual cache state
            * @param {string|number|Array} additionalLevels - 'lowres' (default), 'all', 'none', specific level, or array
            * @returns {Array} Quality issues found
            */
           inspectTileQuality(additionalLevels = 'lowres') {
             const issues = [];
-            const checkedTiles = new Set(); // Avoid duplicates
+            const ts = this.tileStreamer;
 
-            // ALWAYS check current viewport tiles first
-            const visibleTiles = this.getVisibleTiles();
-            for (const tile of visibleTiles) {
-              if (tile.status === 'fallback' ||
-                  tile.status === 'unknown' ||
-                  (tile.missingPages && tile.missingPages.length > 0)) {
-                issues.push(tile);
-                checkedTiles.add(tile.key);
-              }
-            }
-
-            // Then check additional levels if specified
-            if (additionalLevels === 'none') {
-              // Only viewport tiles checked above
-              return issues;
-            }
-
-            // Determine which additional levels to check
+            // Determine which levels to check
             let levelsToCheck;
-            if (additionalLevels === 'lowres') {
+            if (additionalLevels === 'none') {
+              levelsToCheck = [];
+            } else if (additionalLevels === 'lowres') {
               levelsToCheck = this.getLowResLevels();
             } else if (additionalLevels === 'all') {
-              levelsToCheck = Array.from({length: this.tileStreamer.maxLevel + 1}, (_, i) => i);
+              levelsToCheck = Array.from({length: ts.maxLevel + 1}, (_, i) => i);
             } else if (Array.isArray(additionalLevels)) {
               levelsToCheck = additionalLevels;
             } else {
               levelsToCheck = [additionalLevels];
             }
 
-            // Scan additional levels for quality issues
-            for (const lvl of levelsToCheck) {
-              const scale = Math.pow(2, lvl);
-              const cols = Math.ceil(this.tileStreamer.gridDims.cols / scale);
-              const rows = Math.ceil(this.tileStreamer.gridDims.rows / scale);
+            // Check each level for stale tiles in OSD
+            // Stale = pages now available but tile not in our cache (OSD has old version)
+            for (const level of levelsToCheck) {
+              const scale = Math.pow(2, level - ts.maxLevel);
+              const tileWidthInGrid = ts.tileWidth / scale;
+              const tileHeightInGrid = ts.tileHeight / scale;
 
-              for (let y = 0; y < rows; y++) {
-                for (let x = 0; x < cols; x++) {
-                  const key = `${lvl}/${x}_${y}`;
+              const tilesWide = Math.ceil(ts.gridDims.totalWidth / tileWidthInGrid);
+              const tilesHigh = Math.ceil(ts.gridDims.totalHeight / tileHeightInGrid);
 
-                  // Skip if already checked in viewport
-                  if (checkedTiles.has(key)) continue;
+              const resolution = level <= ts.minimapMaxLevel ? 'low' : 'high';
+              const pageCache = ts.pageStreamer._getPageCache(resolution);
 
-                  const renderStatus = this.tileStreamer.tileRenderRegistry.get(key);
+              for (let y = 0; y < tilesHigh; y++) {
+                for (let x = 0; x < tilesWide; x++) {
+                  // Calculate tile bounds
+                  const tileLeft = x * tileWidthInGrid;
+                  const tileTop = y * tileHeightInGrid;
+                  const tileRight = Math.min(tileLeft + tileWidthInGrid, ts.gridDims.totalWidth);
+                  const tileBottom = Math.min(tileTop + tileHeightInGrid, ts.gridDims.totalHeight);
 
-                  if (renderStatus && (
-                    renderStatus.status === 'fallback' ||
-                    renderStatus.status === 'unknown' ||
-                    (renderStatus.missingPages && renderStatus.missingPages.length > 0)
-                  )) {
-                    issues.push({ key, ...renderStatus, level: lvl, x, y });
-                    checkedTiles.add(key);
+                  // Find pages this tile needs
+                  const neededPages = ts._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                  if (neededPages.length === 0) continue;
+
+                  // Check which pages are missing from page cache
+                  const missingPages = neededPages.filter(p => !pageCache.has(`${p}_${resolution}`));
+
+                  // Generate the fingerprint key for this tile
+                  const fingerprint = ts._generateTileFingerprint(neededPages, level, x, y);
+                  const cacheKey = `${level}_${fingerprint}`;
+                  const inTileCache = ts.tileCache.has(cacheKey);
+
+                  if (missingPages.length > 0) {
+                    // Pages still missing - tile can't be complete
+                    issues.push({
+                      level, x, y,
+                      key: `L${level}(${x},${y})`,
+                      neededPages,
+                      missingPages,
+                      status: 'missing_pages'
+                    });
+                  } else if (!inTileCache) {
+                    // All pages available but tile not in our cache
+                    // OSD likely has stale version from when pages were missing
+                    issues.push({
+                      level, x, y,
+                      key: `L${level}(${x},${y})`,
+                      neededPages,
+                      missingPages: [],
+                      status: 'stale_in_osd'
+                    });
                   }
                 }
               }
-            }
-
-            if (CONFIG.VERBOSE_LOGGING && issues.length > 0) {
-              console.log(`[Tile Inspector] Found ${issues.length} quality issues (viewport + levels [${levelsToCheck.join(', ')}])`);
             }
 
             return issues;
@@ -1862,28 +2032,89 @@ SETPOINT
            * @param {number[]|null} levels - Which levels to check (default: null = all levels 0 to maxLevel)
            * @returns {Promise<Object>} Healing report with successes and failures
            */
-          async healIncompleteTiles(levels = null) {
-            // Default to ALL levels if not specified
-            if (!levels) {
-              levels = Array.from({ length: this.tileStreamer.maxLevel + 1 }, (_, i) => i);
+          async healIncompleteTiles(levels = null, options = {}) {
+            // Guard against re-entrant healing (prevents infinite loops)
+            if (this._healingInProgress) {
+              console.log('[Tile Healing] Skipping - healing already in progress');
+              return { scanned: 0, incomplete: [], healed: [], failed: [], skipped: true };
             }
 
+            // Cooldown after TiledImage recreation to prevent infinite loop
+            if (this._lastRecreationTime && Date.now() - this._lastRecreationTime < 3000) {
+              console.log('[Tile Healing] Skipping - cooldown after TiledImage recreation');
+              return { scanned: 0, incomplete: [], healed: [], failed: [], cooldown: true };
+            }
+
+            this._healingInProgress = true;
+
+            try {
+            // Default to viewport-visible levels only (not ALL levels - that would be millions of tiles)
+            if (!levels) {
+              const currentLevel = this._getCurrentViewportLevel();
+              levels = [
+                Math.max(0, currentLevel - 1),
+                currentLevel,
+                Math.min(this.tileStreamer.maxLevel, currentLevel + 1)
+              ].filter((v, i, a) => a.indexOf(v) === i); // unique
+            }
+
+            // ============================================================
+            // Compute intelligent limits based on viewport and tile size
+            // ============================================================
+            // Instead of hardcoded limits, we calculate how many tiles can
+            // actually fit in the current viewport, then use that to set
+            // reasonable scan limits.
+            //
+            // Formula:
+            //   tilesPerViewport = (viewportWidth × viewportHeight) / (tileWidth × tileHeight)
+            //   + 4 for partial tiles at edges that still need to be rendered
+            //
+            // MAX_TILES_TO_SCAN: We multiply by number of levels since each
+            //   level may have different tiles visible (due to zoom pyramid)
+            //
+            // YIELD_EVERY: Yield to browser ~4 times per viewport's worth of
+            //   tiles to keep UI responsive. Minimum 5 to avoid excessive yields.
+            // ============================================================
+            const viewer = window.osdViewerRef;
+            const viewportPixels = viewer
+              ? viewer.container.clientWidth * viewer.container.clientHeight
+              : 800 * 600; // Fallback for edge cases
+            const tilePixels = this.tileStreamer.tileWidth * this.tileStreamer.tileHeight;
+            const tilesPerViewport = Math.ceil(viewportPixels / tilePixels) + 4;
+            const MAX_TILES_TO_SCAN = options.maxTiles || (tilesPerViewport * levels.length);
+            const YIELD_EVERY = Math.max(5, Math.ceil(tilesPerViewport / 4));
+
             if (CONFIG.VERBOSE_LOGGING) {
-              console.log(`[Tile Healing] Starting scan for incomplete tiles at levels: ${levels.join(',')} (maxLevel: ${this.tileStreamer.maxLevel})`);
+              console.log(`[Tile Healing] Starting scan for VISIBLE tiles at levels: ${levels.join(',')} (maxLevel: ${this.tileStreamer.maxLevel}, limit: ${MAX_TILES_TO_SCAN}, tilesPerViewport: ${tilesPerViewport})`);
             }
 
             const report = {
               scanned: 0,
               incomplete: [],
               healed: [],
-              failed: []
+              failed: [],
+              limitReached: false
             };
 
-            // For each level, identify which tiles should exist
-            for (const level of levels) {
-              const tilesAtLevel = this._identifyRequiredTiles(level);
+            // For each level, identify which tiles are VISIBLE in viewport
+            outer: for (const level of levels) {
+              const tilesAtLevel = this._identifyRequiredTiles(level, true); // viewportOnly = true
 
               for (const tileSpec of tilesAtLevel) {
+                // Check tile limit
+                if (report.scanned >= MAX_TILES_TO_SCAN) {
+                  report.limitReached = true;
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Tile Healing] Reached tile limit (${MAX_TILES_TO_SCAN}), stopping scan`);
+                  }
+                  break outer;
+                }
+
+                // Yield to browser periodically to prevent UI lockup
+                if (report.scanned > 0 && report.scanned % YIELD_EVERY === 0) {
+                  await new Promise(resolve => setTimeout(resolve, 0));
+                }
+
                 report.scanned++;
                 const { x, y, key, neededPages, resolution } = tileSpec;
 
@@ -1926,20 +2157,8 @@ SETPOINT
 
                     if (isNowCached) {
                       report.healed.push(key);
-
                       if (CONFIG.VERBOSE_LOGGING) {
                         console.log(`[Tile Healing] ✓ HEALED: ${key} is now complete`);
-                      }
-
-                      // Update registry to reflect successful healing
-                      const registryEntry = this.tileStreamer.tileRenderRegistry.get(key);
-                      if (registryEntry && registryEntry.status === 'fallback') {
-                        this.tileStreamer.tileRenderRegistry.set(key, {
-                          ...registryEntry,
-                          status: 'full',
-                          missingPages: [],
-                          timestamp: Date.now() // Update timestamp to mark when it was healed
-                        });
                       }
                     } else {
                       report.failed.push({ key, reason: 'still_not_cached' });
@@ -1957,52 +2176,112 @@ SETPOINT
               console.log(`[Tile Healing] Report: scanned=${report.scanned}, incomplete=${report.incomplete.length}, healed=${report.healed.length}, failed=${report.failed.length}`);
             }
 
-            // Force OSD to redraw healed tiles
+            // Progressive refresh: try gentle methods first, escalate if needed
             if (report.healed.length > 0 && window.osdViewerRef) {
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Tile Healing] Forcing OSD to refresh ${report.healed.length} healed tiles...`);
+                console.log(`[Tile Healing] Refreshing ${report.healed.length} healed tiles (progressive)...`);
               }
-              window.osdViewerRef.forceRedraw();
-              this.tileStreamer.scheduleRedraw();
+
+              // Step 1: Try gentle refresh
+              await this._refreshHealedTiles(report.healed);
+
+              // Step 2: Check if visual inspection still shows stripes
+              await new Promise(resolve => setTimeout(resolve, 200));
+              // Trigger visual blink for automatic post-heal inspection
+              if (window.__triggerInspectorBlink) {
+                window.__triggerInspectorBlink('visual');
+              }
+              const visualCheck = this.inspectVisual();
+
+              if (visualCheck.hasRedStripes) {
+                // Step 3: Escalate to full TiledImage recreation
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log('[Tile Healing] Gentle refresh insufficient, recreating TiledImage...');
+                }
+                await this._recreateTiledImage();
+                this._lastRecreationTime = Date.now(); // Set cooldown timestamp
+              } else if (CONFIG.VERBOSE_LOGGING) {
+                console.log('[Tile Healing] Gentle refresh successful, no recreation needed');
+              }
             }
 
             return report;
+            } finally {
+              this._healingInProgress = false; // Always clear guard flag
+            }
+          }
+
+          /**
+           * Get current viewport bounds in grid coordinates
+           * @returns {Object|null} { left, top, right, bottom } or null if viewer not available
+           */
+          _getViewportBounds() {
+            const viewer = window.osdViewerRef;
+            if (!viewer || !viewer.viewport) return null;
+
+            const ts = this.tileStreamer;
+            const bounds = viewer.viewport.getBounds();
+            const { totalWidth, totalHeight } = ts.gridDims;
+
+            // Convert OSD normalized coordinates to grid coordinates
+            // OSD uses 0-1 for width, aspect-ratio-based for height
+            return {
+              left: Math.max(0, bounds.x * totalWidth),
+              top: Math.max(0, bounds.y * totalWidth), // OSD normalizes by width
+              right: Math.min(totalWidth, (bounds.x + bounds.width) * totalWidth),
+              bottom: Math.min(totalHeight, (bounds.y + bounds.height) * totalWidth)
+            };
           }
 
           /**
            * Identify which tiles should exist at a given level
            * @param {number} level - Tile pyramid level
+           * @param {boolean} viewportOnly - If true, only return tiles visible in viewport
            * @returns {Array} Tile specifications with coordinates and needed pages
            */
-          _identifyRequiredTiles(level) {
+          _identifyRequiredTiles(level, viewportOnly = false) {
             const tiles = [];
-            const scale = Math.pow(2, level);
-            const { totalWidth, totalHeight } = this.tileStreamer.gridDims;
+            const ts = this.tileStreamer;
+            const { totalWidth, totalHeight } = ts.gridDims;
 
-            // Calculate how many tiles needed to cover the grid at this level
-            const scaledWidth = totalWidth / scale;
-            const scaledHeight = totalHeight / scale;
-            const tilesX = Math.ceil(scaledWidth / this.tileStreamer.tileSize);
-            const tilesY = Math.ceil(scaledHeight / this.tileStreamer.tileSize);
+            // Get viewport bounds if filtering
+            const vpBounds = viewportOnly ? this._getViewportBounds() : null;
+
+            // Use the same scale calculation as generateTile
+            const scale = Math.pow(2, level - ts.maxLevel);
+            const tileWidthInGrid = ts.tileWidth / scale;
+            const tileHeightInGrid = ts.tileHeight / scale;
+
+            // Calculate number of tiles at this level
+            const tilesX = Math.ceil(totalWidth / tileWidthInGrid);
+            const tilesY = Math.ceil(totalHeight / tileHeightInGrid);
 
             // For each tile position, determine which pages it needs
             for (let x = 0; x < tilesX; x++) {
               for (let y = 0; y < tilesY; y++) {
-                const tileLeft = x * this.tileStreamer.tileSize * scale;
-                const tileTop = y * this.tileStreamer.tileSize * scale;
-                const tileRight = Math.min(tileLeft + this.tileStreamer.tileSize * scale, totalWidth);
-                const tileBottom = Math.min(tileTop + this.tileStreamer.tileSize * scale, totalHeight);
+                const tileLeft = x * tileWidthInGrid;
+                const tileTop = y * tileHeightInGrid;
+                const tileRight = Math.min(tileLeft + tileWidthInGrid, totalWidth);
+                const tileBottom = Math.min(tileTop + tileHeightInGrid, totalHeight);
+
+                // Skip tiles outside viewport if filtering
+                if (vpBounds) {
+                  if (tileRight < vpBounds.left || tileLeft > vpBounds.right ||
+                      tileBottom < vpBounds.top || tileTop > vpBounds.bottom) {
+                    continue; // Tile not visible
+                  }
+                }
 
                 // Determine which pages intersect this tile
-                const neededPages = this.tileStreamer._getPagesInBounds(tileLeft, tileTop, tileRight, tileBottom);
+                const neededPages = this.tileStreamer._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+                if (neededPages.length === 0) continue; // Skip empty tiles
 
                 // Determine resolution (use low-res for overview levels)
-                const resolution = level < 4 ? 'low' : 'high';
+                const resolution = level <= this.tileStreamer.minimapMaxLevel ? 'low' : 'high';
 
-                // Generate tile key
-                const firstPage = Math.min(...neededPages);
-                const lastPage = Math.max(...neededPages);
-                const key = `${level}_p${firstPage}${lastPage > firstPage ? `-${lastPage}` : ''}_x${x}_y${y}`;
+                // Generate tile key using same fingerprint as generateTile
+                const fingerprint = this.tileStreamer._generateTileFingerprint(neededPages, level, x, y);
+                const key = `${level}_${fingerprint}`;
 
                 tiles.push({
                   level,
@@ -2016,6 +2295,119 @@ SETPOINT
             }
 
             return tiles;
+          }
+
+          /**
+           * Get the current viewport zoom level in tile pyramid coordinates
+           * @returns {number} Current level (0 = zoomed out, maxLevel = zoomed in)
+           */
+          _getCurrentViewportLevel() {
+            const viewer = window.osdViewerRef;
+            if (!viewer || !viewer.viewport) {
+              return 0; // Default to level 0 if viewer not available
+            }
+            const zoom = viewer.viewport.getZoom();
+            const level = Math.round(Math.log2(zoom) + this.tileStreamer.maxLevel);
+            return Math.max(0, Math.min(level, this.tileStreamer.maxLevel));
+          }
+
+          /**
+           * Progressive tile refresh - starts gentle, escalates if needed
+           * Level 1: forceRedraw (may work if OSD checks cache)
+           * Level 2: Reset specific tiles in OSD's TiledImage
+           * Level 3: Full TiledImage recreation (most disruptive)
+           * @param {string[]} healedKeys - Keys of healed tiles to refresh
+           * @returns {Promise<void>}
+           */
+          async _refreshHealedTiles(healedKeys = []) {
+            const viewer = window.osdViewerRef;
+            if (!viewer) return;
+
+            const tiledImage = viewer.world.getItemAt(0);
+            if (!tiledImage) {
+              // No TiledImage yet, nothing to refresh
+              return;
+            }
+
+            // Level 1: Try gentle forceRedraw first
+            viewer.forceRedraw();
+
+            // Give OSD a moment to potentially pick up new tiles
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Level 2: Reset specific tiles in OSD's tile cache
+            // This invalidates OSD's internal cache for the healed tiles
+            if (tiledImage._tileCache && healedKeys.length > 0) {
+              let resetCount = 0;
+              for (const key of healedKeys) {
+                // Parse tile key to get level, x, y
+                const parts = key.split('_');
+                if (parts.length >= 2) {
+                  const level = parseInt(parts[0]);
+                  // OSD stores tiles by level/x/y, but we use fingerprint keys
+                  // We need to invalidate all tiles at this level to be safe
+                  // This is still less disruptive than full recreation
+                }
+                resetCount++;
+              }
+
+              // Request OSD to re-fetch tiles at current viewport
+              if (tiledImage.reset) {
+                tiledImage.reset();
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Tile Healing] Reset TiledImage (${resetCount} tiles marked)`);
+                }
+              } else if (tiledImage._needsDraw) {
+                tiledImage._needsDraw = true;
+                viewer.forceRedraw();
+              }
+            }
+
+            // Level 3: Full recreation only if tiles still appear stale
+            // This is deferred - called separately if visual inspection still shows stripes
+          }
+
+          /**
+           * Full TiledImage recreation - most aggressive refresh
+           * Use only when progressive refresh fails
+           * @returns {Promise<void>}
+           */
+          async _recreateTiledImage() {
+            const viewer = window.osdViewerRef;
+            if (!viewer) return;
+
+            // Save current viewport state
+            const currentZoom = viewer.viewport.getZoom();
+            const currentCenter = viewer.viewport.getCenter();
+
+            // Remove old TiledImage
+            const oldTiledImage = viewer.world.getItemAt(0);
+            if (oldTiledImage) {
+              viewer.world.removeItem(oldTiledImage);
+            }
+
+            // Wait for cleanup
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Add fresh TiledImage with healed tile cache
+            return new Promise((resolve) => {
+              viewer.addTiledImage({
+                tileSource: this.tileStreamer.getOSDConfig(),
+                success: () => {
+                  // Restore viewport position
+                  viewer.viewport.zoomTo(currentZoom, null, true);
+                  viewer.viewport.panTo(currentCenter, true);
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log('[Tile Healing] TiledImage recreated successfully');
+                  }
+                  resolve();
+                },
+                error: (event) => {
+                  console.error('[Tile Healing] Error recreating TiledImage:', event);
+                  resolve();
+                }
+              });
+            });
           }
         }
 
@@ -2421,7 +2813,7 @@ SETPOINT
             }
 
             // Generate cache key with fingerprint
-            const fingerprint = this._generateTileFingerprint(neededPages, tileLeft, tileTop);
+            const fingerprint = this._generateTileFingerprint(neededPages, level, x, y);
             const key = `${level}_${fingerprint}`;
 
             // Check cache
@@ -2434,10 +2826,13 @@ SETPOINT
             const pageCache = ts.pageStreamer._getPageCache(resolution);
             const missingPages = neededPages.filter(p => !pageCache.has(`${p}_${resolution}`));
 
-            // If missing pages, request them and render blank tile for now
+            // If missing pages, request them asynchronously
+            // Return null to tell OSD "tile not ready" - OSD will show placeholder and retry
+            // Previously we returned blank tiles which OSD cached, causing stale tiles
             if (missingPages.length > 0) {
               ts.cacheManager._requestPagesAsync(missingPages, resolution);
-              return this._renderBlankTile();
+              // Return null - OSD will use placeholder and may retry on next draw
+              return null;
             }
 
             // Render tile
@@ -2624,9 +3019,8 @@ SETPOINT
               return false;
             }
 
-            // Get canvas from cache
-            const pageCache = ts.pageStreamer._getPageCache(resolution);
-            let pageCanvas = pageCache.get(`${pageNum}_${resolution}`);
+            // Get decoded page from cache (JPEG data URLs are automatically decoded)
+            let pageCanvas = ts.pageStreamer.getDecodedPage(pageNum, resolution);
 
             // Track cache misses and trigger on-demand rendering
             if (!pageCanvas) {
@@ -2686,8 +3080,7 @@ SETPOINT
             if (!pageCanvas) {
               // Try opposite resolution as fallback
               const fallbackRes = resolution === 'high' ? 'low' : 'high';
-              const fallbackCache = ts.pageStreamer._getPageCache(fallbackRes);
-              pageCanvas = fallbackCache.get(`${pageNum}_${fallbackRes}`);
+              pageCanvas = ts.pageStreamer.getDecodedPage(pageNum, fallbackRes);
 
               if (pageCanvas) {
                 ts.stats.tilesRenderedFallback++;
@@ -2701,29 +3094,42 @@ SETPOINT
               ts.stats.tilesRenderedFull++;
             }
 
-            // Calculate intersection region
-            const srcLeft = Math.max(0, (tileLeft - pageLeft) * scale);
-            const srcTop = Math.max(0, (tileTop - pageTop) * scale);
-            const srcRight = Math.min(pageCanvas.width, (tileRight - pageLeft) * scale);
-            const srcBottom = Math.min(pageCanvas.height, (tileBottom - pageTop) * scale);
+            // Calculate intersection region in grid coordinates
+            const intersectLeft = Math.max(tileLeft, pageLeft);
+            const intersectTop = Math.max(tileTop, pageTop);
+            const intersectRight = Math.min(tileRight, pageRight);
+            const intersectBottom = Math.min(tileBottom, pageBottom);
 
-            const srcWidth = srcRight - srcLeft;
-            const srcHeight = srcBottom - srcTop;
+            // Grid coords are at PDF_RENDER_SCALE, but canvas might be at PDF_LOWRES_SCALE
+            // Calculate actual scale ratio from canvas dimensions to handle any resolution
+            const canvasToGridRatio = pageCanvas.width / pageWidth;
+
+            // Source rect in canvas coordinates (relative to page origin, scaled to canvas)
+            const srcLeft = (intersectLeft - pageLeft) * canvasToGridRatio;
+            const srcTop = (intersectTop - pageTop) * canvasToGridRatio;
+            const srcWidth = (intersectRight - intersectLeft) * canvasToGridRatio;
+            const srcHeight = (intersectBottom - intersectTop) * canvasToGridRatio;
 
             if (srcWidth <= 0 || srcHeight <= 0) {
               return false;
             }
 
-            // Calculate destination position on tile
-            const destLeft = Math.max(0, (pageLeft - tileLeft) / scale);
-            const destTop = Math.max(0, (pageTop - tileTop) / scale);
+            // Destination rect in tile coordinates
+            // scale = 2^(level - maxLevel), so for L0 it's small (e.g., 0.0156)
+            // This scales grid coords to tile coords
+            // IMPORTANT: Use grid intersection size, NOT srcWidth/srcHeight
+            // (srcWidth is scaled for canvas resolution, dest needs grid-based scaling)
+            const destLeft = (intersectLeft - tileLeft) * scale;
+            const destTop = (intersectTop - tileTop) * scale;
+            const destWidth = (intersectRight - intersectLeft) * scale;
+            const destHeight = (intersectBottom - intersectTop) * scale;
 
             // Draw the page portion onto tile
             try {
               ts.tileCtx.drawImage(
                 pageCanvas,
                 srcLeft, srcTop, srcWidth, srcHeight,
-                destLeft + ts.tileOverlap, destTop + ts.tileOverlap, srcWidth / scale, srcHeight / scale
+                destLeft + ts.tileOverlap, destTop + ts.tileOverlap, destWidth, destHeight
               );
               return true;
             } catch (err) {
@@ -2737,10 +3143,24 @@ SETPOINT
            */
           _renderBlankTile() {
             const ts = this.tileStreamer;
+            const w = ts.tileCanvas.width;
+            const h = ts.tileCanvas.height;
 
             // Fill with background color
             ts.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
-            ts.tileCtx.fillRect(0, 0, ts.tileCanvas.width, ts.tileCanvas.height);
+            ts.tileCtx.fillRect(0, 0, w, h);
+
+            // Draw red diagonal stripes to visually indicate incomplete tile
+            // This provides a visual indicator independent of the registry
+            ts.tileCtx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
+            ts.tileCtx.lineWidth = 4;
+            const stripeSpacing = 32;
+            for (let i = -h; i < w + h; i += stripeSpacing) {
+              ts.tileCtx.beginPath();
+              ts.tileCtx.moveTo(i, 0);
+              ts.tileCtx.lineTo(i + h, h);
+              ts.tileCtx.stroke();
+            }
 
             // Return as data URL
             if (CONFIG.TILE_FORMAT === 'png') {
@@ -2771,50 +3191,69 @@ SETPOINT
           }
 
           /**
-           * Generate unique fingerprint for tile based on pages and positions
+           * Generate fingerprint for tile deduplication
+           *
+           * DEDUPLICATION RULES:
+           * - All zoom levels: dedupe by page content + position within page
+           * - At high zoom, tiles showing same region of same page(s) ARE equivalent
+           * - Position is normalized to page grid, enabling deduplication across
+           *   repeated page instances in the staggered pattern
            */
-          _generateTileFingerprint(neededPages, tileLeft, tileTop) {
+          _generateTileFingerprint(neededPages, level, x, y) {
             if (neededPages.length === 0) return 'empty';
 
             const ts = this.tileStreamer;
-            const { pageWidth, pageHeight, spacing, gridRows, gridCols } = ts.gridDims;
-            const pagePositions = [];
+            const { totalWidth, totalHeight, pageWidth, pageHeight, spacing } = ts.gridDims;
 
-            // For each needed page, find grid position and relative offset
-            for (const pageNum of neededPages) {
-              let row = -1, col = -1;
-              for (let r = 0; r < gridRows; r++) {
-                for (let c = 0; c < gridCols; c++) {
-                  if (ts.pattern[r][c] === pageNum) {
-                    row = r;
-                    col = c;
-                    break;
-                  }
-                }
-                if (row !== -1) break;
-              }
+            // Calculate tile dimensions at this level
+            const scale = Math.pow(2, level - ts.maxLevel);
+            const tileWidthInGrid = ts.tileWidth / scale;
+            const tileHeightInGrid = ts.tileHeight / scale;
 
-              if (row === -1) continue;
+            // Tile position in grid coordinates
+            const tileLeft = x * tileWidthInGrid;
+            const tileTop = y * tileHeightInGrid;
 
-              // Calculate page's absolute position
-              const pageLeft = col * (pageWidth + spacing);
-              const pageTop = row * (pageHeight + spacing);
+            // Calculate tile position WITHIN a page cell (for high-zoom deduplication)
+            // Page cell = page + spacing on each side
+            const cellWidth = pageWidth + spacing;
+            const cellHeight = pageHeight + spacing;
 
-              // Calculate relative position within tile
-              const relX = Math.round(pageLeft - tileLeft);
-              const relY = Math.round(pageTop - tileTop);
+            // Position within the page grid cell (0 to cellWidth/cellHeight)
+            // This enables deduplication: tiles at same position within ANY page cell are equivalent
+            const posInCellX = Math.floor((tileLeft % cellWidth) / tileWidthInGrid);
+            const posInCellY = Math.floor((tileTop % cellHeight) / tileHeightInGrid);
 
-              pagePositions.push({ pageNum, relX, relY });
+            // Pages are contiguous - use min-max range
+            const minPage = Math.min(...neededPages);
+            const maxPage = Math.max(...neededPages);
+            const pageRange = minPage === maxPage ? `${minPage}` : `${minPage}-${maxPage}`;
+
+            // Check if tile is smaller than a page (high zoom)
+            const tileIsSmallerThanPage = (tileWidthInGrid < pageWidth) || (tileHeightInGrid < pageHeight);
+
+            if (tileIsSmallerThanPage) {
+              // High zoom: include position within page cell for deduplication
+              // Tiles at same relative position in same page(s) are equivalent
+              return `${pageRange}_${posInCellX}_${posInCellY}`;
             }
 
-            // Sort by position for deterministic fingerprint
-            pagePositions.sort((a, b) => {
-              if (a.relY !== b.relY) return a.relY - b.relY;
-              return a.relX - b.relX;
-            });
+            // Low/mid zoom: tile contains full page(s)
+            // Calculate number of tiles at this level
+            const tilesWide = Math.ceil(totalWidth / tileWidthInGrid);
+            const tilesHigh = Math.ceil(totalHeight / tileHeightInGrid);
 
-            // Create compact fingerprint
-            return pagePositions.map(p => `p${p.pageNum}@${p.relX},${p.relY}`).join('_');
+            // Detect edge tiles: at the right or bottom boundary of the grid
+            const isRightEdge = (x >= tilesWide - 1);
+            const isBottomEdge = (y >= tilesHigh - 1);
+
+            if (isRightEdge || isBottomEdge) {
+              let edge = '';
+              if (isRightEdge) edge += 'r';
+              if (isBottomEdge) edge += 'b';
+              return `${pageRange}_e${edge}`;
+            }
+            return pageRange;
           }
         }
 
@@ -2826,6 +3265,40 @@ SETPOINT
           constructor(tileStreamer) {
             this.tileStreamer = tileStreamer;
             this._pendingRequests = new Set();
+            this._resetTimeout = null;
+            this._lastResetTime = 0;
+          }
+
+          /**
+           * Schedule a debounced TiledImage reset
+           * This prevents race conditions where reset() is called while tiles are still loading
+           * The "Ignoring tile loaded before reset" warning indicates tiles getting discarded
+           */
+          _scheduleReset() {
+            // Clear any pending reset
+            if (this._resetTimeout) {
+              clearTimeout(this._resetTimeout);
+            }
+
+            // Wait 100ms for all pending page renders to complete before resetting
+            this._resetTimeout = setTimeout(() => {
+              this._resetTimeout = null;
+
+              try {
+                if (window.osdViewerRef && window.osdViewerRef.world) {
+                  const tiledImage = window.osdViewerRef.world.getItemAt(0);
+                  if (tiledImage) {
+                    tiledImage.reset();
+                    this._lastResetTime = Date.now();
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log('[CacheManager] TiledImage reset after page renders');
+                    }
+                  }
+                }
+              } catch (err) {
+                // Silently ignore if OSD not ready yet
+              }
+            }, 100);
           }
 
           /**
@@ -2875,20 +3348,12 @@ SETPOINT
               // Invalidate tiles that used these pages
               this._invalidateTilesUsingPages(pageNums, resolution);
 
-              // Trigger OSD to redraw with fresh tiles
+              // Schedule debounced reset to prevent race conditions
+              // Multiple page renders completing in sequence will only trigger one reset
               if (!isIOSSafari) {
-                try {
-                  if (window.osdViewerRef && window.osdViewerRef.world) {
-                    const tiledImage = window.osdViewerRef.world.getItemAt(0);
-                    if (tiledImage) {
-                      tiledImage.reset();
-                    }
-                  }
-                } catch (err) {
-                  // Silently ignore if OSD not ready yet
-                }
+                this._scheduleReset();
               } else {
-                // On iOS: Just invalidate cache
+                // On iOS: Just request redraw (reset causes issues)
                 try {
                   if (window.osdViewerRef && window.osdViewerRef.world) {
                     window.osdViewerRef.world.needsDraw();
@@ -2958,15 +3423,8 @@ SETPOINT
             this.pageStreamer = pageStreamer;
             this.numPages = numPages;
 
-            // Tile render registry: Track every tile generation for quality inspection
-            // Fresh registry for each PDF - prevents stale entries from previous documents
-            this.tileRenderRegistry = new Map();
-
-            // TileCache with eviction callback to keep registry in sync
-            this.tileCache = new TileCache(CONFIG.MAX_CACHE_SIZE, (evictedKey) => {
-              // Remove evicted tiles from registry to prevent memory leak
-              this.tileRenderRegistry.delete(evictedKey);
-            });
+            // Tile cache for rendered tiles
+            this.tileCache = new TileCache(CONFIG.MAX_CACHE_SIZE);
             this.checkedCanvases = new Set(); // Track which pages we've already validated
 
             // Debounced tile refresh: Batch forceRedraw() calls to avoid excessive redraws
@@ -3297,9 +3755,10 @@ SETPOINT
           /**
            * Phase 2.1: Delegate to TileGenerator module
            */
-          _generateTileFingerprint(neededPages, tileLeft, tileTop) {
-            return this.tileGenerator._generateTileFingerprint(neededPages, tileLeft, tileTop);
+          _generateTileFingerprint(neededPages, level, x, y) {
+            return this.tileGenerator._generateTileFingerprint(neededPages, level, x, y);
           }
+          /**
            * Phase 2: Delegates tile generation to TileGenerator module
            */
           getOSDConfig() {
@@ -3367,6 +3826,13 @@ SETPOINT
            */
           async healIncompleteTiles(levels = null) {
             return await this.qualityInspector.healIncompleteTiles(levels);
+          }
+
+          /**
+           * Phase 2.4: Delegate to QualityInspector module
+           */
+          inspectVisual() {
+            return this.qualityInspector.inspectVisual();
           }
 
           /**
@@ -3715,6 +4181,45 @@ SETPOINT
           const [showDebug, setShowDebug] = useState(isDebugMode);
           const [showVerboseLogging, setShowVerboseLogging] = useState(false);
           const [showTileLabels, setShowTileLabels] = useDebugPersistedState('tile_labels', false, showDebug);
+          const [tileInspectorResult, setTileInspectorResult] = useState(null); // {type: 'heal'|'visual', data: ...}
+          const [healBlink, setHealBlink] = useState(false);
+          const [visualBlink, setVisualBlink] = useState(false);
+
+          // Helper to trigger button blink animation
+          const triggerBlink = (buttonType) => {
+            if (buttonType === 'heal') {
+              setHealBlink(true);
+              setTimeout(() => setHealBlink(false), 600);
+            } else if (buttonType === 'visual') {
+              setVisualBlink(true);
+              setTimeout(() => setVisualBlink(false), 600);
+            }
+          };
+
+          // Expose blink trigger for automatic healing
+          useEffect(() => {
+            window.__triggerInspectorBlink = triggerBlink;
+            return () => { delete window.__triggerInspectorBlink; };
+          }, []);
+
+          // Run initial visual inspection after viewer loads (for debug mode)
+          useEffect(() => {
+            if (!showDebug) return;
+            const timer = setTimeout(() => {
+              if (window.tileStreamerRef && window.tileStreamerRef.inspectVisual) {
+                console.log('[Auto-Inspector] Running initial visual inspection...');
+                // Blink Visual button to show inspectVisual is running
+                if (window.__triggerInspectorBlink) {
+                  window.__triggerInspectorBlink('visual');
+                }
+                const visualResult = window.tileStreamerRef.inspectVisual();
+                if (visualResult && visualResult.hasRedStripes) {
+                  console.log(`[Auto-Inspector] Initial: ${visualResult.stripePatternCount} regions with incomplete tiles`);
+                }
+              }
+            }, 3000); // Wait 3 seconds for initial tiles to render
+            return () => clearTimeout(timer);
+          }, [showDebug]);
           const [showTileBorders, setShowTileBorders] = useDebugPersistedState('tile_borders', false, showDebug);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
@@ -4225,6 +4730,7 @@ SETPOINT
               // Now set up new PDF
               setNumPages(pdf.numPages);
               pdfDocRef.current = pdf;
+              window.pdfDoc = pdf; // Expose globally for testing/debugging
               setCurrentFilename(filename);
 
               // Update page title - extract filename from URL if needed
@@ -4243,78 +4749,19 @@ SETPOINT
               // Update cache sizes based on PDF page count
               pageStreamer.updateCacheSizes(pdf.numPages, isIOSSafari);
 
+              // SIMPLIFIED INIT: Get page dimensions directly from PDF.js (no rendering needed)
+              // This replaces Phase 1-3 with immediate viewer init
+              const page1 = await pdf.getPage(1);
+              const viewport = page1.getViewport({ scale: CONFIG.PDF_RENDER_SCALE });
+              const pageWidth = viewport.width;
+              const pageHeight = viewport.height;
+
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Resolution Mode] Configured for: ${CONFIG.RESOLUTION_MODE}`);
+                console.log(`[Init] Page dimensions from PDF.js: ${pageWidth}x${pageHeight} (scale: ${CONFIG.PDF_RENDER_SCALE})`);
+                console.log(`[Init] Skipping Phase 1-3 - all rendering is on-demand`);
               }
 
-              // Phase 1: Render priority high-res pages FIRST
-              let pageWidth, pageHeight;
-              let priorityPages = [];
-              if (CONFIG.RESOLUTION_MODE === 'high' || CONFIG.RESOLUTION_MODE === 'dual') {
-                priorityPages = GridPattern.calculatePriorityPages(pdf.numPages);
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`Rendering ${priorityPages.length} priority pages for initial view (high-res)...`);
-                }
-                setLoadingStatus('Rendering initial view...');
-                await pageStreamer.renderBatch(
-                  priorityPages,
-                  'high',
-                  5,
-                  (current, total) => {
-                    setPagesLoaded(current);
-                    setLoadingStatus(`Rendering initial view (${current}/${priorityPages.length})...`);
-                  }
-                );
-
-                // Get page dimensions from first rendered high-res page
-                const firstHighRes = pageStreamer.highResPageCache.get('1_high') || pageStreamer.highResPageCache.get(`${priorityPages[0]}_high`);
-                if (firstHighRes) {
-                  pageWidth = firstHighRes.width;
-                  pageHeight = firstHighRes.height;
-                } else {
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`[Phase 1] No high-res pages cached (throttled?) - will get dimensions from low-res`);
-                  }
-                }
-              } else {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Resolution Mode] Skipping Phase 1 (high-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
-                }
-              }
-
-              // Phase 2: Get page dimensions only (minimal blocking)
-              // All low-res rendering deferred to background for fast viewer init
-              if (CONFIG.RESOLUTION_MODE === 'low' || CONFIG.RESOLUTION_MODE === 'dual') {
-                // Only render page 1 if needed to get dimensions
-                if (!pageWidth) {
-                  if (CONFIG.VERBOSE_LOGGING) {
-                    console.log(`[Phase 2] Rendering page 1 (low-res) to get dimensions...`);
-                  }
-                  await pageStreamer.renderPage(1, 'low');
-                  const firstLowRes = pageStreamer.lowResPageCache.get('1_low');
-                  if (firstLowRes) {
-                    pageWidth = firstLowRes.width;
-                    pageHeight = firstLowRes.height;
-                  } else {
-                    throw new Error('Failed to get page dimensions - page 1 render returned null');
-                  }
-                }
-
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Phase 2] Skipping initial viewport rendering - all low-res pages will render in background`);
-                }
-              } else {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Resolution Mode] Skipping Phase 2 (low-res) - mode is '${CONFIG.RESOLUTION_MODE}'`);
-                }
-              }
-
-              // Phase 3: SKIPPED - All low-res rendering moved to background after viewer init
-              if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Phase 3] Skipped - all low-res rendering deferred to background for fast viewer initialization`);
-              }
-
-              // Phase 4: Initialize viewer (user can interact immediately!)
+              // Initialize viewer immediately (user can interact right away!)
               setLoadingStatus('Initializing viewer...');
 
               // CRITICAL: Clear tile cache before initializing viewer
@@ -5277,9 +5724,89 @@ SETPOINT
               }
             });
 
+            // ============================================================
+            // Auto-Inspector: Simple interval-based visual inspection
+            // ============================================================
+            // Runs every 2 seconds. If red stripes detected, recreate TiledImage.
+            // Simple and reliable - no clever event-based triggers.
+            // ============================================================
+            let autoInspectorInterval = null;
+            let lastRecreationTime = 0;
+            const AUTO_INSPECT_INTERVAL_MS = 2000; // Check every 2 seconds
+            const RECREATION_COOLDOWN_MS = 3000;   // Don't recreate more than once per 3s
+
+            const runAutoInspector = async () => {
+              if (!window.tileStreamerRef || !window.osdViewerRef) return;
+
+              try {
+                const ts = window.tileStreamerRef;
+
+                // Quick check: Are all pages cached? If so, tiles should be complete
+                const lowResCached = ts.pageStreamer?.lowResPageCache?.size || 0;
+                const highResCached = ts.pageStreamer?.highResPageCache?.size || 0;
+                const totalPages = ts.numPages || 0;
+
+                // If all pages are cached (both resolutions), no need to heal
+                if (lowResCached >= totalPages && highResCached >= totalPages) {
+                  // All pages ready - skip visual inspection (avoids false positives)
+                  return;
+                }
+
+                // Blink Visual button
+                if (window.__triggerInspectorBlink) {
+                  window.__triggerInspectorBlink('visual');
+                }
+
+                const visualResult = window.tileStreamerRef.inspectVisual();
+
+                if (visualResult && visualResult.hasRedStripes) {
+                  // Check cooldown
+                  const now = Date.now();
+                  if (now - lastRecreationTime < RECREATION_COOLDOWN_MS) {
+                    if (CONFIG.VERBOSE_LOGGING) {
+                      console.log('[Auto-Inspector] Stripes detected but in cooldown');
+                    }
+                    return;
+                  }
+
+                  console.log(`[Auto-Inspector] ${visualResult.stripePatternCount} regions with stripes - HARD HEAL`);
+
+                  // Blink Heal button
+                  if (window.__triggerInspectorBlink) {
+                    window.__triggerInspectorBlink('heal');
+                  }
+
+                  // HEAL: Recreate TiledImage to force OSD to re-request tiles
+                  // Pages render naturally via background renderer - no need to force
+                  // Each recreation gives tiles another chance to render complete
+                  const tiledImage = window.osdViewerRef.world.getItemAt(0);
+
+                  if (tiledImage) {
+                    console.log('[Auto-Inspector] Recreating TiledImage');
+                    const tileSource = tiledImage.source;
+                    const currentBounds = window.osdViewerRef.viewport.getBounds();
+                    window.osdViewerRef.world.removeItem(tiledImage);
+                    window.osdViewerRef.addTiledImage({
+                      tileSource: tileSource,
+                      success: () => {
+                        window.osdViewerRef.viewport.fitBounds(currentBounds, true);
+                      }
+                    });
+                    lastRecreationTime = now;
+                  }
+                }
+              } catch (error) {
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.error('[Auto-Inspector] Error:', error);
+                }
+              }
+            };
+
+            // Auto-inspector DISABLED - rely on on-demand rendering and debounced reset instead
+            // autoInspectorInterval = setInterval(runAutoInspector, AUTO_INSPECT_INTERVAL_MS);
+
             // Resume background rendering after user interactions settle
             viewer.addHandler('animation-finish', () => {
-              // Resume after 500ms delay (debounce multiple quick interactions)
               setTimeout(() => {
                 if (!tileStreamer.backgroundQueue.isRunning) {
                   tileStreamer.resumeBackgroundRendering();
@@ -6122,6 +6649,84 @@ SETPOINT
                             Recreate
                           </button>
                         </div>
+                      </div>
+
+                      {/* Tile Inspector */}
+                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
+                        <div className="text-yellow-400 font-bold mb-2 text-[10px] sm:text-xs">Tile Inspector</div>
+                        <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
+                          <button
+                            onClick={async () => {
+                              if (!window.tileStreamerRef) return;
+                              triggerBlink('heal');
+                              setTileInspectorResult({ type: 'healing', timestamp: Date.now() });
+                              const report = await window.tileStreamerRef.healIncompleteTiles();
+                              setTileInspectorResult({ type: 'heal', report, timestamp: Date.now() });
+                            }}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-orange-600 hover:bg-orange-700 text-white ${healBlink ? 'blink-active' : ''}`}
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Heal
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (!window.tileStreamerRef) return;
+                              triggerBlink('visual');
+                              const result = window.tileStreamerRef.inspectVisual();
+                              setTileInspectorResult({ type: 'visual', result, timestamp: Date.now() });
+                            }}
+                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white ${visualBlink ? 'blink-active' : ''}`}
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Visual
+                          </button>
+                          <button
+                            onClick={() => setTileInspectorResult(null)}
+                            className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-gray-600 hover:bg-gray-700 text-white"
+                            style={{ pointerEvents: 'auto' }}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        {/* Results display */}
+                        {tileInspectorResult && (
+                          <div className="text-[9px] sm:text-[10px] bg-gray-800 p-2 rounded max-h-32 overflow-y-auto">
+                            {tileInspectorResult.type === 'healing' && (
+                              <div className="text-orange-300">Healing in progress...</div>
+                            )}
+                            {tileInspectorResult.type === 'heal' && (
+                              <div>
+                                <div className="text-orange-300 font-bold">Healing Results:</div>
+                                {tileInspectorResult.report?.skipped ? (
+                                  <div className="text-gray-400">Skipped - healing already in progress</div>
+                                ) : tileInspectorResult.report?.cooldown ? (
+                                  <div className="text-gray-400">Skipped - cooldown after recreation</div>
+                                ) : (
+                                  <div className="text-white">
+                                    Scanned: {tileInspectorResult.report?.scanned || 0} |
+                                    Incomplete: {tileInspectorResult.report?.incomplete?.length || 0} |
+                                    Healed: {tileInspectorResult.report?.healed?.length || 0} |
+                                    Failed: {tileInspectorResult.report?.failed?.length || 0}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {tileInspectorResult.type === 'visual' && (
+                              <div>
+                                <div className="text-purple-300 font-bold">Visual Inspection:</div>
+                                {tileInspectorResult.result?.error ? (
+                                  <div className="text-red-400">Error: {tileInspectorResult.result.error}</div>
+                                ) : (
+                                  <div className={tileInspectorResult.result?.hasRedStripes ? "text-red-400" : "text-green-400"}>
+                                    {tileInspectorResult.result?.hasRedStripes
+                                      ? `Incomplete tiles detected! (${tileInspectorResult.result.stripePatternCount} regions with stripe pattern)`
+                                      : `Clean - no stripe pattern found (${tileInspectorResult.result?.regionsChecked} regions checked)`}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Page Rendering & Cache */}
