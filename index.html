@@ -579,22 +579,22 @@ SETPOINT
               if (CONFIG.VERBOSE_LOGGING) {
                 console.log(`[PageCache] EVICT: ${firstKey} (size: ${this.cache.size}/${this.maxSize})`);
               }
-              // CRITICAL: Release canvas memory aggressively
-              const evictedCanvas = this.cache.get(firstKey);
-              if (evictedCanvas) {
-                // 1. Clear pixel data
+              // Clean up evicted value (may be canvas OR string data URL)
+              const evictedValue = this.cache.get(firstKey);
+              if (evictedValue && typeof evictedValue !== 'string') {
+                // Only try canvas cleanup if it's actually a canvas, not a string
                 try {
-                  const ctx = evictedCanvas.getContext('2d');
+                  const ctx = evictedValue.getContext('2d');
                   if (ctx) {
-                    ctx.clearRect(0, 0, evictedCanvas.width, evictedCanvas.height);
+                    ctx.clearRect(0, 0, evictedValue.width, evictedValue.height);
                   }
+                  evictedValue.width = 0;
+                  evictedValue.height = 0;
                 } catch (e) {
-                  // Ignore errors
+                  // Ignore errors - may not be a canvas
                 }
-                // 2. Release buffer by resizing to 0
-                evictedCanvas.width = 0;
-                evictedCanvas.height = 0;
               }
+              // String data URLs are just garbage collected naturally
               this.cache.delete(firstKey);
             }
             this.cache.set(key, value);
@@ -617,24 +617,24 @@ SETPOINT
           }
 
           clear() {
-            // CRITICAL: Release canvas pixel buffers aggressively before clearing cache
+            // Clean up cached values (may be canvas OR string data URL)
             let canvasCount = 0;
-            for (const canvas of this.cache.values()) {
-              if (canvas && canvas.width !== undefined) {
-                // 1. Clear pixel data
+            for (const value of this.cache.values()) {
+              // Only try canvas cleanup if it's actually a canvas, not a string
+              if (value && typeof value !== 'string' && value.width !== undefined) {
                 try {
-                  const ctx = canvas.getContext('2d');
+                  const ctx = value.getContext('2d');
                   if (ctx) {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.clearRect(0, 0, value.width, value.height);
                   }
+                  value.width = 0;
+                  value.height = 0;
+                  canvasCount++;
                 } catch (e) {
-                  // Ignore errors
+                  // Ignore errors - may not be a canvas
                 }
-                // 2. Release buffer by resizing to 0
-                canvas.width = 0;
-                canvas.height = 0;
-                canvasCount++;
               }
+              // String data URLs are just garbage collected naturally
             }
             if (CONFIG.VERBOSE_LOGGING && canvasCount > 0) {
               console.log(`[PageCache] Released ${canvasCount} canvas pixel buffers`);
@@ -4897,6 +4897,7 @@ SETPOINT
                   const currentBounds = window.viewer.viewport.getBounds();
 
                   // Remove old TiledImage from main viewer
+                  console.log('[TiledImage] Recreating after background render completion');
                   window.viewer.world.removeAll();
 
                   // Add fresh TiledImage with initial page coverage
