@@ -1,10 +1,19 @@
-test-report.html
-node_modules/
-playwright-report/
-test-results/
+# Deployment script (contains credentials/server info)
+deploy.sh
 
-# Test PDFs
+# PDF test files
 *.pdf
 
-# Except demo files
-!natgeo-1969-05.pdf
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node modules (if added in future)
+node_modules/
