@@ -294,7 +294,7 @@ git push -u origin branch-name
 2. **Adding build tools** (webpack, vite, etc.) - Increases complexity
 3. **Adding npm/package.json** - All deps via CDN
 4. **Server-side processing** - Client-side only
-5. **Automated tests** - Manual testing approach preferred
+
 6. **Creating new .md files** - Already have comprehensive docs
 7. **Force push to main/master** - Violates git safety
 

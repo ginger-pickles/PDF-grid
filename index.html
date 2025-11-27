@@ -548,9 +548,10 @@ SETPOINT
          * Similar to TileCache but for full-page canvases
          */
         class PageCache {
-          constructor(maxSize = CONFIG.PAGE_CACHE_MAX_SIZE) {
+          constructor(maxSize = CONFIG.PAGE_CACHE_MAX_SIZE, onEvict = null) {
             this.cache = new Map();
             this.maxSize = maxSize;
+            this.onEvict = onEvict; // Callback when key is evicted: onEvict(key)
           }
 
           get(key) {
@@ -598,6 +599,10 @@ SETPOINT
               }
               // String data URLs are just garbage collected naturally
               this.cache.delete(firstKey);
+              // Notify callback of eviction (for coordinated cleanup like decodedImageCache)
+              if (this.onEvict) {
+                this.onEvict(firstKey);
+              }
             }
             this.cache.set(key, value);
             if (CONFIG.VERBOSE_LOGGING) {
@@ -657,6 +662,10 @@ SETPOINT
             while (this.cache.size > this.maxSize) {
               const firstKey = this.cache.keys().next().value;
               this.cache.delete(firstKey);
+              // Notify callback of eviction (for coordinated cleanup like decodedImageCache)
+              if (this.onEvict) {
+                this.onEvict(firstKey);
+              }
             }
           }
         }
@@ -708,24 +717,13 @@ SETPOINT
 
             if (numPages <= dynamicMax) {
               // PDF fits in memory budget: Cache all pages for complete minimap tiles
-              // IMPORTANT: PageCache evicts at 95% capacity (line 538), so we need to allocate
+              // IMPORTANT: PageCache evicts at 95% capacity (line 602), so we need to allocate
               // extra capacity to ensure we can actually cache all numPages
-              // However, only apply this correction for small PDFs to avoid memory pressure on heavy PDFs
-              if (numPages <= 30) {
-                // Small PDFs: Apply 95% correction for complete coverage
-                lowResSize = Math.ceil(numPages / 0.95);
-              } else {
-                // Medium PDFs: Use exact count to maintain memory safety
-                // (95% threshold means we'll cache ~95% of pages, which is acceptable)
-                lowResSize = numPages;
-              }
+              // Apply 95% correction consistently for ALL PDFs to ensure complete coverage
+              lowResSize = Math.ceil(numPages / 0.95);
               if (CONFIG.VERBOSE_LOGGING) {
-                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching ${numPages <= 30 ? 'all' : 'most'} pages for complete L0/L1/L2 tiles`);
-                if (numPages <= 30) {
-                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ${numPages} pages at 95% eviction threshold)`);
-                } else {
-                  console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ~${Math.floor(numPages * 0.95)} pages at 95% threshold)`);
-                }
+                console.log(`[Cache Sizing] PDF (${numPages} pages) - caching all pages for complete navigator minimap`);
+                console.log(`[Cache Sizing] Allocated capacity: ${lowResSize} pages (effective: ${numPages} pages at 95% eviction threshold)`);
                 console.log(`[Cache Sizing] Device memory: ${deviceMemoryGB}GB, low-res budget: ${lowResMemoryBudgetMB.toFixed(0)}MB, max pages: ${dynamicMax}`);
               }
             } else {
@@ -788,13 +786,57 @@ SETPOINT
         class PageStreamer {
           constructor(pdfDoc) {
             this.pdfDoc = pdfDoc;
+            // Image decode cache (decoded Images ready for drawImage)
+            // CRITICAL: Must be defined BEFORE PageCache instances since onEvict callback references it
+            this.decodedImageCache = new Map(); // Key: "pageNum_resolution" → Image
+
+            // Callback to evict decoded images when JPEG is evicted from PageCache
+            // This prevents unbounded memory growth in decodedImageCache
+            const onPageEvict = (key) => {
+              if (this.decodedImageCache.has(key)) {
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[PageStreamer] EVICT decoded image: ${key}`);
+                }
+                this.decodedImageCache.delete(key);
+              }
+            };
+
             // Separate caches for low-res and high-res to prevent eviction conflicts
             // NOW STORES: JPEG data URLs instead of raw canvases (150x memory reduction)
-            this.lowResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_LOW);
-            this.highResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH);
+            this.lowResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_LOW, onPageEvict);
+            this.highResPageCache = new PageCache(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH, onPageEvict);
             this.renderingInProgress = new Map(); // Key: "pageNum_resolution" → Promise
-            // Image decode cache (decoded Images ready for drawImage)
-            this.decodedImageCache = new Map(); // Key: "pageNum_resolution" → Image
+
+            // Semaphore-based concurrency limiters (avoids hardcoded delays)
+            this.lowResSemaphore = { active: 0, waiting: [] };
+            this.highResSemaphore = { active: 0, waiting: [] };
+          }
+
+          /**
+           * Acquire semaphore slot (async - waits for availability)
+           */
+          async _acquireSemaphore(semaphore, maxConcurrent) {
+            if (semaphore.active < maxConcurrent) {
+              semaphore.active++;
+              return;
+            }
+
+            // Wait for slot to become available
+            await new Promise(resolve => {
+              semaphore.waiting.push(resolve);
+            });
+          }
+
+          /**
+           * Release semaphore slot (wakes up next waiter if any)
+           */
+          _releaseSemaphore(semaphore) {
+            if (semaphore.waiting.length > 0) {
+              const resolve = semaphore.waiting.shift();
+              resolve(); // Wake up next waiter
+            } else {
+              semaphore.active--;
+            }
           }
 
           /**
@@ -849,43 +891,16 @@ SETPOINT
               return await inProgress;
             }
 
-            // CRITICAL THROTTLE: Limit concurrent high-res renders to prevent memory spikes
-            // High-res pages can be 100MB+ each - rendering 50 in parallel = 5GB spike!
-            const MAX_CONCURRENT_HIGHRES = 5; // Max 5 × 100MB = 500MB in-flight
-            if (resolution === 'high') {
-              // Count how many high-res pages are currently rendering
-              let highResInProgress = 0;
-              for (const [k, v] of this.renderingInProgress.entries()) {
-                if (k.endsWith('_high')) {
-                  highResInProgress++;
-                }
-              }
+            // CRITICAL THROTTLE: Limit concurrent renders to prevent memory spikes
+            // Uses semaphore pattern (async queue) instead of hardcoded delays
+            const MAX_CONCURRENT_LOWRES = 10;  // Max 10 low-res pages rendering simultaneously
+            const MAX_CONCURRENT_HIGHRES = 5;  // Max 5 × 100MB = 500MB in-flight
 
-              // If at limit, skip this render (tile will use fallback, retry later)
-              if (highResInProgress >= MAX_CONCURRENT_HIGHRES) {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[PageStreamer] THROTTLE: Skipping page ${pageNum} high-res (${highResInProgress} already rendering)`);
-                }
-                // Return existing low-res as fallback if available (decode JPEG)
-                const lowResKey = this._getCacheKey(pageNum, 'low');
-                const lowResDataUrl = this.lowResPageCache.get(lowResKey);
-                if (lowResDataUrl) {
-                  // Check decoded cache first
-                  const decodedImg = this.decodedImageCache.get(lowResKey);
-                  if (decodedImg) {
-                    return decodedImg;
-                  }
-                  // Decode JPEG
-                  const img = new Image();
-                  img.src = lowResDataUrl;
-                  await img.decode();
-                  this.decodedImageCache.set(lowResKey, img);
-                  return img;
-                }
-                // No fallback available - return null (tile will show black)
-                return null;
-              }
-            }
+            // Acquire semaphore slot (waits asynchronously if at limit)
+            const semaphore = resolution === 'low' ? this.lowResSemaphore : this.highResSemaphore;
+            const maxConcurrent = resolution === 'low' ? MAX_CONCURRENT_LOWRES : MAX_CONCURRENT_HIGHRES;
+
+            await this._acquireSemaphore(semaphore, maxConcurrent);
 
             // Start rendering - MUST add to map BEFORE starting async work
             // to avoid race condition where fast renders complete before map.set()
@@ -896,11 +911,25 @@ SETPOINT
                 const page = await this.pdfDoc.getPage(pageNum);
                 const canvas = await PDFUtils.renderPageToCanvas(page, scale);
 
+                // CRITICAL: Cleanup page object to free PDF.js internal structures
+                // Without this, PDF.js keeps parsed operators, fonts, images in memory
+                // For high-res PDFs, this can be 30+ MB per page = 6 GB for 194 pages!
+                if (page.cleanup) {
+                  page.cleanup();
+                }
+
                 // JPEG compression: Convert canvas to data URL (150x memory reduction)
                 // Raw canvas: 2448×3168×4 bytes = 31MB
                 // JPEG data URL: ~200-500KB
                 const jpegQuality = CONFIG.PAGE_CACHE_JPEG_QUALITY || 0.92;
                 const dataUrl = canvas.toDataURL('image/jpeg', jpegQuality);
+
+                // CRITICAL: Clear canvas to free GPU memory immediately
+                // Without this, canvas stays in memory until GC runs
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                canvas.width = 0;
+                canvas.height = 0;
 
                 // Store compressed data URL instead of raw canvas
                 pageCache.set(key, dataUrl);
@@ -931,9 +960,10 @@ SETPOINT
                 console.error(`[PageStreamer] ERROR rendering page ${pageNum} at ${resolution}:`, error);
                 throw error;
               } finally {
-                // CRITICAL: Always cleanup renderingInProgress
+                // CRITICAL: Always cleanup renderingInProgress and release semaphore
                 // This must run even if rendering succeeds, fails, or is cancelled
                 this.renderingInProgress.delete(key);
+                this._releaseSemaphore(semaphore);
               }
             })();
 
@@ -978,7 +1008,7 @@ SETPOINT
                 onProgress(Math.min(i + batchSize, pageNums.length), pageNums.length);
               }
 
-              // Yield to browser
+              // Yield to browser (semaphore throttle naturally paces rendering)
               await new Promise(resolve => setTimeout(resolve, 0));
             }
           }
@@ -4527,7 +4557,7 @@ SETPOINT
                   await pageStreamer.renderBatch(
                     pagesToRender,
                     'low',
-                    5,  // Reduced from 20 to prevent overwhelming PDF.js
+                    5,  // Batch size 5, throttled to max 10 concurrent renders (see PageStreamer.renderPage)
                     (current, total) => {
                       // Update progress overlay
                       const progressText = document.getElementById('nav-progress-text');
