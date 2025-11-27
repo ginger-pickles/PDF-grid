@@ -169,8 +169,9 @@ test.describe('Bidirectional Rendering Strategy', () => {
     }
   });
 
-  test('CRITICAL: should have no incomplete tiles at L2 after background rendering completes', async ({ page }) => {
+  test('CRITICAL: should have no incomplete tiles at low-res levels after background rendering completes', async ({ page }) => {
     // This is the KEY test that proves cache thrashing is solved
+    // Uses dynamic low-res level detection for fast, comprehensive testing
 
     // Upload a PDF (demo.pdf for basic test, would use 126-page PDF for full test)
     const pdfPath = path.resolve(__dirname, '../demo/demo-1.pdf');
@@ -185,30 +186,18 @@ test.describe('Bidirectional Rendering Strategy', () => {
 
     console.log('Background rendering reached level:', finalStatus.currentLevel);
 
-    // Give it a moment to finish any in-progress L2 tiles
+    // Give it a moment to finish any in-progress tiles
     await page.waitForTimeout(2000);
 
-    // Zoom out to L2 to load L2 tiles into viewport
-    await page.evaluate(() => {
-      // Calculate zoom level for L2
-      const viewer = window.osdViewerRef;
-      if (!viewer) return;
+    // Verify no incomplete tiles at low-res levels (dynamic)
+    // This checks viewport + all low-res levels automatically
+    const verification = await verifyNoIncompleteTiles(page); // defaults to 'lowres'
 
-      // L2 is typically 1/4 of the grid width
-      const targetZoom = 0.25;
-      viewer.viewport.zoomTo(targetZoom, null, true);
-    });
+    console.log('Low-res tile verification:', verification);
 
-    await page.waitForTimeout(1000);
-
-    // Verify no incomplete tiles at L2
-    const verification = await verifyNoIncompleteTiles(page, 2);
-
-    console.log('L2 tile verification:', verification);
-
-    // CRITICAL ASSERTION: No incomplete tiles at L2
+    // CRITICAL ASSERTION: No incomplete tiles at low-res levels
     expect(verification.passed).toBe(true);
-    expect(verification.issues.length).toBe(0);
+    expect(verification.count).toBe(0);
 
     if (!verification.passed) {
       console.error('FAILED: Found incomplete tiles at L2:', verification.issues);

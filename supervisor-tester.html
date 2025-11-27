@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  SUPERVISOR TESTER
+================================================================================
+
+SETPOINT
+
+  PURPOSE: User-facing test interface for validating supervisor.html
+  No more than 1000 lines of code
+
+  FUNCTIONALITY:
+  - Executes via server API
+  - Displays real-time test output and results
+  - Persists latest results to test-results/supervisor-tester/
+  - Provides pass/fail summary
+
+  API ENDPOINTS USED:
+  - POST /api/run-supervisor-test - Execute Playwright test
+  - POST /api/save-supervisor-results - Save test results
+  - GET /api/latest-supervisor-results - Load previous results
+
+
+
+  RELATED FILES:
+  - tests/supervisor-setpoint.spec.js - Playwright test implementation
+  - supervisor.html - System under test
+  - server.js - Express API server
+
+  Created: 2025-11-22
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor Tester - SETPOINT Loading Validation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .status-pass { color: #10b981; font-weight: bold; }
+        .status-fail { color: #ef4444; font-weight: bold; }
+        .status-running { color: #f59e0b; font-weight: bold; }
+        .log-entry {
+            padding: 0.25rem 0.5rem;
+            border-left: 3px solid #374151;
+            margin-bottom: 0.25rem;
+        }
+        .log-pass { border-left-color: #10b981; background: #064e3b20; }
+        .log-fail { border-left-color: #ef4444; background: #7f1d1d20; }
+        .log-info { border-left-color: #3b82f6; background: #1e3a8a20; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div class="container mx-auto px-4 py-6 max-w-6xl">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold text-blue-400">Supervisor Tester</h1>
+            <p class="text-gray-400">Validate SETPOINT.md loading and display in supervisor.html</p>
+        </header>
+
+        <!-- Test Controls -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-lg border border-gray-700">
+            <h2 class="text-xl font-semibold mb-4 text-gray-100">Test Execution</h2>
+            <div class="flex gap-3 mb-4">
+                <button id="runTestBtn" onclick="TestRunner.runTest()"
+                        class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition">
+                    ▶ Run SETPOINT Test
+                </button>
+                <button id="stopTestBtn" onclick="TestRunner.stopTest()"
+                        class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium hidden transition">
+                    ⏹ Stop Test
+                </button>
+                <button onclick="TestRunner.loadLatestResults()"
+                        class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition">
+                    🔄 Load Latest Results
+                </button>
+            </div>
+
+            <!-- Test Status -->
+            <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <span class="text-sm text-gray-400">Status:</span>
+                        <span id="testStatus" class="ml-2 text-lg">Ready</span>
+                    </div>
+                    <div>
+                        <span class="text-sm text-gray-400">Duration:</span>
+                        <span id="testDuration" class="ml-2 text-lg">-</span>
+                    </div>
+                    <div>
+                        <span class="text-sm text-gray-400">Last Run:</span>
+                        <span id="testTimestamp" class="ml-2 text-lg">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Test Results Summary -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-lg border border-gray-700">
+            <h2 class="text-xl font-semibold mb-4 text-gray-100">Test Results Summary</h2>
+            <div id="resultsSummary" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">SETPOINT.md Fetch</div>
+                    <div id="fetchStatus" class="text-lg mt-1">-</div>
+                </div>
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">Description Loaded</div>
+                    <div id="descriptionStatus" class="text-lg mt-1">-</div>
+                </div>
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">Requirements Parsed</div>
+                    <div id="requirementsStatus" class="text-lg mt-1">-</div>
+                </div>
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">Textarea Populated</div>
+                    <div id="textareaStatus" class="text-lg mt-1">-</div>
+                </div>
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">Console Errors</div>
+                    <div id="consoleStatus" class="text-lg mt-1">-</div>
+                </div>
+                <div class="bg-gray-900 rounded p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400">Overall Result</div>
+                    <div id="overallStatus" class="text-lg mt-1">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Test Log -->
+        <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-lg border border-gray-700">
+            <h2 class="text-xl font-semibold mb-4 text-gray-100">Test Log</h2>
+            <div id="testLog" class="bg-gray-900 rounded p-4 font-mono text-sm max-h-96 overflow-y-auto border border-gray-600">
+                <p class="text-gray-400">No test log available. Run a test to see output.</p>
+            </div>
+        </div>
+
+        <!-- Raw Output -->
+        <div class="bg-gray-800 rounded-lg p-6 shadow-lg border border-gray-700">
+            <h2 class="text-xl font-semibold mb-4 text-gray-100">Raw Test Output</h2>
+            <div id="rawOutput" class="bg-gray-900 rounded p-4 font-mono text-xs max-h-96 overflow-y-auto border border-gray-600">
+                <p class="text-gray-400">No raw output available.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TestRunner = {
+            API_BASE: 'http://localhost:8000/api',
+            eventSource: null,
+            startTime: null,
+
+            async runTest() {
+                const runBtn = document.getElementById('runTestBtn');
+                const stopBtn = document.getElementById('stopTestBtn');
+                const statusEl = document.getElementById('testStatus');
+                const logEl = document.getElementById('testLog');
+                const rawEl = document.getElementById('rawOutput');
+
+                // Clear previous results
+                this.clearResults();
+
+                // Update UI
+                runBtn.disabled = true;
+                runBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.remove('hidden');
+                statusEl.textContent = 'Running...';
+                statusEl.className = 'ml-2 text-lg status-running';
+
+                this.startTime = Date.now();
+                this.updateDuration();
+
+                logEl.innerHTML = '<div class="log-entry log-info">Starting Playwright test: tests/supervisor-setpoint.spec.js</div>';
+                rawEl.innerHTML = '';
+
+                try {
+                    // Run the test via server API
+                    const response = await fetch(`${this.API_BASE}/run-supervisor-test`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop(); // Keep incomplete line in buffer
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+
+                            try {
+                                const data = JSON.parse(line);
+                                this.handleTestOutput(data);
+                            } catch (e) {
+                                // Raw output line
+                                rawEl.innerHTML += `<div>${this.escapeHtml(line)}</div>`;
+                            }
+                        }
+
+                        // Auto-scroll
+                        logEl.scrollTop = logEl.scrollHeight;
+                        rawEl.scrollTop = rawEl.scrollHeight;
+                    }
+
+                } catch (error) {
+                    console.error('[TestRunner] Error:', error);
+                    logEl.innerHTML += `<div class="log-entry log-fail">✗ Error: ${error.message}</div>`;
+                    statusEl.textContent = 'Error';
+                    statusEl.className = 'ml-2 text-lg status-fail';
+                } finally {
+                    this.testComplete();
+                }
+            },
+
+            handleTestOutput(data) {
+                const logEl = document.getElementById('testLog');
+                const rawEl = document.getElementById('rawOutput');
+                const statusEl = document.getElementById('testStatus');
+
+                if (data.type === 'stdout') {
+                    rawEl.innerHTML += `<div>${this.escapeHtml(data.message)}</div>`;
+
+                    // Parse test output for summary
+                    if (data.message.includes('✓ SETPOINT.md fetched successfully')) {
+                        document.getElementById('fetchStatus').innerHTML = '<span class="status-pass">✓ Pass</span>';
+                        logEl.innerHTML += '<div class="log-entry log-pass">✓ SETPOINT.md fetched successfully</div>';
+                    }
+                    if (data.message.includes('✓ Description loaded from file')) {
+                        document.getElementById('descriptionStatus').innerHTML = '<span class="status-pass">✓ Pass</span>';
+                        logEl.innerHTML += '<div class="log-entry log-pass">✓ Description loaded from file</div>';
+                    }
+                    if (data.message.includes('✓ All 7 requirements displayed')) {
+                        document.getElementById('requirementsStatus').innerHTML = '<span class="status-pass">✓ Pass</span>';
+                        logEl.innerHTML += '<div class="log-entry log-pass">✓ All 7 requirements displayed correctly</div>';
+                    }
+                    if (data.message.includes('✓ Textarea populated')) {
+                        const match = data.message.match(/(\d+) characters/);
+                        const chars = match ? match[1] : '?';
+                        document.getElementById('textareaStatus').innerHTML = `<span class="status-pass">✓ ${chars} chars</span>`;
+                        logEl.innerHTML += `<div class="log-entry log-pass">✓ Textarea populated with ${chars} characters</div>`;
+                    }
+                    if (data.message.includes('✓ No unexpected console errors')) {
+                        document.getElementById('consoleStatus').innerHTML = '<span class="status-pass">✓ No errors</span>';
+                        logEl.innerHTML += '<div class="log-entry log-pass">✓ No unexpected console errors</div>';
+                    }
+
+                } else if (data.type === 'stderr') {
+                    rawEl.innerHTML += `<div class="text-red-400">${this.escapeHtml(data.message)}</div>`;
+
+                } else if (data.type === 'complete') {
+                    const duration = ((Date.now() - this.startTime) / 1000).toFixed(1);
+                    document.getElementById('testDuration').textContent = `${duration}s`;
+                    document.getElementById('testTimestamp').textContent = new Date().toLocaleTimeString();
+
+                    if (data.exitCode === 0) {
+                        statusEl.textContent = 'Passed';
+                        statusEl.className = 'ml-2 text-lg status-pass';
+                        document.getElementById('overallStatus').innerHTML = '<span class="status-pass">✓ All Tests Passed</span>';
+                        logEl.innerHTML += `<div class="log-entry log-pass">✓ Test completed successfully in ${duration}s</div>`;
+                    } else {
+                        statusEl.textContent = 'Failed';
+                        statusEl.className = 'ml-2 text-lg status-fail';
+                        document.getElementById('overallStatus').innerHTML = '<span class="status-fail">✗ Test Failed</span>';
+                        logEl.innerHTML += `<div class="log-entry log-fail">✗ Test failed (exit code: ${data.exitCode})</div>`;
+                    }
+
+                    // Save results
+                    this.saveResults({
+                        timestamp: new Date().toISOString(),
+                        duration: duration,
+                        exitCode: data.exitCode,
+                        status: data.exitCode === 0 ? 'passed' : 'failed'
+                    });
+
+                } else if (data.type === 'error') {
+                    statusEl.textContent = 'Error';
+                    statusEl.className = 'ml-2 text-lg status-fail';
+                    logEl.innerHTML += `<div class="log-entry log-fail">✗ ${data.message}</div>`;
+                }
+            },
+
+            stopTest() {
+                // Implementation for stopping test if needed
+                console.log('[TestRunner] Stop requested');
+                this.testComplete();
+            },
+
+            testComplete() {
+                const runBtn = document.getElementById('runTestBtn');
+                const stopBtn = document.getElementById('stopTestBtn');
+
+                runBtn.disabled = false;
+                runBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                stopBtn.classList.add('hidden');
+            },
+
+            updateDuration() {
+                if (!this.startTime) return;
+
+                const duration = ((Date.now() - this.startTime) / 1000).toFixed(1);
+                document.getElementById('testDuration').textContent = `${duration}s`;
+
+                setTimeout(() => this.updateDuration(), 100);
+            },
+
+            clearResults() {
+                document.getElementById('fetchStatus').textContent = '-';
+                document.getElementById('descriptionStatus').textContent = '-';
+                document.getElementById('requirementsStatus').textContent = '-';
+                document.getElementById('textareaStatus').textContent = '-';
+                document.getElementById('consoleStatus').textContent = '-';
+                document.getElementById('overallStatus').textContent = '-';
+                document.getElementById('testDuration').textContent = '-';
+            },
+
+            async saveResults(results) {
+                try {
+                    const response = await fetch(`${this.API_BASE}/save-supervisor-results`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(results)
+                    });
+
+                    if (response.ok) {
+                        console.log('[TestRunner] Results saved successfully');
+                    }
+                } catch (error) {
+                    console.error('[TestRunner] Error saving results:', error);
+                }
+            },
+
+            async loadLatestResults() {
+                try {
+                    const response = await fetch(`${this.API_BASE}/latest-supervisor-results`);
+                    if (!response.ok) throw new Error('No results found');
+
+                    const results = await response.json();
+
+                    document.getElementById('testStatus').textContent = results.status === 'passed' ? 'Passed' : 'Failed';
+                    document.getElementById('testStatus').className = results.status === 'passed'
+                        ? 'ml-2 text-lg status-pass'
+                        : 'ml-2 text-lg status-fail';
+                    document.getElementById('testDuration').textContent = `${results.duration}s`;
+                    document.getElementById('testTimestamp').textContent = new Date(results.timestamp).toLocaleTimeString();
+
+                    const logEl = document.getElementById('testLog');
+                    logEl.innerHTML = `<div class="log-entry log-info">Loaded previous test results from ${new Date(results.timestamp).toLocaleString()}</div>`;
+
+                } catch (error) {
+                    console.error('[TestRunner] Error loading results:', error);
+                    document.getElementById('testLog').innerHTML = `<div class="log-entry log-fail">No previous results found</div>`;
+                }
+            },
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        };
+
+        // Load latest results on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            TestRunner.loadLatestResults();
+        });
+    </script>
+</body>
+</html>
