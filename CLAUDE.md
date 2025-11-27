@@ -35,6 +35,21 @@ Babel Standalone        → In-browser JSX transpilation
 
 All dependencies loaded via CDN - no npm/package.json.
 
+### 3. Core Design Requirement: All Pages Visible
+
+**The app MUST render all PDF pages simultaneously** (at least at low resolution) to enable the core use case: discovering structural patterns across entire documents. This is non-negotiable.
+
+**Memory implications:**
+- PDF.js decodes embedded images at **native resolution** regardless of output scale
+- A 300 DPI scanned magazine page = ~33 MB decoded per page
+- For large PDFs (100+ pages), this can exceed 6 GB of memory
+
+**Mitigation strategy:**
+- Call `page.cleanup()` after each render to release PDF.js internal decoded data
+- Use aggressive page cache eviction
+- Low-res minimap tiles use 0.3x scale (small canvas output)
+- High-res tiles render on-demand only when user zooms
+
 ## File Structure
 
 ```
