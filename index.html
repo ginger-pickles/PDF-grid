@@ -146,7 +146,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.10.3',
+          VERSION: '1.10.4',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -396,145 +396,6 @@ SETPOINT
             return canvas;
           },
 
-          /**
-           * Render all pages of a PDF document
-           */
-          async renderAllPages(pdf, onProgress, cancelCheck) {
-            const pageCanvases = [];
-
-            for (let i = 1; i <= pdf.numPages; i++) {
-              // Check if loading was cancelled
-              if (cancelCheck && cancelCheck()) {
-                throw new Error('Loading cancelled by user');
-              }
-
-              const page = await pdf.getPage(i);
-              const canvas = await this.renderPageToCanvas(page);
-              pageCanvases.push(canvas);
-
-              if (onProgress) {
-                onProgress(i, pdf.numPages);
-              }
-
-              // Yield to browser occasionally
-              if (i % CONFIG.RENDER_BATCH_SIZE === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-
-            return pageCanvases;
-          },
-
-          /**
-           * Generate bit-reversal ordering for scattered rendering
-           * This creates a sequence that fills a range evenly rather than sequentially
-           * Example for 8 items: [0, 4, 2, 6, 1, 5, 3, 7]
-           * Gives better perceived progress for progressive minimap population
-           */
-          bitReversalOrder(n) {
-            const order = [];
-            const bits = Math.ceil(Math.log2(n));
-
-            for (let i = 0; i < n; i++) {
-              // Reverse the bits of i
-              let reversed = 0;
-              let num = i;
-              for (let b = 0; b < bits; b++) {
-                reversed = (reversed << 1) | (num & 1);
-                num >>= 1;
-              }
-              order.push(reversed);
-            }
-
-            // Sort by reversed value, then map back to 1-indexed page numbers
-            return order
-              .map((rev, idx) => ({ rev, page: idx + 1 }))
-              .sort((a, b) => a.rev - b.rev)
-              .map(item => item.page)
-              .filter(page => page <= n); // Filter out any extras from power-of-2 padding
-          },
-
-          /**
-           * Render pages in dual resolution for dual viewport architecture
-           * - Low-res tier (0.3x scale) for navigator/minimap - scattered order
-           * - High-res tier (1.0x scale) for main viewer - viewport priority
-           *
-           * @param {Object} pdf - PDF.js document object
-           * @param {Array<number>} priorityPages - Page numbers to render in high-res first
-           * @param {Function} onProgress - Progress callback (current, total, phase)
-           * @param {Function} cancelCheck - Check if rendering should be cancelled
-           * @returns {Object} { lowResCanvases, highResCanvases }
-           */
-          async renderDualResolution(pdf, priorityPages = [], onProgress, cancelCheck) {
-            const totalPages = pdf.numPages;
-            const lowResCanvases = new Array(totalPages);
-            const highResCanvases = new Array(totalPages);
-
-            // Phase 1: High-res for priority pages (initial viewport)
-            for (const pageNum of priorityPages) {
-              if (cancelCheck && cancelCheck()) {
-                throw new Error('Loading cancelled by user');
-              }
-
-              const page = await pdf.getPage(pageNum);
-              highResCanvases[pageNum - 1] = await this.renderPageToCanvas(page, CONFIG.PDF_RENDER_SCALE);
-
-              if (onProgress) {
-                onProgress(pageNum, totalPages, 'high-res-priority');
-              }
-
-              // Yield to browser
-              await new Promise(resolve => setTimeout(resolve, 0));
-            }
-
-            // Phase 2: Low-res for all pages (minimap coverage) - scattered order
-            const scatteredOrder = this.bitReversalOrder(totalPages);
-            for (const pageNum of scatteredOrder) {
-              if (cancelCheck && cancelCheck()) {
-                throw new Error('Loading cancelled by user');
-              }
-
-              const page = await pdf.getPage(pageNum);
-              lowResCanvases[pageNum - 1] = await this.renderPageToCanvas(page, CONFIG.PDF_LOWRES_SCALE);
-
-              if (onProgress) {
-                onProgress(pageNum, totalPages, 'low-res-minimap');
-              }
-
-              // Yield to browser occasionally
-              if (pageNum % CONFIG.RENDER_BATCH_SIZE === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-
-            // Phase 3: High-res for remaining pages (on-demand will handle this later)
-            // For now, we pre-render all high-res pages in sequential order
-            // TODO: In future, make this fully on-demand based on viewport
-            for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-              if (cancelCheck && cancelCheck()) {
-                throw new Error('Loading cancelled by user');
-              }
-
-              // Skip if already rendered in phase 1
-              if (highResCanvases[pageNum - 1]) {
-                continue;
-              }
-
-              const page = await pdf.getPage(pageNum);
-              highResCanvases[pageNum - 1] = await this.renderPageToCanvas(page, CONFIG.PDF_RENDER_SCALE);
-
-              if (onProgress) {
-                onProgress(pageNum, totalPages, 'high-res-remaining');
-              }
-
-              // Yield to browser occasionally
-              if (pageNum % CONFIG.RENDER_BATCH_SIZE === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-              }
-            }
-
-            return { lowResCanvases, highResCanvases };
-          }
         };
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -1053,35 +914,6 @@ SETPOINT
             }
 
             return null;
-          }
-
-          /**
-           * Ensure a page is fully decoded and ready for drawImage()
-           * Returns a Promise that resolves when the Image is ready
-           * This is the elegant async replacement for setTimeout delays
-           */
-          async ensureDecoded(pageNum, resolution) {
-            const key = this._getCacheKey(pageNum, resolution);
-
-            // Already decoded? Return immediately
-            const decodedImg = this.decodedImageCache.get(key);
-            if (decodedImg) {
-              return decodedImg;
-            }
-
-            // JPEG cached but not decoded? Decode now
-            const pageCache = this._getPageCache(resolution);
-            const dataUrl = pageCache.get(key);
-            if (dataUrl) {
-              const img = new Image();
-              img.src = dataUrl;
-              await img.decode();
-              this.decodedImageCache.set(key, img);
-              return img;
-            }
-
-            // Not cached at all - render (which also decodes)
-            return await this.renderPage(pageNum, resolution);
           }
 
           /**
@@ -2212,10 +2044,11 @@ SETPOINT
                 return;
               }
 
-              // Check if we've reached the max level
-              if (queue.currentLevel > this.tileStreamer.maxLevel) {
+              // Check if we've reached the minimap max level (stop before high-res levels to prevent memory explosion)
+              // High-res tiles will render on-demand when user zooms in
+              if (queue.currentLevel > this.tileStreamer.minimapMaxLevel) {
                 if (CONFIG.VERBOSE_LOGGING) {
-                  console.log('[Background Rendering] Completed all levels (L0 to L' + this.tileStreamer.maxLevel + ')');
+                  console.log('[Background Rendering] Completed low-res levels (L0 to L' + this.tileStreamer.minimapMaxLevel + ') - high-res tiles render on-demand');
                 }
                 queue.isRunning = false;
                 return;
