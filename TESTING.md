@@ -1,5 +1,15 @@
 # Automated Testing Guide
 
+## Effectivity
+
+## Requirements
+Tests shall use visual feedback to detect correct operation. Traceability: Eyes & Ears principle.
+Tests shall use automated measurement and data collection, not manual guess-and-check. Traceability: Mechanisation of effort.
+Tests shall not involve user console inspection. Traceability: Mechanisation of effort. User specification of requirements, not implementation.
+Tests shall retain test results for inspection in test-results folder until overwritten by next test. Traceability: Review of test results.
+
+
+
 ## Overview
 
 This project uses [Playwright](https://playwright.dev) for automated memory and performance testing. The tests monitor cache behavior, memory usage, and detect potential memory leaks during zoom operations.
