@@ -81,15 +81,46 @@ npm run test:clean:all
 
 ```
 tests/
+├── console-errors.spec.js              # Console error detection
+├── viewport-persistence.spec.js        # Viewport state persistence across page refreshes
+├── bidirectional-rendering.spec.js     # Bidirectional rendering tests
 ├── memory/
-│   └── zoom-operations.spec.js  # Memory monitoring during zoom
-└── fixtures/                     # Test data and helpers (future)
+│   └── zoom-operations.spec.js        # Memory monitoring during zoom
+└── fixtures/                           # Test data and helpers (future)
 ```
 
 ## What the Tests Check
 
+### Console Error Tests (console-errors.spec.js)
+
+Verifies that loading a PDF produces zero console errors:
+1. **Error Detection** - Captures all console errors and warnings during PDF load
+2. **Page Error Detection** - Catches JavaScript errors thrown during page execution
+3. **Background Rendering** - Confirms background tile rendering completes without errors
+4. **Zero Error Verification** - Expects zero console errors and zero page errors
+
+### Viewport Persistence Tests (viewport-persistence.spec.js)
+
+Tests viewport state persistence across page refreshes:
+1. **Persistence Across Refresh** - Viewport (zoom/pan) saved to localStorage and restored on reload
+2. **Different PDF Reset** - Viewport reset when loading a different PDF
+3. **Zoom Event Saves** - Viewport changes via zoom events trigger saves
+4. **Pan Event Saves** - Viewport changes via pan events trigger saves
+5. **Debouncing** - Rapid viewport changes are debounced (500ms delay)
+6. **Filename Tracking** - localStorage tracks which PDF the viewport belongs to
+
+### Bidirectional Rendering Tests (bidirectional-rendering.spec.js)
+
+Tests progressive bidirectional rendering from L0→L5:
+1. **L0-Down Rendering** - Low-res tiles (L0, L1) rendered first for quick preview
+2. **High-Res Rendering** - High-res tiles (L2-L5) rendered progressively
+3. **Page Batching** - Tiles grouped by pages for efficient cache usage
+4. **Render Completion** - All tiles rendered without errors or timeouts
+5. **Cache Population** - Pages cached at both low-res and high-res
+
 ### Memory Tests (zoom-operations.spec.js)
 
+Monitors memory and cache behavior during zoom operations:
 1. **PageCache Population** - Verifies pages are cached after initial load
 2. **Memory Estimates** - Ensures memory usage stays under reasonable limits
 3. **PageCache Growth** - Confirms cache is populated with separate low-res and high-res caches
