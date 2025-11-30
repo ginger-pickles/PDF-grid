@@ -38,6 +38,8 @@ Debug and fix iPadOS Safari download behavior (requires automated testing) - Dow
 
 ## PERFORMANCE
 
+Exploit periodicity when constructing multi-page tiles.
+
 **Revisit Phase 1 priority pages calculation** - Currently just returns first 10 pages. Could calculate actual visible pages in initial viewport instead.
 
 **[NEXT] Fix iOS Safari crash on broad zoom-out** - iOS Safari crashes when zooming out to show entire grid with large PDFs (300+ pages). Suspected cause: Unlimited PageStreamer.pageCache exhausts iOS memory limits (~100-200MB for canvas). Current state: PageCache is unbounded Map (line 438), stores both low-res and high-res for all rendered pages forever (potential 600 canvases for 300-page PDF). TileCache has LRU eviction (max 300), but PageCache does not. Solution: (1) Add diagnostics first - log cache size during zoom, add keyboard shortcut to check memory stats, confirm correlation between cache size and crashes on iOS Safari, (2) Implement LRU eviction for PageCache similar to TileCache (suggest max 100-150 pages), prioritize low-res over high-res at low zoom, (3) Consider aggressive eviction on mobile devices and clearing high-res pages when zoomed out. See notes.md "NEXT: Fix iOS Safari Crash" for detailed implementation plan and line numbers.
