@@ -1,61 +1,5 @@
 # PDF Grid Viewer - Development Notes
 
-## NEXT: Fix iOS Safari Crash on Broad Zoom-Out
-
-**Issue**: iOS Safari crashes when zooming out to show entire grid, especially with large PDFs (300+ pages).
-
-**Root Cause (Suspected)**: Unlimited PageStreamer.pageCache causes memory exhaustion on iOS Safari:
-- PageCache is a Map with no size limit - grows unbounded
-- At broad zoom-out, many pages rendered and cached forever
-- Both low-res AND high-res versions kept in cache simultaneously
-- For 300-page PDF: potentially 600 large canvases in memory (300 low + 300 high)
-- iOS Safari has strict memory limits (~100-200MB for canvas memory)
-- TileCache has LRU eviction (max 300 tiles), but PageCache does not
-
-**Current State**:
-- `PageStreamer.pageCache = new Map()` (line 438) - unlimited
-- `TileCache` has LRU eviction with max 300 entries (line 805)
-- No memory diagnostics or warnings
-
-**Proposed Solution**:
-1. **Add diagnostics first** to confirm memory is the issue:
-   - Log PageCache size during zoom: `pageCache.size`, low vs high counts
-   - Add keyboard shortcut (e.g., 'M') to log cache stats
-   - Test on iOS Safari and watch for correlation between cache size and crashes
-
-2. **Implement LRU eviction for PageCache**:
-   - Similar to TileCache, add maxSize parameter (suggest 100-150 pages)
-   - Evict least recently used pages when limit exceeded
-   - Prioritize keeping low-res pages over high-res at low zoom levels
-   - Consider separate limits for low-res vs high-res
-
-3. **Additional optimizations**:
-   - Clear high-res pages when zoom level drops below threshold
-   - More aggressive eviction on mobile devices (detect iOS Safari)
-   - Consider removing pages that aren't visible in viewport
-
-**Files to modify**:
-- Line 438: `PageStreamer` class constructor - add LRU cache
-- Line 457-474: `renderPage()` - implement eviction logic
-- Add cache stats logging for diagnostics
-
-**Reference**:
-- TileCache implementation (lines 804-860) as reference for LRU pattern
-
-## Known Visual Issues
-
-### Antialiasing Halo Issue (Dark Hairlines at Tile Edges)
-
-**Status**: Known issue, documented in TODO.md line 37
-
-**Issue**: Dark hairlines visible at tile boundaries due to canvas antialiasing blending white page edges with dark background.
-
-**Current Mitigation**:
-- JPEG tiles + subPixelRoundingForTransparency:2 + 1px overlap
-- Significantly improved on desktop, some hairlines remain on iOS Safari
-
-**See**: TODO.md "Further improve sub-pixel hairline gaps between tiles (iOS Safari)" for full analysis and investigation notes.
-
 ## Performance Optimization Ideas
 
 ### Sophisticated Lazy-LRU Cache (Future Reference)
@@ -156,63 +100,320 @@ For static PDF tiles that never change, the simpler FIFO cache is 3-5x faster be
 - Minimal code complexity
 - Tiles are equally valuable (no "hot" tiles)
 
-## Performance Features (Current Implementation)
+## Other Performance Ideas
 
-The following performance features are **already implemented** in v1.9.x:
+### Tile Size Optimization
+Current: Dynamic based on page dimensions
+Consider: Fixed larger tiles (1024x1024) for deeper zoom - see TODO.md
 
-✅ **Parallel Rendering** - Viewport-aware parallel page rendering with CPU core detection
-✅ **Predictive Rendering** - Velocity-based motion prediction for ahead-of-viewport rendering
-✅ **On-Demand Rendering** - Immediate render trigger on cache miss with fire-and-forget async
-✅ **Adaptive Fallback** - Intelligent resolution fallback with scale-aware limits
-✅ **LRU Caching** - Separate LRU caches for pages (low-res/high-res) and tiles
+### Web Worker for Tile Generation
+Move tile rendering off main thread to prevent UI blocking during pan/zoom
 
-See `CHANGELOG.md` v1.9.0-v1.9.6 for implementation details.
+### Progressive Rendering
+Render lower-quality tiles first, then upgrade to high-quality
 
-## CORS Proxy (Current Implementation)
+### Predictive Prefetching
+Based on pan/zoom direction, prefetch adjacent tiles
 
-**Current**: `CONFIG.CORS_PROXY` = `'https://corsproxy.io/?'`
-- Automatically applied to external URLs
-- Local files and same-origin URLs bypass proxy
-- See README.md for configuration details and security considerations
+## CORS Proxy Implementation
 
-## Browser History & Page Refresh
+### Current Approach (v1.4)
+- Configurable CORS proxy in `CONFIG.CORS_PROXY`
+- Automatically detects external URLs
+- Only applies proxy to cross-origin requests
+- Local files (demo.pdf) and same-origin URLs bypass proxy
 
-**Status**: Current implementation uses `history.replaceState()` for URL management.
+### Available Proxies
+1. **corsproxy.io** (default) - `https://corsproxy.io/?`
+   - Simple, fast
+   - Prepend to URL
 
-**Future enhancement ideas** (not currently prioritized):
-- Multi-file history support with `pushState()`
-- Canvas persistence in IndexedDB for faster refresh
-- See TODO.md for feature requests
+2. **allorigins.win** - `https://api.allorigins.win/raw?url=`
+   - Reliable
+   - Good uptime
 
-## Grid Pattern Periodicity
+3. **cors-anywhere** (not recommended) - Rate-limited, requires API key
 
-**Observation**: The staggered diagonal grid pattern creates spatial periodicity - the arrangement repeats every N rows/columns (where N = number of pages).
+### Security Considerations
+- CORS proxies are third-party services
+- PDFs are routed through their servers
+- Don't use for sensitive/confidential documents
+- Consider self-hosting a CORS proxy for production use
 
-**Potential optimization**: Exploit periodicity for cache deduplication at minimap scales.
+### Future: Self-Hosted Proxy
+Could add a simple Node.js/Python CORS proxy that runs locally:
+```javascript
+// Simple CORS proxy example (Node.js)
+const express = require('express');
+const fetch = require('node-fetch');
+const app = express();
 
-**Status**: Not currently implemented. Current LRU cache performs well for typical use cases.
+app.get('/proxy', async (req, res) => {
+  const url = req.query.url;
+  const response = await fetch(url);
+  const buffer = await response.buffer();
+  res.header('Access-Control-Allow-Origin', '*');
+  res.send(buffer);
+});
 
-**See**: TODO.md line 56-58 for detailed investigation notes on periodicity exploitation.
+app.listen(3000);
+```
 
-## Rectangular Tiles (Future Consideration)
+## Browser History Support for Local PDFs
 
-**Current**: Square tiles sized to `max(pageWidth, pageHeight)`
+### Current Behavior (v1.4.4)
+- Uses `history.replaceState()` to clear URL parameters when loading local files
+- Single-file storage policy (one PDF at a time in sessionStorage/IndexedDB)
+- No back/forward navigation between different local PDFs
+- Pressing back/forward goes to pages visited before the app
 
-**Potential optimization**: Use rectangular tiles matching page aspect ratio (e.g., 612×792 for US Letter)
+### Proposed Implementation
 
-**Benefits**: Better tile packing, fewer tiles needed, less wasted canvas space
+To support browser back/forward navigation between local PDFs:
 
-**Status**: Not currently prioritized. Square tiles work well for current use cases.
+#### 1. Use `pushState()` Instead of `replaceState()`
 
-## Progressive Loading & Background Rendering
+```javascript
+// Current (replaces history entry):
+window.history.replaceState({}, '', newUrl);
 
-**Status**: ✅ **Fully implemented in v1.9.x**
+// Proposed (creates new history entry):
+window.history.pushState({
+  pdfId: uniqueId,
+  filename: file.name
+}, '', newUrl);
+```
 
-The application now features sophisticated progressive loading with:
-- Priority rendering for viewport pages
-- Scattered bit-reversal ordering for minimap
-- Background rendering without blocking UI
-- Bidirectional resolution fallback
-- Automatic tile invalidation when pages finish rendering
+#### 2. Multi-File Storage Model
 
-See `CHANGELOG.md` v1.8.0-v1.9.6 for complete implementation history.
+Change from single-file to multi-file storage:
+
+```javascript
+// Current storage structure:
+{
+  pdfData: ArrayBuffer,
+  filename: string,
+  timestamp: number
+}
+
+// Proposed storage structure:
+{
+  pdfs: {
+    [uniqueId]: {
+      pdfData: ArrayBuffer,
+      filename: string,
+      timestamp: number,
+      lastAccessed: number
+    }
+  },
+  history: [uniqueId1, uniqueId2, uniqueId3...] // Ordered list
+}
+```
+
+#### 3. Listen to `popstate` Events
+
+```javascript
+window.addEventListener('popstate', (event) => {
+  if (event.state && event.state.pdfId) {
+    // Load PDF from storage using pdfId
+    const stored = await PDFStorage.loadById(event.state.pdfId);
+    if (stored) {
+      await loadPDF(stored.pdf, stored.filename);
+    }
+  }
+});
+```
+
+#### 4. Storage Cleanup Strategy
+
+Need to prevent storage bloat:
+
+**Option A: LRU with size limit**
+- Keep last N PDFs (e.g., 10)
+- Evict least recently accessed when limit reached
+- Use lastAccessed timestamp
+
+**Option B: History-based**
+- Keep only PDFs in browser history
+- Clean up when history entry is removed (difficult to detect)
+
+**Option C: Hybrid**
+- Keep last N PDFs OR last 7 days (whichever is more restrictive)
+- Track total storage size, warn if > X MB
+
+#### 5. Configuration
+
+Add to CONFIG:
+
+```javascript
+CONFIG: {
+  // ...existing config
+  MAX_STORED_PDFS: 10,          // Maximum local PDFs to keep
+  MAX_STORAGE_MB: 100,           // Maximum total storage size
+  ENABLE_HISTORY: true           // Enable back/forward navigation
+}
+```
+
+### Trade-offs
+
+**Pros:**
+- Natural browser navigation (back/forward buttons work)
+- Better user experience for comparing multiple PDFs
+- Matches user expectations from web browsing
+
+**Cons:**
+- Increased storage usage (multiple PDFs instead of one)
+- More complex state management
+- Need cleanup logic to prevent bloat
+- Higher memory usage if many large PDFs loaded
+
+### Implementation Complexity
+
+**Medium complexity:**
+- Modify PDFStorage module to support multiple PDFs
+- Add popstate event listener
+- Implement LRU cleanup logic
+- Update file upload/load logic to use pushState()
+- Test edge cases (storage full, expired PDFs, etc.)
+
+**Estimated effort:** 2-3 hours
+
+## Page Refresh Performance Optimization
+
+### Current Behavior (v1.4.4)
+
+When refreshing the page with a stored local PDF:
+1. PDF binary data (ArrayBuffer) is loaded from storage (~original file size)
+2. PDF.js parses the PDF
+3. **All pages are re-rendered to canvases** (expensive operation)
+4. OpenSeadragon viewer initializes with rendered canvases
+
+This means every refresh "chews through all the pages" again, which is slow for large PDFs (50+ pages).
+
+### Why This Happens
+
+**Storage contains:** Raw PDF binary data (compact, ~5MB for typical PDF)
+**Not stored:** Rendered page canvases (would be massive, ~1-2MB per page)
+
+**Trade-off:**
+- Compact storage (good for 7-day expiry model)
+- Slow refresh (must re-render every time)
+
+### Proposed Solutions
+
+#### Option A: Store Rendered Canvases
+
+**Approach:** Store both PDF binary AND rendered canvases in IndexedDB
+
+```javascript
+// Current storage:
+{
+  pdfData: ArrayBuffer,  // ~5MB
+  filename: string,
+  timestamp: number
+}
+
+// Proposed storage:
+{
+  pdfData: ArrayBuffer,     // ~5MB (keep for download)
+  pageCanvases: [           // ~50-100MB for 50 pages!
+    { dataUrl: string },    // Base64 encoded canvas
+    { dataUrl: string },
+    ...
+  ],
+  filename: string,
+  timestamp: number
+}
+```
+
+**Pros:**
+- Instant refresh (no re-rendering)
+- Best user experience for frequent refreshes
+
+**Cons:**
+- Massive storage increase (10-20x larger)
+- 50-page PDF: ~100MB in storage vs ~5MB currently
+- May hit IndexedDB quota limits
+- Longer initial upload time (must serialize canvases)
+
+**Implementation complexity:** Low (straightforward serialization)
+
+#### Option B: Keep Current Approach
+
+**Approach:** Accept re-rendering as necessary trade-off
+
+**Pros:**
+- Compact storage (~5MB per PDF)
+- Fits well with 7-day expiry model
+- Simple implementation
+
+**Cons:**
+- Slow refresh for large PDFs
+- Users must wait through "chewing" every time
+
+**Best for:**
+- PDFs < 30 pages (refresh is reasonably fast)
+- Users who rarely refresh
+- Storage-constrained environments
+
+#### Option C: Progressive/On-Demand Rendering
+
+**Approach:** Don't render all pages upfront; render tiles as needed during pan/zoom
+
+**Current architecture:**
+```javascript
+// All pages rendered at load time
+const pageCanvases = await PDFUtils.renderAllPages(pdf);
+// Store in memory for tile generation
+```
+
+**Proposed architecture:**
+```javascript
+// Pages rendered on-demand
+const tileSource = new ProgressiveTileSource(pdf);
+// Renders pages only when tiles from that page are requested
+// Caches rendered pages in memory (LRU)
+```
+
+**How it works:**
+1. Load PDF from storage (fast)
+2. Initialize viewer immediately (instant)
+3. Render pages progressively as user pans/zooms
+4. Keep last N rendered pages in memory cache
+5. Initial view loads first page only
+
+**Pros:**
+- Fast initial load (show viewer immediately)
+- Compact storage (no canvases stored)
+- Handles huge PDFs (100+ pages)
+- Better memory usage (only cache visible pages)
+
+**Cons:**
+- Complex architectural change
+- Need to modify TileSource to render on-demand
+- Potential tile pop-in during fast panning
+- Need LRU cache for rendered pages in memory
+
+**Implementation complexity:** High
+
+**Changes required:**
+1. Modify CustomTileSource to accept PDF object instead of pre-rendered canvases
+2. Implement page rendering inside getTileUrl()
+3. Add in-memory LRU cache for rendered pages
+4. Handle async rendering (tiles may appear with delay)
+5. Add loading indicators for tiles being rendered
+
+**Estimated effort:** 6-8 hours
+
+### Recommendation
+
+**For current use case:**
+- If PDFs are typically < 30 pages: Keep Option B (current approach)
+- If PDFs are 50+ pages and refresh is common: Implement Option C (progressive)
+- If storage space is abundant: Consider Option A (canvas storage)
+
+**Long-term best solution:** Option C (progressive rendering)
+- Handles all PDF sizes
+- Minimal storage footprint
+- Best UX (instant viewer initialization)
+- Aligns with TODO item "support more than a hundred pages"

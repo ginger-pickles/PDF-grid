@@ -7,7 +7,7 @@ This document provides AI assistants with essential information about the PDF Gr
 **PDF Grid Viewer** is a client-side web application that displays PDF pages in a staggered N×N grid pattern, enabling users to discover structural patterns and visual relationships in documents through pan/zoom navigation.
 
 - **Type**: Single-file HTML application
-- **Current Version**: 1.5.4
+- **Current Version**: 1.10.4
 - **Architecture**: Monolithic (all code in `index.html`)
 - **No Build Process**: Runs directly in browser
 - **Live Demo**: https://ginger-pickles.github.io/PDF-grid/
@@ -35,26 +35,36 @@ Babel Standalone        → In-browser JSX transpilation
 
 All dependencies loaded via CDN - no npm/package.json.
 
+### 3. Core Design Requirement: All Pages Visible
+
+**The app MUST render all PDF pages simultaneously** (at least at low resolution) to enable the core use case: discovering structural patterns across entire documents. This is non-negotiable.
+
+**Memory implications:**
+- PDF.js decodes embedded images at **native resolution** regardless of output scale
+- A 300 DPI scanned magazine page = ~33 MB decoded per page
+- For large PDFs (100+ pages), this can exceed 6 GB of memory
+
+**Mitigation strategy:**
+- Call `page.cleanup()` after each render to release PDF.js internal decoded data
+- Use aggressive page cache eviction
+- Low-res minimap tiles use 0.3x scale (small canvas output)
+- High-res tiles render on-demand only when user zooms
+
 ## File Structure
 
-**Current Branch (claude/incomplete-description-...):**
 ```
 /home/user/PDF-grid/
-├── index.html              # MAIN APPLICATION (1597 lines)
+├── index.html              # MAIN APPLICATION (~6500 lines)
 ├── demo.pdf                # Sample PDF (auto-loaded)
-├── CLAUDE.md               # AI assistant guide (this file)
 ├── README.md               # User-facing documentation
+├── VERSION_MANAGEMENT.md   # Version sync strategy
+├── RENDERING_ANALYSIS.md   # Deep technical analysis
 ├── TODO.md                 # Feature backlog
 ├── notes.md                # Development notes
+├── tests/                  # Playwright test suite
+├── playwright.config.js    # Test configuration
 └── .gitignore              # Excludes deploy.sh and *.pdf
 ```
-
-**Development Branch (additional files):**
-- Testing infrastructure: `tests/`, `playwright.config.js`, `package.json`, `package-lock.json`
-- Additional documentation: `CHANGELOG.md`, `PLAN.md`, `TESTING.md`, `architecture.md`, `lessons.md`, `SCALABILITY.md`, `PROGRESSIVE_LOADING_NOTES.md`, `SELECTIVE_INVALIDATION_ATTEMPTS.md`
-- Deployment: `deploy.sh`, `demo/` directory
-
-Note: Current branch follows minimal documentation philosophy. Development branch has expanded testing and documentation not present here.
 
 ## Code Organization in index.html
 
@@ -104,9 +114,9 @@ try {
 **IMPORTANT**: Version must be synchronized in two places:
 
 1. **CONFIG.VERSION** in index.html (line ~64)
-2. **Git tag** (e.g., `v1.5.4`)
+2. **Git tag** (e.g., `v1.10.4`)
 
-Current version: **1.5.4**
+Current version: **1.10.4**
 
 ### When Updating Version:
 ```bash
@@ -145,7 +155,7 @@ http://localhost:8000/
 - Babel transpiles JSX in-browser automatically
 
 ### Testing Checklist
-When making changes, manually test:
+When making changes, automatically test:
 - [ ] File upload (drag-drop and button)
 - [ ] URL loading with `?url=` parameter
 - [ ] URL loading with `?pdf=` parameter
@@ -301,9 +311,8 @@ git push -u origin branch-name
 2. **Adding build tools** (webpack, vite, etc.) - Increases complexity
 3. **Adding npm/package.json** - All deps via CDN
 4. **Server-side processing** - Client-side only
-5. **Automated tests** - Manual testing approach preferred
-6. **Creating new .md files** - Already have comprehensive docs
-7. **Force push to main/master** - Violates git safety
+5. **Creating new .md files** - Already have comprehensive docs
+6. **Force push to main/master** - Violates git safety
 
 ### ⚠️ Be Careful With
 
@@ -487,43 +496,6 @@ if (window.viewer?.drawer) {
 
 ---
 
-## Medium Priority Issues
-
-### 10. Expensive Operations in Render (Lines 4431-4908)
-- **Issue**: `getCacheStats()`, `getMemoryStats()` called during render without memoization
-- **Impact**: Performance degradation when debug panel open
-- **Fix**: Use `React.useMemo(() => getCacheStats(), [debugUpdateCounter])`
-
-### 11. Missing Validation (Line 3318-3320)
-- **Issue**: `calculateViewportPriority()` doesn't validate `numPages` parameter
-- **Impact**: Could return array with NaN values
-- **Fix**: Add `if (!viewer?.viewport || !numPages) return [];`
-
-### 12. Multiple Simultaneous Loads (Lines 3673-3712)
-- **Issue**: No check if another PDF currently loading
-- **Impact**: Two simultaneous loads interfere
-- **Fix**: Add `if (isLoading) { console.warn('Already loading'); return; }`
-
-### 13. Async Errors Not Caught (Lines 2519-2567)
-- **Issue**: ErrorBoundary only catches synchronous render errors
-- **Impact**: Unhandled async errors in effects bypass boundary
-- **Fix**: Add global error handler or error state management
-
-### 14. Missing Viewer Cleanup (Lines 3781-3820)
-- **Issue**: Multiple global refs created but not all cleaned up
-- **Impact**: Memory leak, stale references
-- **Fix**: Add cleanup before creating new viewer
-
-### 15-20. Additional Medium Issues
-- Refs not cleared when loading new PDF (Line 2637-2645)
-- LocalStorage operations without try-catch (Lines 2868-2917)
-- Inconsistent error handling patterns (Lines 3654-3670)
-- Side effects in useMemo (Line 2648)
-- Missing input validation in debug panel (Lines 4622-4631)
-- Global state pollution via window object (throughout)
-
----
-
 ## Performance Optimization Opportunities
 
 ### Top 5 High-Impact Optimizations
@@ -562,78 +534,7 @@ if (window.viewer?.drawer) {
 - RAF instead of setTimeout for redraws (better timing)
 - Inline small functions (1-2% gain)
 
-### Implementation Phases
-
-**Phase 1 - Quick Wins** (1-2 days, 20-30% improvement):
-- Bit shift optimization
-- Grid pattern memoization
-- Page position lookup map
-- Circular buffer
-
-**Phase 2 - Medium Effort** (1 week, 50-100% improvement):
-- Tile cache optimization
-- Spatial indexing
-- Canvas state management
-- RAF for redraws
-
-**Phase 3 - Major Refactor** (2-3 weeks, 200-400% improvement):
-- Web Workers rendering
-- Canvas pooling
-- Incremental storage
-
 ---
-
-## Architecture Improvements
-
-### Global State Management
-**Issue**: Extensive use of `window.*` for state (`window.viewer`, `window.tileStreamerRef`, etc.)
-**Impact**: Hard to debug, difficult to test, potential conflicts
-**Recommendation**: Migrate to React Context or proper state management
-
-### Circular Dependencies
-**Issue**: PageStreamer ↔ TileStreamer via window references
-**Impact**: Fragile architecture
-**Recommendation**: Event emitter pattern or callbacks
-
----
-
-## What's Working Well
-
-✅ **Sophisticated tile streaming system**
-✅ **Efficient FIFO cache with LRU eviction**
-✅ **Mobile-specific optimizations**
-✅ **Comprehensive debug instrumentation**
-✅ **On-demand page rendering**
-✅ **Clear module separation**
-✅ **Good error categorization**
-
----
-
-## Recommended Action Plan
-
-### Immediate (This Week)
-1. Fix critical memory leaks (#1, #3)
-2. Add abort mechanisms for async operations (#2)
-3. Fix stale viewer reference (#4)
-4. Fix direct state mutation (#9)
-
-### Short Term (This Month)
-1. Implement quick-win optimizations (Phase 1)
-2. Add proper null checks throughout
-3. Fix promise error handling (#5)
-4. Stabilize effect dependencies (#6)
-
-### Medium Term (Next Quarter)
-1. Phase 2 performance optimizations
-2. Refactor global state management
-3. Add comprehensive error handling
-4. Improve test coverage
-
-### Long Term (Ongoing)
-1. Phase 3 performance (Web Workers)
-2. Consider TypeScript migration
-3. Component architecture refactoring
-4. Comprehensive documentation
 
 ## Debugging Tips
 
@@ -670,7 +571,7 @@ Located in CONFIG object (~line 62):
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| VERSION | '1.5.4' | App version (must match git tag) |
+| VERSION | '1.10.4' | App version (must match git tag) |
 | DEBUG_MODE | false | Verbose console logging |
 | AUTO_LOAD_PDF | 'demo.pdf' | PDF to load on startup |
 | CORS_PROXY | 'https://corsproxy.io/?' | Cross-origin request proxy |
@@ -715,9 +616,15 @@ Check **TODO.md** before implementing features. Current priorities:
 
 ## Testing Strategy
 
-### Manual Testing Approach
-No automated tests - rely on comprehensive manual testing:
+### Playwright Tests
+The project includes a comprehensive Playwright test suite in `tests/`:
+- Smoke tests for basic functionality
+- Visual tests for rendering verification
+- Memory tests for leak detection
+- Run with: `npx playwright test`
 
+### Manual Testing
+For thorough testing:
 1. **Load Testing**: Upload, URL, drag-drop, auto-load, bookmarked URLs
 2. **Interaction**: Pan, zoom (pinch/wheel/controls), navigate
 3. **Persistence**: Refresh page, close/reopen tab, 7-day expiry
@@ -795,6 +702,9 @@ Use various PDFs:
 # Local development
 python -m http.server 8000
 
+# Run tests
+npx playwright test
+
 # Version update
 git tag -a vX.Y.Z -m "Message"
 git push origin branch-name
@@ -805,9 +715,6 @@ git status
 
 # View recent commits
 git log --oneline -5
-
-# Serve index.html only
-python -c "import http.server; http.server.test(HandlerClass=http.server.SimpleHTTPRequestHandler)" 8000
 ```
 
 ## When to Ask for Clarification
@@ -837,5 +744,5 @@ The codebase is well-organized despite being monolithic. Each module has clear r
 
 ---
 
-**Last Updated**: 2025-11-17 (for v1.5.4)
+**Last Updated**: 2025-11-27 (for v1.10.4)
 **Latest Analysis**: Code review completed identifying 18 issues (4 critical bugs, 4 minor bugs, 7 optimization opportunities, 3 code quality issues)
