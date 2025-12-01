@@ -33,9 +33,9 @@ Regularly scrub for redundancy and optimization; aiming to reduce LOC by 5-10% e
 
 FEEDBACK
 
-Programs should employ feed-back control to detect correct operation, and work to reduce errors; not rely exclusively on dead-reckoning and mechanistic behavior operating in the blind.
+Programs should employ feed-back control to detect correct operation, to reduce errors, and corrective methods in development; not rely exclusively on dead-reckoning and mechanistic behavior operating in the blind.
 
-Programs should employ feed-forward control to pre-fetch, pre-generate, and pre-position program state in anticipation of user action.
+Programs should employ feed-forward control and preemptive methods to pre-fetch, pre-generate, and pre-position program state in anticipation of user action; and preventive development methods for bug repair.
 
 
 

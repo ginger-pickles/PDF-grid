@@ -5,7 +5,12 @@ Future optimization ideas for PDF Grid Viewer.
 ---
 
 
-THE NEXT THING:
+THE NEXT THINGS:
+
+Ensure resolution fallback is working; no low-res tiles at high zoom
+
+Improve responsiveness; eliminate flickering at rest
+
 Now that we have asychronous tile request & generation, we can implement progressive page rendering & tile generation. We should re-publish tiles as pages are completed.
 
 

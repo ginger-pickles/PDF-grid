@@ -26,6 +26,13 @@ Notable changes to PDF Grid Viewer.
 ### Removed
 - 60+ diagnostic test files archived to `tests/archived/`
 
+### Lessons Learned
+1. **Question the Foundation** - Elaborate workarounds signal wrong assumptions; the fix was switching APIs
+2. **Understand the Contract** - First working approach became entrenched; should have asked what OSD expects
+3. **Let Systems Do Their Job** - OSD has fallback/retry behavior; our placeholders disabled it
+4. **Preventive > Corrective** - Clean architectural fix beat complex runtime healing
+5. **Feedback Control for Testing** - Comparing PDF truth against OSD output proved valuable for testing
+
 ---
 
 ## [1.10.x] - 2025-11-17 to 2025-11-29
