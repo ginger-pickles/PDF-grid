@@ -1,9 +1,6 @@
 # Deployment scripts (contain credentials/server info)
 *deploy*.sh
 
-# PDF test files
-*.pdf
-
 # OS files
 .DS_Store
 Thumbs.db
