@@ -1,48 +1,73 @@
 # TODO
 
 
-## INTERFACE
-
-Merge STOP button with LOAD buttons like modern browser (combined stop/reload button)
-
-Increase scrollwheel zoom sensitivity
-
-Handle situations where ?url and ?pdf parameters interact or error out depending on file:// vs http:// protocol in use
-
-Handle situations where a .pdf url redirects to some other URL (right now "Error laoding PDF from URL: Failed to fetch proxy.")
-
-Change the download command to expressly download the file to local storage, instead of loading a PDF in the browser
-
-Handle URL redirects properly - some PDF URLs redirect to different locations (e.g., academic publications from institutional repositories)
-
 
 ## PERFORMANCE
 
-Re-enable local PDF storage for faster refresh
+Exploit periodicity when constructing multi-page tiles.
 
-Meet the rendering needs of two views displayed at once - minimap and deepzoom.
+Handle poor low-hi res fallback performance - improve resolution switching and fallback behavior
 
-Render low-res tiles for minimap (0.X scale) in clever order; and substitute nearest available rendered page for otherwise blank tiles; replacing when ready. Result: Minimap is population in scattered fashion amongst dispersed pages instead of sequentially; unrendered gaps are temporarily filled with nearest neighbour and replaced as appropriate, progressively resolving to complete picture.
+Render low-res tiles for minimap (0.X scale) in clever order; and substitute nearest available rendered page for otherwise blank tiles; replacing when ready. Result: Minimap is populated in scattered fashion amongst dispersed pages instead of sequentially; unrendered gaps are temporarily filled with nearest neighbour and replaced as appropriate, progressively resolving to complete picture.
 
-Render screen-res tiles for deep zoom (X.0 scale)) more cleverly. OSD view-aware rendering.
+Incorporate external libraries somehow rather than pulling from wherever they come from now
 
-Optimize or add distinct caches for distinct tasks, as improves performance.
-
-Optimize page refresh performance; consider storing cache or canvas. (Currently re-renders all pages on every refresh; see notes.md for canvas storage vs progressive rendering options.)
-
-Incorporate external libraries somehow rather than pulling from whereever they come from now
+Further improve sub-pixel hairline gaps between tiles (iOS Safari) - current mitigations (JPEG, overlap, OSD config) help but some artifacts remain
 
 
 
-## FUNCTIONALITY
+
+## INTERFACE
+
+
+Debug Panel should be shown if button clicked, even when no PDF loaded
+
+On mobile, increase pan inertia (flickMomentum)
+
+Smartly harmonize home screen text with help screen text to include attribution, and do not display "drag & drop" on mobile
+
+When demo PDF fails to load (file not present when served), remove ?pdf URL parameter after elegant failure
+
+Handle situations where ?url and ?pdf parameters interact or error out depending on file:// vs http:// protocol in use
+
+Handle PDF URL redirects - some URLs redirect to different locations (currently errors with "Failed to fetch proxy")
+
+
+
+
+
+
+## FUNCTIONALITY & FEATURES
+
+Elegantly handle odd-sized pages; including odd first pages. On PDF load, sample pages to determine the modal page dimensions. Big pages should be reduced. As a stretch goal, resolution should not be sacrificed. Generalizing, that means some regions of the map have greater resolution than others.
+
+
+**Improve grid layout for even-numbered page counts** 
+For an even-number of pages, an extra column as follows:
+0 0 1 2 3
+0 1 2 3 4
+1 2 3 4 0
+2 3 4 0 0
+
+For an odd-number of pages, NxN grid layout as follows:
+0 0 1 2 3
+0 1 2 3 4
+1 2 3 4 5
+2 3 4 5 0
+3 4 5 0 0
 
 Add support to switch between different page layouts: Staggered rotating grid (default), conventional wrapped grid,  vertical and horizontal scroll, Two-up, Infinite(?), etc. Fractal layout? Space-filling curve?
 
-Elegantly handle odd-sized pages; including odd first pages. On PDF load, sample pages to determine the modal page dimensions. Big pages should be reduced. As a stretch goal, resolution should not be sacrificed. Generalizing, that means some regions of the map have greater resolution than others.
+Change the download command to expressly download the file to local storage, instead of loading a PDF in the browser
+
+iPadOS Safari download behavior  - Download PDF button currently saves to browser's Downloads manager instead of filesystem. 
 
 Add the ability to export the transformed tile canvas as an image; with approriate resolution options.
 
 Add the ability to switch, with buttons, between PDFs residing in the local directory from which index.html is served
 
-Add browser history support for back/forward navigation between local PDFs (see notes.md for implementation details)
+Add browser history support for back/forward navigation between local PDFs
+
+Support annotating PDFs (long horizon)
+
 
