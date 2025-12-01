@@ -146,7 +146,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.10.4',
+          VERSION: '1.11.0',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -813,6 +813,8 @@ SETPOINT
                   window.tileStreamerRef._invalidateTilesUsingPages([pageNum], resolution);
                   // Trigger OpenSeadragon refresh (debounced to batch multiple page renders)
                   window.tileStreamerRef.scheduleRedraw();
+                  // Complete any pending async tile jobs waiting for this page
+                  window.tileStreamerRef.finishPendingJobs([pageNum]);
                 }
 
                 // Return decoded Image (works with drawImage just like canvas)
@@ -2532,9 +2534,12 @@ SETPOINT
           /**
            * Draw a single page's intersection with the tile
            */
-          _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level) {
+          _drawPageIntersection(row, col, tileLeft, tileTop, tileRight, tileBottom, scale, debugKey, resolution, level, ctx = null) {
             const ts = this.tileStreamer;
             const { pageWidth, pageHeight, spacing } = ts.gridDims;
+            // Use provided ctx or fall back to shared tileCtx
+            const targetCtx = ctx || ts.tileCtx;
+            const tileOverlap = ctx ? 0 : ts.tileOverlap; // No overlap adjustment for per-job canvas
 
             // Calculate page position in grid (centered within cell)
             const halfSpacing = spacing / 2;
@@ -2653,21 +2658,33 @@ SETPOINT
             }
 
             // Destination rect in tile coordinates
-            // scale = 2^(level - maxLevel), so for L0 it's small (e.g., 0.0156)
+            // gridToTileScale = 2^(level - maxLevel), so for L0 it's small (e.g., 0.0156)
             // This scales grid coords to tile coords
-            // IMPORTANT: Use grid intersection size, NOT srcWidth/srcHeight
+            // IMPORTANT: scale from _getTileBounds is 2^(maxLevel-level), so use 1/scale
             // (srcWidth is scaled for canvas resolution, dest needs grid-based scaling)
-            const destLeft = (intersectLeft - tileLeft) * scale;
-            const destTop = (intersectTop - tileTop) * scale;
-            const destWidth = (intersectRight - intersectLeft) * scale;
-            const destHeight = (intersectBottom - intersectTop) * scale;
+            const gridToTileScale = 1 / scale;
+            const destLeft = (intersectLeft - tileLeft) * gridToTileScale;
+            const destTop = (intersectTop - tileTop) * gridToTileScale;
+            const destWidth = (intersectRight - intersectLeft) * gridToTileScale;
+            const destHeight = (intersectBottom - intersectTop) * gridToTileScale;
+
+            // Debug logging for page 11 tile rendering
+            if (pageNum === 1 && window.__DEBUG_PAGE11_TILES) {
+              console.log(`[DEBUG Page 11 Tile] level=${level}, resolution=${resolution}`);
+              console.log(`  pageCanvas: ${pageCanvas.width}x${pageCanvas.height}, canvasToGridRatio=${canvasToGridRatio.toFixed(4)}`);
+              console.log(`  page grid: left=${pageLeft.toFixed(0)}, top=${pageTop.toFixed(0)}, right=${pageRight.toFixed(0)}, bottom=${pageBottom.toFixed(0)}`);
+              console.log(`  tile grid: left=${tileLeft.toFixed(0)}, top=${tileTop.toFixed(0)}, right=${tileRight.toFixed(0)}, bottom=${tileBottom.toFixed(0)}`);
+              console.log(`  intersect: left=${intersectLeft.toFixed(0)}, top=${intersectTop.toFixed(0)}, right=${intersectRight.toFixed(0)}, bottom=${intersectBottom.toFixed(0)}`);
+              console.log(`  src: left=${srcLeft.toFixed(1)}, top=${srcTop.toFixed(1)}, w=${srcWidth.toFixed(1)}, h=${srcHeight.toFixed(1)}`);
+              console.log(`  dest: left=${destLeft.toFixed(1)}, top=${destTop.toFixed(1)}, w=${destWidth.toFixed(1)}, h=${destHeight.toFixed(1)}`);
+            }
 
             // Draw the page portion onto tile
             try {
-              ts.tileCtx.drawImage(
+              targetCtx.drawImage(
                 pageCanvas,
                 srcLeft, srcTop, srcWidth, srcHeight,
-                destLeft + ts.tileOverlap, destTop + ts.tileOverlap, destWidth, destHeight
+                destLeft + tileOverlap, destTop + tileOverlap, destWidth, destHeight
               );
               return true;
             } catch (err) {
@@ -2706,6 +2723,51 @@ SETPOINT
             } else {
               return ts.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
             }
+          }
+
+          /**
+           * Render tile to a provided canvas context (for async downloadTileStart pattern)
+           * Unlike _renderTile, does not convert to dataURL - returns nothing, just renders
+           * @param {number} level - Tile level
+           * @param {number} x - Tile x coordinate
+           * @param {number} y - Tile y coordinate
+           * @param {CanvasRenderingContext2D} ctx - Target context to render into
+           * @param {string} resolution - 'low' or 'high'
+           * @param {Array} neededPages - Pages needed for this tile
+           * @param {Object} tileBounds - Pre-calculated tile bounds {left, top, right, bottom, scale}
+           */
+          _renderTileToContext(level, x, y, ctx, resolution, neededPages, tileBounds) {
+            const ts = this.tileStreamer;
+            const { gridRows, gridCols } = ts.gridDims;
+            const { left: tileLeft, top: tileTop, right: tileRight, bottom: tileBottom, scale } = tileBounds;
+            const canvas = ctx.canvas;
+
+            // Configure interpolation based on zoom level
+            if (level < CONFIG.IMAGE_SMOOTHING_THRESHOLD_LEVEL) {
+              ctx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_LOW_ZOOM;
+            } else {
+              ctx.imageSmoothingEnabled = CONFIG.IMAGE_SMOOTHING_HIGH_ZOOM;
+            }
+            if (ctx.imageSmoothingEnabled) {
+              ctx.imageSmoothingQuality = CONFIG.IMAGE_SMOOTHING_QUALITY;
+            }
+
+            // Clear tile with background color
+            ctx.fillStyle = CONFIG.BACKGROUND_COLOR;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw portions of pages that intersect this tile
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
+                this._drawPageIntersection(
+                  row, col, tileLeft, tileTop, tileRight, tileBottom,
+                  scale, `${level}_${x}_${y}`, resolution, level, ctx
+                );
+              }
+            }
+
+            // Update render rate stats
+            ts._updateRenderRateWindow(1, 0);
           }
 
           /**
@@ -2998,6 +3060,10 @@ SETPOINT
 
             // Phase 2.2: Extract cache management to CacheManager module
             this.cacheManager = new CacheManager(this);
+
+            // Pending tile jobs for async downloadTileStart pattern
+            // Maps jobKey (level_x_y) to {context, canvas, ctx, missingPages, resolution, ...}
+            this.pendingJobs = new Map();
 
             // Diagnostics: Track fallback tiles vs full tiles
             this.stats = {
@@ -3301,18 +3367,97 @@ SETPOINT
           }
           /**
            * Phase 2: Delegates tile generation to TileGenerator module
+           * Updated to use async downloadTileStart pattern for proper tile lifecycle management
            */
           getOSDConfig() {
+            const self = this;
+
             return {
               height: this.gridDims.totalHeight,
               width: this.gridDims.totalWidth,
               tileSize: Math.max(this.tileWidth, this.tileHeight),
               getTileWidth: () => this.tileWidth,
               getTileHeight: () => this.tileHeight,
-              tileOverlap: this.tileOverlap,
+              tileOverlap: 0, // Per-job canvas doesn't need overlap
               minLevel: 0,
               maxLevel: this.maxLevel,
-              getTileUrl: this.tileGenerator.generateTile.bind(this.tileGenerator)
+
+              // getTileUrl is REQUIRED by OSD even with downloadTileStart
+              // OSD uses this to generate cache keys for tiles
+              getTileUrl: function(level, x, y) {
+                return `tile://${level}/${x}/${y}`;
+              },
+
+              // Provide tile coordinates via postData for downloadTileStart
+              getTilePostData: function(level, x, y) {
+                return { level, x, y };
+              },
+
+              // Async tile loading - overrides URL fetching
+              downloadTileStart: function(context) {
+                const { level, x, y } = context.postData;
+
+                // Each tile gets its own canvas (OSD caches reference, not copy)
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(self.tileWidth);
+                canvas.height = Math.round(self.tileHeight);
+                const ctx = canvas.getContext('2d', { alpha: false });
+
+                // Try to generate tile with current page cache
+                const result = self.tryGenerateTile(level, x, y, ctx);
+
+                if (result.ready) {
+                  // All pages available - finish immediately
+                  context.finish(ctx);
+                } else {
+                  // Pages missing - queue for later
+                  const jobKey = `${level}_${x}_${y}`;
+                  self.pendingJobs.set(jobKey, {
+                    context,
+                    canvas,
+                    ctx,
+                    level,
+                    x,
+                    y,
+                    missingPages: result.missingPages,
+                    resolution: result.resolution,
+                    neededPages: result.neededPages,
+                    tileBounds: result.tileBounds,
+                    requestTime: Date.now()
+                  });
+
+                  // Request missing pages
+                  self.cacheManager._requestPagesAsync(result.missingPages, result.resolution);
+
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Async Tile] Queued job ${jobKey}, waiting for pages: ${result.missingPages.join(', ')}`);
+                  }
+                }
+              },
+
+              downloadTileAbort: function(context) {
+                const { level, x, y } = context.postData;
+                const jobKey = `${level}_${x}_${y}`;
+                if (self.pendingJobs.delete(jobKey)) {
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Async Tile] Aborted job ${jobKey}`);
+                  }
+                }
+              },
+
+              // Cache handlers for context2D data (OSD stores reference to canvas context)
+              createTileCache: function(cache, data) {
+                cache._data = data;
+              },
+              destroyTileCache: function(cache) {
+                cache._data = null;
+              },
+              getTileCacheData: function(cache) {
+                return cache._data;
+              },
+              getTileCacheDataAsContext2D: function(cache) {
+                return cache._data;
+              }
             };
           }
 
@@ -3321,6 +3466,115 @@ SETPOINT
            */
           generateTile(level, x, y) {
             return this.tileGenerator.generateTile(level, x, y);
+          }
+
+          /**
+           * Try to generate a tile - check if all needed pages are available
+           * Used by async downloadTileStart pattern
+           * @param {number} level - Tile level
+           * @param {number} x - Tile x coordinate
+           * @param {number} y - Tile y coordinate
+           * @param {CanvasRenderingContext2D} ctx - Target context to render into
+           * @returns {Object} { ready: boolean, missingPages?: [], resolution?: string, neededPages?: [], tileBounds?: {} }
+           */
+          tryGenerateTile(level, x, y, ctx) {
+            // Calculate tile bounds
+            const tileBounds = this.tileGenerator._getTileBounds(level, x, y);
+            const { left: tileLeft, top: tileTop, right: tileRight, bottom: tileBottom } = tileBounds;
+
+            // Find needed pages (same logic as generateTile)
+            const neededPages = [];
+            const { pageWidth, pageHeight, spacing, gridRows, gridCols } = this.gridDims;
+
+            for (let row = 0; row < gridRows; row++) {
+              for (let col = 0; col < gridCols; col++) {
+                const halfSpacing = spacing / 2;
+                const pageLeft = col * (pageWidth + spacing) + halfSpacing;
+                const pageTop = row * (pageHeight + spacing) + halfSpacing;
+                const pageRight = pageLeft + pageWidth;
+                const pageBottom = pageTop + pageHeight;
+
+                if (pageRight > tileLeft && pageLeft < tileRight &&
+                    pageBottom > tileTop && pageTop < tileBottom) {
+                  const pageNum = this.pattern[row][col];
+                  if (pageNum !== 0 && !neededPages.includes(pageNum)) {
+                    neededPages.push(pageNum);
+                  }
+                }
+              }
+            }
+            neededPages.sort((a, b) => a - b);
+
+            // Determine resolution based on level
+            const resolution = level <= this.minimapMaxLevel ? 'low' : 'high';
+
+            // Check which pages are available
+            const pageCache = this.pageStreamer._getPageCache(resolution);
+            const fallbackRes = resolution === 'high' ? 'low' : 'high';
+            const fallbackCache = this.pageStreamer._getPageCache(fallbackRes);
+
+            const missingPages = neededPages.filter(p => {
+              const hasPrimary = pageCache.has(`${p}_${resolution}`);
+              const hasFallback = fallbackCache.has(`${p}_${fallbackRes}`);
+              return !hasPrimary && !hasFallback;
+            });
+
+            if (missingPages.length > 0) {
+              // Not ready - return info for pending job
+              return { ready: false, missingPages, resolution, neededPages, tileBounds };
+            }
+
+            // Ready - render to provided context
+            this.tileGenerator._renderTileToContext(level, x, y, ctx, resolution, neededPages, tileBounds);
+            return { ready: true };
+          }
+
+          /**
+           * Complete pending tile jobs when pages become available
+           * Called after pages finish rendering
+           * @param {Array} renderedPages - Page numbers that just finished rendering (optional, for optimization)
+           */
+          finishPendingJobs(renderedPages = null) {
+            if (this.pendingJobs.size === 0) return;
+
+            const jobsToComplete = [];
+
+            // Check each pending job
+            for (const [jobKey, job] of this.pendingJobs) {
+              // Check if all missing pages are now available
+              const pageCache = this.pageStreamer._getPageCache(job.resolution);
+              const fallbackRes = job.resolution === 'high' ? 'low' : 'high';
+              const fallbackCache = this.pageStreamer._getPageCache(fallbackRes);
+
+              const stillMissing = job.missingPages.filter(p => {
+                const hasPrimary = pageCache.has(`${p}_${job.resolution}`);
+                const hasFallback = fallbackCache.has(`${p}_${fallbackRes}`);
+                return !hasPrimary && !hasFallback;
+              });
+
+              if (stillMissing.length === 0) {
+                jobsToComplete.push(jobKey);
+              }
+            }
+
+            // Complete ready jobs
+            for (const jobKey of jobsToComplete) {
+              const job = this.pendingJobs.get(jobKey);
+              if (job) {
+                // Render to job's canvas
+                this.tileGenerator._renderTileToContext(
+                  job.level, job.x, job.y, job.ctx,
+                  job.resolution, job.neededPages, job.tileBounds
+                );
+                // Signal OSD that tile is ready
+                job.context.finish(job.ctx);
+                this.pendingJobs.delete(jobKey);
+
+                if (CONFIG.VERBOSE_LOGGING) {
+                  console.log(`[Async Tile] Completed pending job ${jobKey}`);
+                }
+              }
+            }
           }
 
           /**
@@ -5187,10 +5441,11 @@ SETPOINT
             osdViewerRef.current = viewer;
             window.osdViewerRef = viewer; // Store globally for async tile updates
 
-            // Enable and start background rendering (L0-down progressive strategy)
-            // This solves cache thrashing by rendering low levels (few tiles, need all pages) first
-            tileStreamer.backgroundQueue.enabled = true;
-            tileStreamer.startBackgroundRendering();
+            // Background queue is disabled - the async downloadTileStart pattern
+            // renders tiles on-demand and OSD caches them internally.
+            // The old background queue populated our tile cache which is no longer used.
+            // tileStreamer.backgroundQueue.enabled = true;
+            // tileStreamer.startBackgroundRendering();
 
             // Pause background rendering during user interactions to prioritize viewport
             // IMPORTANT: Respect grace period to avoid stopping during OSD initialization

@@ -9,6 +9,15 @@ Tests shall not involve user console inspection. Traceability: Mechanisation of 
 Tests shall retain test results for inspection in test-results folder until overwritten by next test. Traceability: Review of test results.
 
 
+There shall be functional tests.
+There shall be short-form and long-form functional tests. 
+There should additional tests as required, but the number of tests should be kept to a practical minimum.
+There shall be performance tests. Performance tests should be kept to a practical minimum.
+
+Test patterns shall be used that reveal common failure modes.
+
+Tests shall not be constructed in a way that allowd reward hacking.
+
 
 ## Overview
 
