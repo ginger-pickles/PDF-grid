@@ -1,138 +1,113 @@
-# Branch: development - Flicker Detection Testing
+# Development Vectors: Visual Testing
 
-## Current State
+Directions for evolving the test infrastructure.
 
-Successfully detecting visual flickers using page screenshot comparison. Canvas-based detection (`getImageData`) was not capturing the flickering, but full page screenshots do.
+---
 
-## Test Results (Phase 1 Load)
+## Vector 1: Exteroceptive over Interoceptive
 
-```
-⚠ FLICKER P1-load frame 2-7: 100.0% changed (during load - expected)
-✓ Content appeared
-⚠ FLICKER P1-settled frame 0: 33.2% (after load - problematic)
-```
+Tests should verify what the user **sees**, not what the code **reports**.
 
-**Key Finding**: 33.2% change detected AFTER content appeared, confirming post-load flickering.
+| Approach      | Risk                                                 |
+|---------------|------------------------------------------------------|
+| Interoceptive | False positives - internal state correct, screen blank |
+| Exteroceptive | Catches real failures the user would experience      |
 
-## Detection Methods Tried
+**Direction**: Every pass/fail criterion should have an exteroceptive component. Use `page.screenshot()` to capture actual rendered output.
 
-| Method | Result |
-|--------|--------|
-| Canvas `getImageData` | Did not detect flickering |
-| Page screenshots + buffer comparison | Successfully detects flickering |
+---
 
-## Working Sampling Technique
+## Vector 2: Screenshot Comparison, Not Canvas Sampling
 
-**Use `page.screenshot()` not canvas `getImageData()`**
+Canvas `getImageData()` misses visual flickers. Page screenshots capture what user sees.
 
 ```javascript
-// This works - captures what user actually sees
+// Do this
 const screenshot = await page.screenshot({ type: 'png' });
 
-// This does NOT work - misses visual flickers
-const canvas = document.querySelector('.openseadragon-canvas canvas');
+// Not this
 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 ```
 
-Compare consecutive screenshots with simple buffer diff:
+**Direction**: All visual assertions should use page screenshots.
+
+---
+
+## Vector 3: Distinguish Loading from Flickering
+
+During load, screen changes are expected. After settling, they are not.
+
+| Phase     | Change Expected  | Failure Criterion      |
+|-----------|------------------|------------------------|
+| Loading   | Yes              | Content never appears  |
+| Settled   | No               | Any significant change |
+| Pan/Zoom  | Yes, then settle | Fails to settle        |
+
+**Direction**: Implement "monotonicity" check - during load, content should only increase (pixels filling in), never decrease (content disappearing).
+
+---
+
+## Vector 4: Immediate Logging
+
+Test results must not be lost on abort. Log findings immediately, not at end.
 
 ```javascript
+// Log immediately when detected
+console.log(`⚠ FLICKER frame ${i}: ${pct}%`);
+
+// Don't batch results for end-of-test summary only
+```
+
+**Direction**: Every significant observation logged in real-time.
+
+---
+
+## Vector 5: Phase-Specific Thresholds
+
+Different phases have different stability expectations.
+
+| Phase     | Sampling | Threshold       | Notes                              |
+|-----------|----------|-----------------|-------------------------------------|
+| Load      | 50ms     | Track direction | Expect change, watch for regression |
+| Settled   | 50ms     | 0.1%            | Any change is suspect               |
+| Animation | 50ms     | Track settling  | Measure time-to-stable              |
+
+**Direction**: Parameterize detection per phase.
+
+---
+
+## Vector 6: Browser Comparison
+
+Behavior differs across browsers. Firefox may not exhibit Chromium's issues.
+
+**Direction**: Run identical tests on multiple browser projects, compare results.
+
+---
+
+## Working Configuration
+
+```javascript
+FLICKER_INTERVAL = 50     // 50ms between samples
+FLICKER_THRESHOLD = 0.1   // 0.1% change triggers flag
+
 function compareBuffers(buf1, buf2) {
-  if (!buf1 || !buf2) return 100;
   if (buf1.length !== buf2.length) return 100;
-  let diffBytes = 0;
+  let diff = 0;
   for (let i = 0; i < buf1.length; i++) {
-    if (buf1[i] !== buf2[i]) diffBytes++;
+    if (buf1[i] !== buf2[i]) diff++;
   }
-  return (diffBytes / buf1.length) * 100;
+  return (diff / buf1.length) * 100;
 }
 ```
 
-Sample at 50ms intervals, flag any change > 0.1% as potential flicker.
-
-## Why Canvas Detection Failed
-
-The OSD canvas (`querySelector('.openseadragon-canvas canvas')`) wasn't reflecting the visual changes. Possible reasons:
-- Multiple canvas layers
-- CSS transforms/opacity changes
-- Tile compositing happens outside the captured canvas
-- Timing mismatch between canvas state and visual render
-
-## Current Test Configuration
-
-```javascript
-CONTENT_TIMEOUT = 10000   // 10s max to see content
-FLICKER_DURATION = 1000   // 1s flicker check
-FLICKER_INTERVAL = 50     // 50ms sampling
-FLICKER_THRESHOLD = 0.1   // 0.1% pixel change
-```
-
-## Forward-Looking Vectors
-
-### 1. Refine Flicker Classification
-
-Distinguish between:
-- **Progressive loading** (expected): Content appearing incrementally
-- **True flicker** (bug): Content appearing then disappearing, tiles popping in/out
-
-Approach: Track pixel "monotonicity" - content should only increase, never decrease during load.
-
-### 2. Phase-Specific Thresholds
-
-| Phase | Expected Behavior | Flicker Threshold |
-|-------|-------------------|-------------------|
-| Load | High change rate | Ignore or track direction |
-| Settled | No change | Any change > 0.1% is flicker |
-| Pan/Zoom | Moderate change | Track settling time |
-
-### 3. Investigate Root Cause
-
-The 33.2% post-load flicker suggests:
-- Tile re-rendering after initial display
-- Cache invalidation causing redraws
-- OSD viewport recalculation
-- React re-render triggering tile refresh
-
-### 4. Video Recording for Analysis
-
-Playwright already records video (`video: 'on'` in config). Review test videos in `test-results/` to visually confirm what's happening.
-
-### 5. Performance Metrics
-
-Add timing instrumentation:
-- Time from navigation to first content
-- Time from first content to stability
-- Number of redraws after stability
-
-### 6. Compare Browsers
-
-Current tests run on Chromium. Firefox behavior may differ:
-- User noted "app resizes beautifully in Firefox"
-- Run same tests on Firefox project to compare flicker rates
-
-## Files Modified
-
-- `tests/long-form-test.spec.js` - Added screenshot-based flicker detection
-- `tests/test-helpers.js` - Visual content detection utilities
-- `playwright.config.js` - Chromium viewport fixes
-
-## Next Steps
-
-1. Run full LFT to completion, capture all phase flicker counts
-2. Review video recordings for visual analysis
-3. Add monotonicity check (content should only increase during load)
-4. Profile the app to find source of post-load redraws
-5. Test on Firefox for comparison
+---
 
 ## Commands
 
 ```bash
-# Run LFT headed (observe visually)
+# SFT - quick validation with exteroceptive checks
+npx playwright test tests/short-form-test.spec.js --project=chromium
+
+# LFT - comprehensive flicker detection
 npx playwright test tests/long-form-test.spec.js --project=chromium --headed
-
-# Run LFT headless (faster)
-npx playwright test tests/long-form-test.spec.js --project=chromium
-
-# View test videos
-ls test-results/
 ```
