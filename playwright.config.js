@@ -52,7 +52,13 @@ module.exports = defineConfig({
     },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        viewport: null,
+        deviceScaleFactor: undefined,
+        launchOptions: {
+          args: ['--window-size=1200,1000']
+        }
+      },
     },
     // {
     //   name: 'webkit',
