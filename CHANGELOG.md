@@ -1,778 +1,287 @@
 # Changelog
 
-All notable changes to PDF Grid Viewer will be documented in this file.
+Notable changes to PDF Grid Viewer.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+---
+
+## [1.11.0] - 2025-11-30
+
+### Changed
+- **Async tile loading** - Switched from synchronous `getTileUrl` to async `downloadTileStart` pattern
+  - OSD now properly tracks "loading" vs "loaded" tile state
+  - Eliminates striped placeholder caching problem
+  - `finishPendingJobs()` completes tiles when pages render
+  - Each tile gets its own canvas (OSD caches references, not copies)
+  - See THIS-BRANCH.md for investigation details
+
+### Fixed
+- **Tile scale bug** - Tiles appeared 64× too large (only corners visible)
+  - Root cause: `_drawPageIntersection` multiplied by scale instead of dividing
+  - Fix: `gridToTileScale = 1 / scale`
+
+### Added
+- Feedback-control visual test (`test-pattern-visual.spec.js`)
+- THIS-BRANCH.md documenting tile loading lessons learned
+
+### Removed
+- 60+ diagnostic test files archived to `tests/archived/`
+
+---
+
+## [1.10.x] - 2025-11-17 to 2025-11-29
+
+### 1.10.4
+- Coordinated cache eviction and semaphore throttling
+- Dead code cleanup
+
+### 1.10.3
+- Async tile refresh
+- PageCache JPEG data URL handling fix
+
+### 1.10.2
+- Custom hooks and state refactoring
+- Extract OSDManager module
+
+### 1.10.0-1.10.1
+- Extract TileGenerator and CacheManager classes
+- 701 lines saved through delegation
+
+---
 
 ## [1.9.6] - 2025-11-17
 
 ### Added
-- **Bidirectional rendering strategy for large PDFs**
-  - Solves cache thrashing in PDFs with pages > cache size (e.g., 126 pages with 120 cache)
-  - **Viewport-First rendering**: Immediately renders visible tiles at current zoom level
-  - **L0-Down background rendering**: Progressive L0→L1→L2... rendering with page-locality batching
-  - **Page-locality batching**: Groups L2+ tiles by consecutive page ranges to minimize cache evictions
-  - Background rendering pauses during user interaction, resumes automatically
-  - Eliminates infinite loop where pages 121-126 evict pages 1-6, then 1-6 evict 121-126
-  - New test: `tests/bidirectional-rendering.spec.js` - Validates rendering completes without thrashing
-
-- **Tile quality inspector** (diagnostic tool)
-  - Renamed from `detectIncompleteTilesAllLevels()` to `inspectTileQuality()`
-  - Detects incomplete tiles and blank pages across all zoom levels
-  - Exposed via `window.__PDFGridDiagnostics.inspectTileQuality()`
-  - Console reporting with [Tile Inspector] tag
-  - Future: will also detect blurry tiles
-
+- **Bidirectional rendering strategy** for large PDFs
+  - Solves cache thrashing (e.g., 126 pages with 120 cache)
+  - Viewport-First rendering: immediately renders visible tiles
+  - L0-Down background rendering with page-locality batching
+  - Background rendering pauses during user interaction
+- **Tile quality inspector** diagnostic tool
 - **Feedback-driven tile healing system**
-  - Automatically heals incomplete tiles at L0/L1/L2/L3 after background rendering
-  - **Detection**: Scans which tiles should exist vs actual cache state
-  - **Identification**: Determines specific missing pages for each incomplete tile
-  - **Rendering**: Requests missing pages with high priority
-  - **Regeneration**: Forces tile regeneration with all pages present
-  - **Verification**: Confirms tiles are now complete
-  - Runs automatically 1s after background rendering completes
-  - Manual trigger: `window.__PDFGridDiagnostics.healIncompleteTiles([0,1,2,3])`
-  - Replaces dead reckoning with actual cache state inspection
-
-- **Viewport persistence across page refreshes**
-  - Saves and restores pan/zoom position when refreshing with same PDF
-  - Debounced saving (500ms) to avoid excessive localStorage writes
-  - Viewport resets automatically when loading a different PDF
-  - New test suite: `tests/viewport-persistence.spec.js` (5 tests)
-    - Viewport persists across refresh for same PDF
-    - Viewport resets when loading different PDF
-    - Zoom and pan events trigger viewport save
-    - Rapid viewport changes properly debounced
-
-- **Automated test suite for console errors and viewport persistence**
-  - New test: `tests/console-errors.spec.js` - Detects and verifies zero console errors on PDF load
-  - New test: `tests/viewport-persistence.spec.js` - Validates viewport state persistence across page refreshes
-  - Tests confirm background rendering completes successfully through all levels (L0-L5)
-  - Zero console errors verified on demo-1.pdf loading
+- **Viewport persistence** across page refreshes
 
 ### Fixed
-- **Critical: 1,495 console errors eliminated**
-  - Fixed incorrect method calls from `getTile()` to `generateTile()` in background rendering (lines 1881, 1915)
-  - Added pdfDoc validation in `renderPage()` to prevent null reference errors (lines 713-719)
-  - Fixed page indexing bug (0-based to 1-based) for PDF.js compatibility (lines 1819-1822)
-  - Background rendering now executes correctly without throwing errors
-
-- **Critical: UI responsivity regression fixed**
-  - Implemented async tile rendering with yielding to prevent UI thread blocking (lines 1941-1970)
-  - Added `_renderTilesAsync()` helper method that processes tiles one at a time with `setTimeout(0)` between each
-  - Updated high-res and low-res rendering to use async approach (lines 1879, 1903)
-  - Eliminated page rendering timeouts (>10s) caused by synchronous batch processing
-  - Background rendering now completes without freezing the interface
-
-- **Critical: High-res cache thrashing with batched page loading**
-  - Fixed cache eviction during high-res rendering by matching batch size to cache size
-  - Prevents pages from being evicted while still needed for current batch
-  - Dynamically adjusts batch size based on `PAGE_CACHE_MAX_SIZE_HIGH` config
-  - Eliminates perpetual re-rendering of same pages due to premature eviction
-
-- **Navigator incorrectly showing on mobile/touch devices**
-  - Removed forced `showNavigator: true` parameter that bypassed device detection (line 3071)
-  - Navigator now properly hidden on small phones (<600px) as intended
-  - Touch device detection via `OSDManager.isTouchDevice()` now works correctly
-
-- **Graceful error handling - no more modal dialogs for automatic loading failures**
-  - Auto-load failures (CONFIG.AUTO_LOAD_PDF) now fail silently with console logging only
-  - URL parameter failures (?url=, ?pdf=) log to console instead of showing alert dialogs
-  - Storage restore failures clear bad data silently without user interruption
-  - Added `suppressAlerts` flag threaded through loadPDFFromURL → loadPDF chain
-  - All automatic loading paths now gracefully show home screen on failure
-
-- **Stale tiles from OpenSeadragon internal cache**
-  - Disabled OpenSeadragon's image cache (`imageLoaderLimit: 0`) to prevent stale tiles
-  - Ensures tiles always regenerate from current page cache state
-  - Prevents tiles from persisting with outdated/incomplete page data
+- UI responsivity regression (async tile rendering with yielding)
+- High-res cache thrashing with batched page loading
+- Navigator incorrectly showing on mobile/touch devices
+- Graceful error handling (no modal dialogs for auto-load failures)
+- Stale tiles from OpenSeadragon internal cache
 
 ### Changed
-- **Empty URL input behavior**
-  - Clearing URL field and clicking "Open URL" now destroys viewer and shows home screen
-  - Previously showed "Please enter a URL" alert dialog
-  - Provides clean way to return to home state without page refresh
+- Empty URL input now destroys viewer and shows home screen
 
-### Technical
-- Bidirectional rendering: L0-Down progressive strategy with viewport-first prioritization
-- Tile healing: Methods `healIncompleteTiles()` and `_identifyRequiredTiles(level)` added
-- Viewport persistence: Global `window.currentPdfFilename` for cross-PDF comparison
-- Cache management: Disabled OSD image cache, nuclear-clear all cached tiles for Level 3+
-- Diagnostic API: `window.__PDFGridDiagnostics.inspectTileQuality()` and `.healIncompleteTiles()`
+---
 
 ## [1.9.5] - 2025-11-16
 
-### Goal
-- Optimize Phase 3 upfront rendering for large PDFs
-- Improve viewer initialization speed for documents with 100+ pages
-- Fix on-demand rendering blocked by stuck promises
-- Preserve high-quality 4.0 render scale
-
 ### Added
-- **Conditional upfront rendering**: New `UPFRONT_RENDERING_PAGE_THRESHOLD: 100` config parameter
-  - PDFs with ≤100 pages: All pages rendered before viewer initialization (prevents blank tiles)
-  - PDFs with >100 pages: Skip Phase 3 upfront rendering to avoid blocking (pages render on-demand)
-  - Saves ~10ms per page in initialization time for large documents
+- Conditional upfront rendering (`UPFRONT_RENDERING_PAGE_THRESHOLD: 100`)
+  - PDFs ≤100 pages: all pages rendered before viewer init
+  - PDFs >100 pages: skip Phase 3, pages render on-demand
 
 ### Fixed
-- **Critical:** On-demand rendering blocked by stuck promises in renderingInProgress Map
-  - Added try...finally cleanup to ensure renderingInProgress always gets cleaned up (line 675-679)
-  - Added 10-second safety timeout to auto-cleanup stuck promises (line 686-694)
-  - Prevents permanent blocking of on-demand rendering for affected pages
-  - Fixes missing pages issue in large PDFs where upfront rendering is skipped
-  - Confirmed fix: natgeo-1969-05.pdf (194 pages) now renders 100% of pages (was 60%)
+- On-demand rendering blocked by stuck promises 
+- Black tiles for rendered pages (missing tile invalidation)
+- Entire viewer black after init for large PDFs (race condition)
+- Pages 2-3 "source_out_of_bounds" errors (source rectangle clamping)
 
-- **Critical:** Tiles showing black for rendered pages due to missing tile invalidation
-  - PageStreamer now automatically invalidates affected tiles when pages finish rendering (line 672-679)
-  - Calls `tileStreamer._invalidateTilesUsingPages()` + `scheduleRedraw()` after caching each page
-  - Applies to ALL page renders (initial, upfront, on-demand) not just on-demand
-  - Ensures tiles regenerate with newly-rendered page content instead of showing black
-  - Debounced redraw (30ms) batches multiple page completions for efficiency
-
-- **Critical:** Entire viewer black after initialization for large PDFs (race condition)
-  - Pre-initialization tile cache clear prevents black tiles from persisting (line 3100-3112)
-  - Post-initialization tile refresh waits for renders to complete, then clears stale tiles (line 3116-3148)
-  - Applies only when Phase 3 is skipped (PDFs >100 pages)
-  - Eliminates race where tiles generated during init show black pages that later finish rendering
-
-- **Critical:** Pages 2-3 failing to draw with "source_out_of_bounds" errors (70,513 failures)
-  - Source rectangle clamping handles dimension mismatches gracefully (line 2295-2316)
-  - Clamps srcX, srcY, srcW, srcH to actual canvas bounds instead of rejecting draw
-  - Prevents crashes when grid dimensions don't match actual page canvas dimensions
-  - Pages now render (potentially clipped) instead of showing as solid black
-  - Diagnostic logging when clamping occurs (verbose mode only)
-
-### Changed
-- Phase 3 upfront rendering now conditional based on page count (line 3028-3070)
-  - Console logging indicates when Phase 3 is skipped and estimated time saved
-  - Maintains blank-tile-free experience for small-to-medium PDFs
-  - Dramatically improves perceived performance for large PDFs (e.g., 200-page doc saves ~10 seconds)
-- PageStreamer.renderPage() improved promise lifecycle management (line 653-703)
-  - Promise added to Map before async work begins
-  - Timeout cleanup prevents indefinite blocking
-  - Error logging for failed renders
-
-### Technical
-- Config addition at line 143: `UPFRONT_RENDERING_PAGE_THRESHOLD: 100`
-- Conditional check: `pdf.numPages > CONFIG.UPFRONT_RENDERING_PAGE_THRESHOLD`
-- When skipped: On-demand rendering fills in minimap tiles as user pans/zooms
-- When enabled: Same comprehensive Phase 3 rendering as before
-
-### Testing
-- **Automated test suite** validates all fixes:
-  - `tests/natgeo-missing-pages-automated.spec.js` - Checks page cache status, visual content %, draw failures
-  - `tests/natgeo-broad-zoom-test.spec.js` - Verifies grid visibility at broad zoom levels
-  - `tests/natgeo-comprehensive-visual-test.spec.js` - **Smart grid-pattern analysis** across 3 views:
-    - Initial view (centered on page 1): 62.4% content coverage
-    - Broad zoom (entire grid): 100% of expected on-screen pages visible (0 missing)
-    - Minimap/navigator: 67.3% content coverage
-  - All tests confirm 194/194 pages cached (100%) with no missing pages in grid
-  - Tests use grid pattern logic to identify expected page positions, ignoring natural empty corners in diagonal layout
-
-### Notes
-- **Render scale preserved at 4.0** (high quality) - NOT changed to 3.0
-- Non-breaking change - existing small PDF behavior unchanged
-- Large PDF users get immediate viewer initialization instead of waiting
-- Based on v1.9.4 stable foundation, applying selective v1.9.5 optimizations only
+---
 
 ## [1.9.4] - 2025-11-16
 
-### Goal
-- Fix persistent empty/incomplete tiles bugs
-- Improve performance and responsiveness
-- Add comprehensive diagnostics
-
 ### Fixed
-- **Critical:** Cache invalidation regex now properly handles edge tiles (keys like `0_edger_pX-Y`, `0_edgeb_pX`)
-  - Previously, edge tiles were never invalidated when their pages finished rendering
-  - Led to persistent blank/incomplete edges that never updated
-  - Added warning log for unparseable tile keys to detect future issues
-- Reduced on-demand rendering debounce delay from 100ms to 30ms for faster visual feedback
-  - Tiles now update 3x faster when pages finish rendering
-  - Better perceived performance during progressive loading
+- Cache invalidation regex for edge tiles (`0_edger_pX-Y`, `0_edgeb_pX`)
+- Reduced on-demand rendering debounce 
 
 ### Added
-- **Draw Failures diagnostic panel** in debug overlay
-  - Shows total failures vs successes
-  - Breakdown by failure reason (no_canvas, invalid_dimensions, source_out_of_bounds, draw_exception)
-  - Last 5 failures with level, page number, and resolution
-  - "Clear Failures" button for testing
-  - Only appears when failures are detected (red warning indicator)
-- **SCALABILITY.md** - Comprehensive analysis for large PDF support (1000+ pages)
-  - Current bottlenecks identified
-  - Short-term, medium-term, and long-term recommendations
-  - Performance targets and implementation roadmap
-  - Configuration guidance for different deployment sizes
+- Draw Failures diagnostic panel (breakdown by failure reason)
+- SCALABILITY.md analysis document
 
-### Technical
-- Cache invalidation uses same regex but now with fallback logging (line 1856-1890)
-- Debounce timeout reduced from 100ms to 30ms (line 1366-1388)
-- Debug panel draw failures section (line 4643-4685)
-- Comprehensive empty tile diagnostics via `window.__drawPageDebug`
-
-### Notes
-- All changes are non-breaking - existing functionality preserved
-- Focus on bug fixes and diagnostics, not new features
-- Prepares groundwork for v1.9.5 scalability improvements
+---
 
 ## [1.9.3] - 2025-11-15
 
-### Goal
-- Improve debug panel organization and usability
-
 ### Added
-- Demo PDF organization: Created `demo/` directory for example PDFs
-- Debug panel URL sync: `?debug` parameter syncs with panel open/close state
-- Debug panel accessibility: Can now be opened even when no PDF is loaded
-- Interleaved statistics: Cache statistics now displayed directly below corresponding controls
+- Demo PDF organization (`demo/` directory)
+- Debug panel URL sync (`?debug` parameter)
+- Debug panel accessible without PDF loaded
 
 ### Changed
-- **Debug panel reorganization**: Complete restructuring into logical sections
-  - **Pages section**: Page count, PDF File Size, Storage info grouped together
-  - **Debug Visualization**: Verbose Logs, Tile Labels, Tile Borders (row 1)
-  - **Manual Controls**: Refresh, Recreate buttons (row 2)
-  - **Page Rendering & Cache**: Total memory, rendering strategy buttons (Upfront, Parallel, On-Demand, Predictive), page cache controls with statistics, viewport radius
-  - **Tile Streaming & Cache**: Resolution controls (High, Low, Dual, Fallback), tile cache controls with statistics
-  - **Settings**: RESET button at bottom
-- Statistics now interleaved with controls for immediate feedback (count, memory usage, average sizes)
-- Resolution controls (High/Low/Dual/Fallback) moved to Tile Streaming & Cache section for better logical grouping
-- PDF storage behavior: Only saves to sessionStorage/IndexedDB when using file:// protocol
-- PDF auto-restore: Only restores cached PDF when opened locally (file:// protocol)
-- All test files updated to use `demo/` directory structure
+- Debug panel reorganized into logical sections
+- Statistics interleaved with controls
+- PDF storage only for file:// protocol
 
-### Technical
-- Debug panel state synchronized with URL via `window.history.replaceState`
-- Conditional storage based on `window.location.protocol === 'file:'`
-- Test paths updated via regex replacement: `pdf=demo-*.pdf` → `pdf=demo/demo-*.pdf`
-- Statistics display shows: cache size, memory usage (MB), average item size
-- Each cache control section displays its statistics inline for better UX
+---
 
 ## [1.9.2] - 2025-11-15
 
-### Goal
-- Eliminate empty/blank tile issues once and for all
+### Added
+- Separate debug visualization controls (Verbose Logs, Tile Labels, Tile Borders)
+- RESET button in debug panel
+- Performance toggle controls (Parallel, On-Demand, Predictive, Upfront, Fallback)
+- Resolution mode selector (High, Low, Dual)
+- Cache size adjustment controls
+- Memory usage statistics
+- `?debug` URL parameter
+- localStorage persistence for settings
 
 ### Fixed
-- Variable scope issues in backend integration (initialLowResCount and priorityPages undefined errors)
-- Console spam when using `?debug` parameter (separated verbose logging from visual debugging)
+- Variable scope issues (initialLowResCount, priorityPages undefined)
+- Console spam with `?debug` parameter
 
-### Added
-- Separate debug visualization controls (Verbose Logs, Tile Labels, Tile Borders toggles)
-- RESET button in debug panel to restore all settings to defaults
-- Performance toggle controls in debug panel (Parallel, On-Demand, Predictive, Upfront, Fallback rendering)
-- Resolution mode selector (High, Low, or Dual resolution rendering)
-- Cache size adjustment controls (Tile Cache, LowRes Pages, HighRes Pages, Viewport Radius)
-- Memory usage statistics in debug panel (total memory, cache weights, average tile/page sizes)
-- PDF file size display in debug panel memory statistics
-- Storage usage display showing size of cached PDF in sessionStorage/IndexedDB
-- `?debug` URL parameter to automatically open debug panel on page load
-- localStorage persistence for all performance toggles and cache parameters (persists across page refresh)
-- Console logging for performance feature and cache parameter changes
-- Scrollable debug panel for better handling of expanded statistics
-
-### Changed
-- Performance features can now be toggled on-the-fly for testing
-- Cache sizes can now be adjusted on-the-fly for testing
-- All settings sync with CONFIG in real-time
-- Re-enabled local PDF storage for faster page refresh (sessionStorage/IndexedDB hybrid)
-- Improved error messages to distinguish between storage failures and server fetch failures
-- Debug button now accessible even when no PDF is loaded
-
-### Technical
-- Five performance toggles: PARALLEL_RENDERING_ENABLED, ON_DEMAND_RENDERING_ENABLED, PREDICTIVE_RENDERING_ENABLED, UPFRONT_RENDERING_ENABLED, FALLBACK_RENDERING_ENABLED
-- Resolution mode selector: RESOLUTION_MODE ('high', 'low', or 'dual')
-- Four cache size parameters: MAX_CACHE_SIZE, PAGE_CACHE_MAX_SIZE_LOW, PAGE_CACHE_MAX_SIZE_HIGH, VIEWPORT_PRIORITY_RADIUS
-- All settings save to localStorage and load on mount
-- useEffect hooks sync React state with CONFIG object
-- Number inputs with validation and step increments for cache parameters
-- getMemoryStats() calculates actual memory usage based on canvas dimensions (width × height × 4 bytes per pixel)
-- Memory statistics include total MB, per-cache MB, item counts, and average sizes
-- Backend integration: Resolution mode controls Phase 1 (high-res), Phase 2 (low-res), and Phase 3 (upfront) rendering
-- Backend integration: Upfront toggle controls Phase 3 rendering (all remaining pages before viewer starts)
-- Backend integration: Fallback toggle controls whether tiles can use alternate resolution when requested resolution unavailable
-- Resolution mode 'high': Skips low-res rendering, renders only high-resolution pages
-- Resolution mode 'low': Skips high-res rendering, renders only low-resolution pages
-- Resolution mode 'dual': Renders both high-res and low-res (default behavior)
-- Fallback rendering enabled: Tiles use low-res when high-res unavailable, and vice versa (with quality constraints)
-- Fallback rendering disabled: Tiles show blank when requested resolution unavailable (on-demand rendering fills them in)
+---
 
 ## [1.9.1] - 2025-11-15
 
 ### Added
-- Click-outside functionality to close help panel by tapping on OpenSeadragon viewer
-- Interactive debug panel with live statistics (updates every 500ms)
-- Debug Tiles toggle button in debug panel (consolidated borders and labels)
-- Refresh button to manually trigger tile redraw
-- Recreate button to rebuild TiledImage with cache clearing
-- Close button (X) for debug panel
-- Page counter display in debug panel
-- Example PDF links on home screen (magazine, book, academic publication)
-- National Geographic 1969-05 PDF as local demo file
-- Automated test suite for debug panel controls (tests/debug-panel-recreate.spec.js)
+- Click-outside to close help panel
+- Interactive debug panel with live statistics
+- Refresh and Recreate buttons
+- Example PDF links on home screen
 
 ### Changed
-- Moved DEBUG button from fixed position into help panel (next to DOWNLOAD button)
-- Moved debug display from help panel to transparent overlay on OpenSeadragon viewer
-- Positioned debug overlay in bottom-left corner with frosted glass effect
-- Debug panel now auto-closes help panel when opened
-- Made debug panel mobile-responsive (max-width 48vw on small screens, compact padding and fonts)
-- Help panel buttons (Download, Debug) now always visible but disabled when no PDF loaded
-- Updated magazine example link from Popular Mechanics to National Geographic (local)
-- Updated book example link to "The Tale of Ginger and Pickles"
-- Restored initial view to centered "page one" instead of full grid (DEBUG_INITIAL_VIEW_WHOLE_GRID = false)
-- Harmonized home screen text with help panel content
-- Home screen shows conditional messaging based on device type (mobile vs desktop)
-- Changed home screen heading to "Specify a PDF to get started"
-- Improved home screen text layout with max-width constraint for readability
+- DEBUG button moved into help panel
+- Debug overlay with frosted glass effect
+- Restored initial view to centered "page one"
 
-### Technical
-- Sync CONFIG.DEBUG_MODE with debug panel toggle states
-- Live update mechanism for debug statistics
-- Fixed Recreate button bug (changed cache.clear() to tileCache.clear())
+---
 
 ## [1.9.0] - 2025-11-15
 
 ### Fixed
-- Fixed L0 navigator tile cache completeness to ensure 100% of pages are cached before viewer initialization
-- Resolved blank tile issues in navigator minimap
+- L0 navigator tile cache completeness (100% pages cached before init)
 
 ### Added
-- Hybrid rendering system: continuous viewport monitoring + on-demand rendering
-- Velocity-based predictive rendering for viewport-aware page prioritization
-- Parallel viewport-aware rendering infrastructure
-- Comprehensive fallback tracking for tile rendering diagnostics
-- PageCache LRU eviction with automated test suite
-- Memory monitoring tests for zoom operations
+- Hybrid rendering: continuous viewport monitoring + on-demand
+- Velocity-based predictive rendering
+- PageCache LRU eviction with test suite
 
-### Changed
-- Slowed down test panning to realistic speeds, revealing rendering performance improvements
-
-### Performance
-- Significantly improved tile rendering during panning with predictive loading
-- Optimized page cache management to prevent unbounded memory growth
+---
 
 ## [1.8.14] - 2025-11-13
 
 ### Fixed
-- Fixed hairline gaps between tiles by implementing scale-aware tile overlap
-- Significantly reduced tile gaps using JPEG format + OpenSeadragon config + 1px overlap
+- Hairline gaps between tiles (scale-aware tile overlap)
+- Switched to JPEG tiles (eliminated PNG transparency artifacts)
+- Configured OSD `subPixelRoundingForTransparency`
 
-### Changed
-- Switched to JPEG tile format to eliminate PNG transparency rendering artifacts
-- Configured OpenSeadragon `subPixelRoundingForTransparency: 2` to reduce sub-pixel gaps
-- Removed CSS image-rendering overrides to fix moiré artifacts
-
-### Documentation
-- Documented antialiasing halo issue causing dark hairlines between tiles
-- Added iOS Safari crash investigation notes to TODO
+---
 
 ## [1.8.13] - 2025-11-13
 
 ### Fixed
-- Fixed edge tile collision by specifying which edge (right/bottom/both) in cache keys
-- Proper edge disambiguation for tile deduplication
+- Edge tile collision (edge marker in cache keys: right/bottom/both)
 
-### Changed
-- Replaced tile count heuristic with explicit edge marker for deduplication
+---
 
-## [1.8.12] - 2025-11-13
+## [1.8.10-1.8.12] - 2025-11-13
 
-### Changed
-- Clear tile cache before TiledImage recreation to prevent stale tile issues
+- Hybrid cache key strategy (page-range for whole pages, position-based for partial)
+- Clear tile cache before TiledImage recreation
+- Removed cache generation system
 
-## [1.8.11] - 2025-11-13
+---
 
-### Removed
-- Removed cache generation system (simplified cache invalidation approach)
+## [1.8.5-1.8.9] - 2025-11-13
 
-## [1.8.10] - 2025-11-13
-
-### Changed
-- Implemented hybrid cache key strategy: page-range keys for whole pages, position-based keys for partial pages
-- Improved tile cache deduplication for deep zoom levels
-
-## [1.8.9] - 2025-11-13
-
-### Documentation
-- Added TODO to evaluate fingerprint vs modulo deduplication approach
-- Noted aesthetic issues with even-numbered page layouts
-
-## [1.8.8] - 2025-11-13
-
-### Added
-- Special case handling for 2-page PDFs to improve grid layout
-- Enhanced tile key display in debug mode
-
-## [1.8.7] - 2025-11-13
-
-### Added
-- Content-based fingerprint deduplication for tile caching
-- Achieved 69.2% cache savings through pattern recognition
-
-### Fixed
-- Fixed tile cache collision bug by including position in cache keys
-
-## [1.8.6] - 2025-11-13
-
-*(No documented changes - intermediate version)*
-
-## [1.8.5] - 2025-11-13
-
-### Added
+- Content-based fingerprint deduplication 
 - Tile cache deduplication with page range keys
-- Significant memory savings for repeated page patterns in staggered grid
+- Special case for 2-page PDFs
 
-## [1.8.4] - 2025-11-13
+---
 
-### Performance
-- Optimized tile fallback behavior for smoother progressive loading
-- Removed unnecessary cache invalidation to improve performance
-
-## [1.8.3] - 2025-11-13
-
-*(No documented changes - intermediate version)*
-
-## [1.8.2] - 2025-11-13
-
-### Changed
-- Switched to power-of-2 render scale (4x) for optimal performance
-- Optimized tile sizing for better memory utilization
-
-## [1.8.1] - 2025-11-13
-
-### Changed
-- Decoupled URL parameters from auto-load configuration
-- Improved cross-platform PDF download behavior
-
-## [1.8.0] - 2025-11-12
+## [1.8.0-1.8.4] - 2025-11-12 to 2025-11-13
 
 ### Added
 - Progressive loading with TiledImage recreation
-- Fast initial load with no blank tiles in viewport
-- Scattered bit-reversal ordering for better perceived minimap progress
+- Scattered bit-reversal ordering for minimap progress
 
 ### Changed
-- Render all pages synchronously before viewer initialization to prevent blank tiles
+- Power-of-2 render scale (4x)
+- Render all pages synchronously before viewer init
 
-## [1.7.3] - 2025-11-12
+---
 
-### Fixed
-- Fixed blank tile caching issues (working but requires optimization)
-
-## [1.7.2] - 2025-11-12
+## [1.7.1-1.7.3] - 2025-11-10 to 2025-11-12
 
 ### Added
-- Tile cache diagnostics logging for investigating blank tile issues
-- Progressive loading with background rendering - dramatic performance improvement
+- LRU cache for PageStreamer and TileCache
+- PageStreamer/TileStreamer architecture
+- Progressive loading with background rendering
+- Tile cache diagnostics
 
-## [1.7.1] - 2025-11-10
+---
+
+## [1.6.x] - 2025-11-08 to 2025-11-09
 
 ### Added
-- LRU cache implementation for PageStreamer
-- Scale-aware rendering architecture documentation
-- Upgraded TileCache to LRU eviction
+- Progressive loading architecture
+- Navigator minimap with progressive loading
+- Dynamic global scale calculation
+- Touch detection using CSS pixels
 
 ### Changed
-- Implemented PageStreamer/TileStreamer architecture for on-demand rendering
+- Hide navigator on touch devices
 
-### Documentation
-- Comprehensive architecture documentation for future scale-aware rendering phases
-
-## [1.6.12] - 2025-11-09
-
-### Documentation
-- Documented selective tile invalidation attempts
-- Kept improved TiledImage recreation approach
-
-## [1.6.11] - 2025-11-09
-
-### Added
-- Example book link in help pane
-
-## [1.6.10] - 2025-11-09
-
-### Added
-- Example magazine link in help pane
-
-## [1.6.9] - 2025-11-09
-
-### Added
-- Storage caching for URL-loaded PDFs
-
-## [1.6.8] - 2025-11-09
-
-### Added
-- Timing debug messages to URL loading path
-
-## [1.6.7] - 2025-11-09
-
-### Added
-- Detailed loading debug messages with timing
-
-## [1.6.6] - 2025-11-09
-
-### Changed
-- Disabled rendering progress debug messages
-
-## [1.6.5] - 2025-11-09
-
-### Changed
-- Eliminated special case for first page rendering
-
-## [1.6.4] - 2025-11-09
-
-### Added
-- N×N staggered grid pattern as default layout
-
-## [1.6.3] - 2025-11-09
-
-### Added
-- Eviction control to PageCache for arbitrary page counts
-- Dynamic global scale calculation based on page count
-
-### Changed
-- Re-enabled navigator minimap with progressive loading
-
-### Fixed
-- Fixed typo: prerenderedPagesRef vs prererenderedPagesRef
-- Changed initial view to show whole grid instead of first page
-
-## [1.6.2] - 2025-11-09
-
-### Changed
-- Returned to v1.2.8 progressive loading approach
-
-## [1.6.1] - 2025-11-08
-
-### Changed
-- Disabled progressive loading for global grid view
-
-## [1.6.0] - 2025-11-08
-
-### Added
-- Progressive loading architecture (pre-render approach)
-- Touch detection using CSS pixels instead of physical pixels
-
-### Changed
-- Hide navigator minimap on touch devices
-- Fixed interface issues: removed version from title, handle missing demo.pdf
+---
 
 ## [1.5.4] - 2025-11-09
 
 ### Added
-- Stop button to cancel PDF loading (appears with spinner overlay)
-- Unlimited deep zoom on all devices and document sizes
-- Gesture settings for consistent touch/desktop zoom behavior
+- Stop button to cancel PDF loading
+- Unlimited deep zoom on all devices
 
 ### Changed
-- Reduced PDF render scale from 2x to 1x for faster loading and reduced memory usage
-- Removed maxZoomLevel and maxZoomPixelRatio constraints (set to null/Infinity)
-- Fixed minZoomImageRatio to constant 0.9 for all documents
-- Reduced visibilityRatio from 0.9 to 0.01 for deep zoom in large documents
-- Updated demo book link to "The Unwritten Laws of Engineering"
-- URL input field now updates immediately when loading from URL parameter
-- Local filenames now properly update ?pdf parameter in address bar
-
-### Technical
-- Added loadingCancelledRef to track cancellation state
-- Implemented cancel checking in renderAllPages loop
-- Improved cleanup when loading is cancelled
-- Better error handling for cancelled vs failed loads
+- Reduced PDF render scale (2x → 1x)
+- URL input updates immediately from URL parameter
 
 ### Note
-**Web deployment version** - This version was deployed to the web and served as the public release from 2025-11-09 to present. Git tag was created retroactively on 2025-11-15.
-
-## [1.5.3] - 2025-11-08
-
-*(No documented changes - intermediate version)*
-
-## [1.5.2] - 2025-11-08
-
-*(No documented changes - intermediate version)*
-
-## [1.5.1] - 2025-11-07
-
-### Added
-- DEBUG_MODE, ErrorCodes, and URLManager (Phase 1 refactoring)
-
-## [1.5.0] - 2025-11-07
-
-### Added
-- `?pdf=` parameter to fetch from server when served
-
-### Changed
-- Improved empty state message about offline vs served usage
-
-### Fixed
-- Fixed URL parameter persistence bug
-- Fixed auto-load for file:// protocol
-
-### Documentation
-- Documented page refresh performance trade-offs
-- Documented browser history support for future implementation
-
-## [1.4.4] - 2025-11-07
-
-### Added
-- Local PDF persistence for faster refresh
-
-## [1.4.3] - 2025-11-06
-
-### Added
-- Help overlay with usage instructions
-- Improved URL field UX
-
-### Changed
-- Improved help text and tightened grid spacing
-
-## [1.4.2] - 2025-11-06
-
-### Fixed
-- Fixed zoom constraints for large PDFs
-
-## [1.4.1] - 2025-11-06
-
-### Added
-- UI/UX improvements
-- Mobile optimization
-
-### Changed
-- Added demo.pdf for auto-load feature
-
-## [1.4.0] - 2025-11-06
-
-### Added
-- Refactored architecture
-- URL loading features
-
-### Changed
-- Fixed UI text: Changed 'Double-click to reset view' to 'Click to center'
-
-## [1.3.0] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.8.2] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.8.1] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.8] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.7] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.6] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.5] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.4] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.3] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.2] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.1] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.2.0] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.8] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.7] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.6] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.5] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.4] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.3] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.2] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.1] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.1.0] - 2025-11-09
-
-### Note
-Historical version - detailed change information not available
-
-## [1.0] - 2025-11-09
-
-### Added
-- Initial release of PDF Grid Viewer
-- OpenSeadragon-based deep zoom viewer for PDFs
-- Staggered diagonal grid layout
-- Basic file loading and URL support
-
-### Note
-Historical version - this and versions 1.1.0-1.3.0 were backfilled into version control on 2025-11-09
+Web deployment version (2025-11-09 to present). Git tag created retroactively.
 
 ---
 
-## Version Naming Convention
+## [1.5.0-1.5.3] - 2025-11-07 to 2025-11-08
 
-- **Major.Minor.Patch** (e.g., 1.9.1)
-  - **Major**: Breaking changes or major feature additions
-  - **Minor**: New features, significant improvements
-  - **Patch**: Bug fixes, minor improvements
+### Added
+- `?pdf=` parameter to fetch from server
+- DEBUG_MODE, ErrorCodes, URLManager (Phase 1 refactoring)
+
+### Fixed
+- URL parameter persistence bug
+- Auto-load for file:// protocol
+
+---
+
+## [1.4.x] - 2025-11-06 to 2025-11-07
+
+### Added
+- Local PDF persistence for faster refresh
+- Help overlay with usage instructions
+- URL loading features
+- Mobile optimization
+
+### Fixed
+- Zoom constraints for large PDFs
+
+---
+
+## [1.0-1.3] - Historical
+
+Initial development versions. OpenSeadragon-based deep zoom viewer with staggered diagonal grid layout.
+
+### Placeholder Versions (backfilled 2025-11-09)
+- 1.3.0, 1.2.8.2, 1.2.8.1, 1.2.8, 1.2.7, 1.2.6, 1.2.5, 1.2.4, 1.2.3, 1.2.2, 1.2.1, 1.2.0
+- 1.1.8, 1.1.7, 1.1.6, 1.1.5, 1.1.4, 1.1.3, 1.1.2, 1.1.1, 1.1.0
+- 1.0
+
+---
+
+## Version Convention
+
+**Major.Minor.Patch**
+- Major: Breaking changes
+- Minor: New features
+- Patch: Bug fixes
 
 ## Links
 

@@ -1,27 +1,27 @@
-# Sunday: Tile Loading Investigation
+# THIS-BRANCH: Tile Loading Investigation
 
-**Date:** 2025-11-30
+**Branch:** Sunday
 **Status:** ✅ Resolved in v1.11.0
+
+
+THE NEXT THING:
+Now that we have asychronous tile request & generation, we can implement progressive tile generation. We should re-publish tiles as pages are completed.
+
+
+
+
+
+
 
 ---
 
 ## The Problems
 
-1. **Stale striped tiles** - Placeholder tiles cached by OSD, never replaced
 2. **Low-res at high zoom** - Wrong resolution tiles displayed at detail levels
 
 ---
 
 ## Root Cause: Impedance Mismatch
-
-We used synchronous `getTileUrl` returning placeholder data URLs when content wasn't ready:
-
-```
-OSD requests tile → We return placeholder → OSD caches it → Content renders → OSD never asks again
-```
-
-**The mistake:** Being "too helpful" by always returning something. This prevented OSD's natural retry/fallback behavior.
-
 ---
 
 ## The Fix: Async Tile Pattern
@@ -101,7 +101,7 @@ Preventive won. A clean architectural fix beat complex runtime healing.
 
 ### 5. Feedback Control for Testing
 
-The corrective approach (measure actual canvas output) proved valuable as a **testing methodology** rather than runtime healing. The visual test compares PDF truth signal against OSD canvas output.
+The corrective approach (measure actual canvas output) proved valuable as a **testing methodology** rather than runtime healing. Rather than building truthin into the test code, the visual test compares PDF truth signal against OSD canvas output.
 
 ---
 
