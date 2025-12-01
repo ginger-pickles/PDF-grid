@@ -1,111 +1,173 @@
-# THIS-BRANCH: Tile Loading Investigation
+# THIS-BRANCH: Peppers
 
-**Branch:** Sunday
-**Status:** ✅ Resolved in v1.11.0
+Status: In progress (test implementation)
 
+## Problem Behavior
 
+1. **Slow tile build-in**: Tiles visibly populate as view is zoomed and panned
+2. **Flickering**: Display briefly blanks during load and while idle
 
----
+## Requirements
 
-## The Problems
+1. Tile display speed shall be improved
+2. Flickering issues shall be reduced
 
-1. **Empty tiles**
-2. **Low-res at high zoom** - Wrong resolution tiles displayed at detail levels
+## Test Files
 
----
+Files that exhibit issues (large bitmap images):
+- `ginger-pickles.pdf`
+- `marie-neurath.pdf`
 
-## Root Cause: Impedance Mismatch
----
-
-
-
-
-## Lessons Learned
-
-### 1. Question the Foundation
-
-When building elaborate workarounds, that's a signal to revisit assumptions:
-- We built tile registries, health checks, auto-inspectors
-- All to work around a synchronous API choice
-- The fix was switching to the right API
-
-### 2. Understand the Contract
-
-The first working approach (`getTileUrl` + placeholders) became entrenched. We optimized within its constraints instead of asking: "What does OSD actually expect?"
-
-### 3. Let Systems Do Their Job
-
-OSD has sophisticated fallback/retry behavior. Our "helpful" placeholders disabled it. Sometimes the best code is code you don't write.
-
-### 4. Preventive > Corrective
-
-We planned two approaches:
-- **Preventive:** Fix the root cause
-- **Corrective:** Detect and heal bad tiles
-
-Preventive won. A clean architectural fix beat complex runtime healing.
-
-### 5. Feedback Control for Testing
-
-The corrective approach (measure actual canvas output) proved valuable as a **testing methodology** rather than runtime healing. Rather than building truth into the test code, the visual test compares PDF truth signal against OSD canvas output.
+These files flicker during load AND while idle.
 
 ---
 
+## Development Vectors
 
-## The Fix: Async Tile Pattern
+### Vector 1: Exteroceptive over Interoceptive
 
-OSD has `downloadTileStart` for true async loading:
+Tests should verify what the user **sees**, not what the code **reports**.
+
+| Approach      | Risk                                                   |
+|---------------|--------------------------------------------------------|
+| Interoceptive | False positives - internal state correct, screen blank |
+| Exteroceptive | Catches real failures the user would experience        |
+
+**Direction**: Every pass/fail criterion should have an exteroceptive component.
+
+### Vector 2: Screenshot Comparison, Not Canvas Sampling
+
+Canvas `getImageData()` misses visual flickers. Page screenshots capture what user sees.
 
 ```javascript
-downloadTileStart(context) {
-  if (contentReady) {
-    context.finish(ctx);  // Complete immediately
-  } else {
-    pendingJobs.set(key, { context, ... });  // OSD knows tile is "loading"
-    // Later, when content ready: context.finish(ctx)
+// Do this
+const screenshot = await page.screenshot({ type: 'png' });
+
+// Not this
+const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+```
+
+**Direction**: All visual assertions should use page screenshots.
+
+### Vector 3: Distinguish Loading from Flickering
+
+During load, screen changes are expected. After settling, they are not.
+
+| Phase     | Change Expected  | Failure Criterion      |
+|-----------|------------------|------------------------|
+| Loading   | Yes              | Content never appears  |
+| Settled   | No               | Any significant change |
+| Pan/Zoom  | Yes, then settle | Fails to settle        |
+
+**Direction**: Implement "monotonicity" check - during load, content should only increase (pixels filling in), never decrease (content disappearing).
+
+### Vector 4: Immediate Logging
+
+Test results must not be lost on abort. Log findings immediately, not at end.
+
+```javascript
+// Log immediately when detected
+console.log(`⚠ FLICKER frame ${i}: ${pct}%`);
+```
+
+**Direction**: Every significant observation logged in real-time.
+
+### Vector 5: Phase-Specific Thresholds
+
+Different phases have different stability expectations.
+
+| Phase     | Sampling | Threshold       | Notes                               |
+|-----------|----------|-----------------|-------------------------------------|
+| Load      | 50ms     | Track direction | Expect change, watch for regression |
+| Settled   | 50ms     | 0.1%            | Any change is suspect               |
+| Animation | 50ms     | Track settling  | Measure time-to-stable              |
+
+**Direction**: Parameterize detection per phase.
+
+### Vector 6: Browser Comparison
+
+Behavior differs across browsers. Firefox may not exhibit Chromium's issues.
+
+**Direction**: Run identical tests on multiple browser projects, compare results.
+
+---
+
+## Working Configuration
+
+```javascript
+FLICKER_INTERVAL = 50     // 50ms between samples
+FLICKER_THRESHOLD = 0.1   // 0.1% change triggers flag
+
+function compareBuffers(buf1, buf2) {
+  if (buf1.length !== buf2.length) return 100;
+  let diff = 0;
+  for (let i = 0; i < buf1.length; i++) {
+    if (buf1[i] !== buf2[i]) diff++;
   }
+  return (diff / buf1.length) * 100;
 }
 ```
 
-**Why this works:**
-- OSD tracks "loading" vs "loaded" state
-- OSD uses natural fallback (upscaled low-res) while waiting
-- When we call `finish()`, OSD displays immediately
-- No placeholders, no stale cache entries
+---
+
+## Test Suite
+
+### SFT: Short-Form Test
+
+Quick validation with both interoceptive and exteroceptive checks.
+
+- Duration: <30 seconds
+- PDF: `demo/test-pattern.pdf`
+- States: Initial view, Overview
+
+### LFT: Long-Form Test
+
+Comprehensive flicker detection using page screenshots.
+
+- Duration: Minutes
+- PDF: `demo/ginger-pickles.pdf`
+- Phases: Load, Pan, Grid, Detail
 
 ---
 
-## OSD Integration Gotchas
+## Commands
 
-**1. `getTileUrl` still required**
-Even with `downloadTileStart`, OSD needs `getTileUrl` for cache keys:
-```javascript
-getTileUrl: (level, x, y) => `tile://${level}/${x}/${y}`
-```
+```bash
+# SFT - quick validation
+npx playwright test tests/short-form-test.spec.js --project=chromium
 
-**2. Coordinates via `postData`, not `tile`**
-```javascript
-getTilePostData: (level, x, y) => ({ level, x, y }),
-downloadTileStart: (context) => {
-  const { level, x, y } = context.postData;  // NOT context.tile
-}
-```
-
-**3. Canvas per tile**
-OSD caches references, not copies. Each tile needs its own canvas.
-
-**4. Cache handlers for context2D**
-```javascript
-createTileCache: (cache, data) => { cache._data = data; },
-getTileCacheDataAsContext2D: (cache) => cache._data
+# LFT - comprehensive flicker detection (headed for observation)
+npx playwright test tests/long-form-test.spec.js --project=chromium --headed
 ```
 
 ---
 
+## Code Analysis (2024-12-01)
+
+### Dead Code Identified
+
+The async `downloadTileStart` pattern (v1.11.0) does not generate stripe placeholders. The following code is now dead:
+
+| Component                    | Purpose                        | Status                              |
+|------------------------------|--------------------------------|-------------------------------------|
+| `_renderBlankTile()`         | Red stripe placeholder         | Dead - never called                 |
+| `inspectVisual()`            | Stripe pattern detector        | Dead - no stripes to detect         |
+| Auto-Inspector               | Periodic stripe check + heal   | Dead - triggers on non-existent     |
+| `FALLBACK_RENDERING_ENABLED` | Config toggle                  | Dead - fallback logic unused        |
+
+### Potential Flicker Sources
+
+| Component              | Behavior                              | Concern                    |
+|------------------------|---------------------------------------|----------------------------|
+| `recreateTiledImage()` | Removes TiledImage, waits 50ms, re-adds | Creates visible blank gap |
+| Called at line 4675    | After initial batch complete          | One-time during load       |
+| Called at line 5101    | After all low-res pages complete      | One-time during load       |
+| Called by Auto-Inspector | When stripes detected               | Periodic (but stripes don't exist) |
+
+Note: Do not remove code yet. iOS may have cache limitations requiring stripe reintroduction.
+
 ---
 
-## Sources
+## Background
 
-- [OSD Advanced Data Model](https://openseadragon.github.io/examples/advanced-data-model/) - Mandelbrot example showing `downloadTileStart`
-- [OSD TileSource API](https://openseadragon.github.io/docs/OpenSeadragon.TileSource.html)
-- [GitHub Issue #1299](https://github.com/openseadragon/openseadragon/issues/1299) - Custom tile source discussion
+See Sunday-original.md for notes from the last branch. See also Changelog.
