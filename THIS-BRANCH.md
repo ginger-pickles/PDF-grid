@@ -22,6 +22,30 @@ These files flicker during load AND while idle.
 
 ---
 
+
+
+## Test Suite
+
+### SFT: Short-Form Test
+
+Quick validation with both interoceptive and exteroceptive checks.
+
+- Duration: <30 seconds
+- PDF: `demo/test-pattern.pdf`
+- States: Initial view, Overview
+
+### LFT: Long-Form Test
+
+Comprehensive flicker detection using page screenshots.
+
+- Duration: Minutes
+- PDF: `demo/ginger-pickles.pdf`
+- Phases: Load, Pan, Grid, Detail
+
+---
+
+
+
 ## Development Vectors
 
 ### Vector 1: Exteroceptive over Interoceptive
@@ -92,51 +116,13 @@ Behavior differs across browsers. Firefox may not exhibit Chromium's issues.
 
 ---
 
-## Working Configuration
-
-```javascript
-FLICKER_INTERVAL = 50     // 50ms between samples
-FLICKER_THRESHOLD = 0.1   // 0.1% change triggers flag
-
-function compareBuffers(buf1, buf2) {
-  if (buf1.length !== buf2.length) return 100;
-  let diff = 0;
-  for (let i = 0; i < buf1.length; i++) {
-    if (buf1[i] !== buf2[i]) diff++;
-  }
-  return (diff / buf1.length) * 100;
-}
-```
-
----
-
-## Test Suite
-
-### SFT: Short-Form Test
-
-Quick validation with both interoceptive and exteroceptive checks.
-
-- Duration: <30 seconds
-- PDF: `demo/test-pattern.pdf`
-- States: Initial view, Overview
-
-### LFT: Long-Form Test
-
-Comprehensive flicker detection using page screenshots.
-
-- Duration: Minutes
-- PDF: `demo/ginger-pickles.pdf`
-- Phases: Load, Pan, Grid, Detail
-
----
-
 ## Commands
 
 ```bash
 # SFT - quick validation
 npx playwright test tests/short-form-test.spec.js --project=chromium
 
-# LFT - comprehensive flicker detection (headed for observation)
+# LFT - comprehensive flicker detection (optionally headed for observation)
 npx playwright test tests/long-form-test.spec.js --project=chromium --headed
 ```
 
@@ -165,6 +151,23 @@ The async `downloadTileStart` pattern (v1.11.0) does not generate stripe placeho
 | Called by Auto-Inspector | When stripes detected               | Periodic (but stripes don't exist) |
 
 Note: Do not remove code yet. iOS may have cache limitations requiring stripe reintroduction.
+
+### Hypotheses and Proposed Corrections
+
+| Hypothesis                          | Evidence                                      | Proposed Correction                          | Status   |
+|-------------------------------------|-----------------------------------------------|----------------------------------------------|----------|
+| `recreateTiledImage()` 50ms gap     | Function explicitly waits 50ms during swap    | Reduce delay or use crossfade transition     | Untested |
+| Auto-Inspector false triggers       | Checks for stripes that no longer exist       | Disable Auto-Inspector or remove dead code   | Untested |
+| React state change triggers redraw  | Debug panel updates cause visible refresh     | Memoize OSD interaction, isolate from state  | Untested |
+| OSD tile cache invalidation         | Tiles re-request after initial display        | Increase cache size or prevent invalidation  | Untested |
+| Multiple `forceRedraw()` calls      | Called from multiple code paths               | Debounce or consolidate redraw triggers      | Untested |
+
+### Investigation Order
+
+1. **Disable Auto-Inspector** - Quick test, may eliminate periodic flickers
+2. **Profile `recreateTiledImage()` calls** - Add logging to confirm when/if called
+3. **Isolate React from OSD** - Check if debug panel state affects display
+4. **Review `forceRedraw()` call sites** - Map all triggers, look for redundancy
 
 ---
 
