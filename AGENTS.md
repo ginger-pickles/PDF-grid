@@ -1,27 +1,37 @@
 # CLAUDE.md - AI Assistant Guide for PDF Grid Viewer
 
+Interactive responses should be kept to a length not to exceed the height of a typical terminal window.
+
+Interactive responses should include few code snippets. Code snippets should be kept to the background, or in working documentation files such as THIS-BRANCH.md or otherwise.
+
 KEEP DOCUMENTATION FILES UNDER 500 LINES.
 
 KEEP DOCUMENTATION FORWARD-LOOKING. Code comments capture current state. Documentation captures future development vectors.
 
-WHEN WRITING REPORTS, follow `reporting.md` format guidelines.
+
+When writing reports, follow `reporting.md` format requirements.
+Tables in documentation shall include whitespace for readability.
 
 ---
+
+## Requirements
+
+Humans write requirements. Agents do not modify requirements. Agents may discuss "trading" requirements with humans.
+
 
 ## Documentation Files
 
 | File                             | Purpose                              |
 |----------------------------------|--------------------------------------|
-| `CLAUDE.md`                      | AI assistant guide (this file)       |
+| `AGENTS.md`                      | AI assistant guide (this file)       |
+| `reporting.md`                   | Report format requirements           |
+| `THIS-BRANCH.md`                 | Current branch investigation notes   |
 | `README.md`                      | User-facing documentation            |
 | `CHANGELOG.md`                   | Version history                      |
-| `THIS-BRANCH.md`                 | Current branch investigation notes   |
-| `reporting.md`                   | Report format requirements             |
 | `TESTING.md`                     | Test strategy, how to run tests      |
-| `claude-development-vectors.md`  | Future optimization ideas            |
-| `TODO.md`                        | Feature backlog, known issues        |
-| `ideas.md`                       | Raw feature ideas                    |
-| `lessons.md`                     | Development insights                 |
+| `development-vectors.md`         | Future optimization ideas            |
+| `TODO.md`                        | Feature backlog, map of known issues |
+| `lessons.md`                     | Human-authored evelopment insights   |
 
 ---
 
