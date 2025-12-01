@@ -4,25 +4,53 @@
 **Status:** ✅ Resolved in v1.11.0
 
 
-THE NEXT THING:
-Now that we have asychronous tile request & generation, we can implement progressive tile generation. We should re-publish tiles as pages are completed.
-
-
-
-
-
-
 
 ---
 
 ## The Problems
 
+1. **Empty tiles**
 2. **Low-res at high zoom** - Wrong resolution tiles displayed at detail levels
 
 ---
 
 ## Root Cause: Impedance Mismatch
 ---
+
+
+
+
+## Lessons Learned
+
+### 1. Question the Foundation
+
+When building elaborate workarounds, that's a signal to revisit assumptions:
+- We built tile registries, health checks, auto-inspectors
+- All to work around a synchronous API choice
+- The fix was switching to the right API
+
+### 2. Understand the Contract
+
+The first working approach (`getTileUrl` + placeholders) became entrenched. We optimized within its constraints instead of asking: "What does OSD actually expect?"
+
+### 3. Let Systems Do Their Job
+
+OSD has sophisticated fallback/retry behavior. Our "helpful" placeholders disabled it. Sometimes the best code is code you don't write.
+
+### 4. Preventive > Corrective
+
+We planned two approaches:
+- **Preventive:** Fix the root cause
+- **Corrective:** Detect and heal bad tiles
+
+Preventive won. A clean architectural fix beat complex runtime healing.
+
+### 5. Feedback Control for Testing
+
+The corrective approach (measure actual canvas output) proved valuable as a **testing methodology** rather than runtime healing. Rather than building truth into the test code, the visual test compares PDF truth signal against OSD canvas output.
+
+---
+
 
 ## The Fix: Async Tile Pattern
 
@@ -73,46 +101,6 @@ getTileCacheDataAsContext2D: (cache) => cache._data
 ```
 
 ---
-
-## Lessons Learned
-
-### 1. Question the Foundation
-
-When building elaborate workarounds, that's a signal to revisit assumptions:
-- We built tile registries, health checks, auto-inspectors
-- All to work around a synchronous API choice
-- The fix was switching to the right API
-
-### 2. Understand the Contract
-
-The first working approach (`getTileUrl` + placeholders) became entrenched. We optimized within its constraints instead of asking: "What does OSD actually expect?"
-
-### 3. Let Systems Do Their Job
-
-OSD has sophisticated fallback/retry behavior. Our "helpful" placeholders disabled it. Sometimes the best code is code you don't write.
-
-### 4. Preventive > Corrective
-
-We planned two approaches:
-- **Preventive:** Fix the root cause
-- **Corrective:** Detect and heal bad tiles
-
-Preventive won. A clean architectural fix beat complex runtime healing.
-
-### 5. Feedback Control for Testing
-
-The corrective approach (measure actual canvas output) proved valuable as a **testing methodology** rather than runtime healing. Rather than building truthin into the test code, the visual test compares PDF truth signal against OSD canvas output.
-
----
-
-## Additional Bug Found
-
-**Tile scale bug in `_drawPageIntersection`:**
-- Destination coordinates multiplied by `scale` instead of divided
-- Tiles appeared 64× too large at L0
-- Fix: `gridToTileScale = 1 / scale`
-
-This was discovered through feedback-control testing, not the tile loading investigation.
 
 ---
 

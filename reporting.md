@@ -1,9 +1,6 @@
 REPORTING
 ---------
 
-
-Reports should be immediately condensed to 1/2 their original length upon creation.
-
 Reports should follow the format:
 TITLE
 EFFECTIVITY
@@ -12,5 +9,9 @@ INTRODUCTION
 BODY
 CONCLUSION
 APPENDICES
+
+
+
+Automatically-generated reports should be condensed to 1/2 their original length immediately after first creation.
 
 Illustations are good. Tables are good. Markdown tables should be formatted to look good as plain text.

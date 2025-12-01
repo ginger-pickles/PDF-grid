@@ -4,6 +4,14 @@ Future optimization ideas for PDF Grid Viewer.
 
 ---
 
+
+THE NEXT THING:
+Now that we have asychronous tile request & generation, we can implement progressive page rendering & tile generation. We should re-publish tiles as pages are completed.
+
+
+
+
+
 ## Scalability Ideas
 
 **Scattered rendering order** - Render pages in bit-reversal order for progressive minimap appearance instead of sequential.

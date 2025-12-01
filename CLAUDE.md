@@ -13,15 +13,15 @@ WHEN WRITING REPORTS, follow `reporting.md` format guidelines.
 | File                             | Purpose                              |
 |----------------------------------|--------------------------------------|
 | `CLAUDE.md`                      | AI assistant guide (this file)       |
-| `claude-development-vectors.md`  | Future optimization ideas            |
-| `CHANGELOG.md`                   | Version history                      |
 | `README.md`                      | User-facing documentation            |
-| `TESTING.md`                     | Test strategy, how to run tests      |
-| `TODO.md`                        | Feature backlog, known issues        |
+| `CHANGELOG.md`                   | Version history                      |
 | `THIS-BRANCH.md`                 | Current branch investigation notes   |
-| `lessons.md`                     | Development insights                 |
-| `reporting.md`                   | Report format guidelines             |
+| `reporting.md`                   | Report format requirements             |
+| `TESTING.md`                     | Test strategy, how to run tests      |
+| `claude-development-vectors.md`  | Future optimization ideas            |
+| `TODO.md`                        | Feature backlog, known issues        |
 | `ideas.md`                       | Raw feature ideas                    |
+| `lessons.md`                     | Development insights                 |
 
 ---
 
@@ -120,6 +120,22 @@ npx playwright test tests/test-pattern-visual.spec.js
 ```
 
 Edit `index.html` directly, refresh browser to test. No build process.
+
+
+
+## Anti-Bloat Discipline
+
+For every feature added, consider removing 1.1x its LOC elsewhere.
+
+Before adding code, ask:
+- Could this be a config change instead?
+- Does this replace existing functionality? (Remove old code!)
+- Is this debugging code that should be `?debug=1` only?
+
+
+
+
+
 
 ---
 
