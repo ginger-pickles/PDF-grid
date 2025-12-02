@@ -4,24 +4,27 @@ Status: In progress (test implementation)
 
 ## Problem Behavior
 
-1. **Slow tile build-in**: Tiles visibly populate as view is zoomed and panned
-2. **Flickering**: Display briefly blanks during load and while idle
+Missing pages in initial view
+
+Tiles at wrong resolution
+
+Missing pages & tiles when cache is limited 
 
 ## Requirements
 
-1. Tile display speed shall be improved
-2. Flickering issues shall be reduced
+No missing tiles that should reasonably be present
+
+Tiles at correct resolution
 
 ## Test Files
 
 Files that exhibit issues (large bitmap images):
+test-pattern.pdf -- missing pages in intital view, but only intermittent
+
+
 - `ginger-pickles.pdf`
 - `marie-neurath.pdf`
-
-These files flicker during load AND while idle.
-
----
-
+These are heavy files
 
 
 ## Test Suite
@@ -30,16 +33,12 @@ These files flicker during load AND while idle.
 
 Quick validation with both interoceptive and exteroceptive checks.
 
-- Duration: <30 seconds
-- PDF: `demo/test-pattern.pdf`
 - States: Initial view, Overview
 
 ### LFT: Long-Form Test
 
 Comprehensive flicker detection using page screenshots.
 
-- Duration: Minutes
-- PDF: `demo/ginger-pickles.pdf`
 - Phases: Load, Pan, Grid, Detail
 
 ---
@@ -52,7 +51,7 @@ Comprehensive flicker detection using page screenshots.
 
 ## Vector -1: Improve tile loading.
 
-## Vector 0: Reduce Flicker
+## Vector 0: Eliminate Flicker
 
 
 ### Vector 1: Exteroceptive over Interoceptive
@@ -105,18 +104,6 @@ console.log(`⚠ FLICKER frame ${i}: ${pct}%`);
 
 
 
-
-
-## Commands
-
-```bash
-# SFT - quick validation
-npx playwright test tests/short-form-test.spec.js --project=chromium
-
-# LFT - comprehensive flicker detection (optionally headed for observation)
-npx playwright test tests/long-form-test.spec.js --project=chromium --headed
-```
-
 ---
 
 ## Code Analysis (2024-12-01)
@@ -160,12 +147,6 @@ Note: Do not remove code yet. iOS may have cache limitations requiring stripe re
 3. **Review `forceRedraw()` call sites** - Map all triggers, look for redundancy
 4. **Isolate React from OSD** - Check if debug panel state affects display
 
-### Current Test Results
-
-- **LFT at 5% threshold**: **0 flickers** - PASSED
-- **Root cause fixed**: `tiledImage.reset()` disabled (line 2899)
-- **Report**: `test-results/lft-report.html` (with animation controls, live viewer, run button)
-
 ---
 
 ## Resolution (2024-12-02)
@@ -206,17 +187,6 @@ The Pan, Grid, and Detail phases were disabled during debugging. Now that base f
 | Pan    | Pan to 3 positions         | Disabled |
 | Grid   | Zoom to show all pages     | Disabled |
 | Detail | Zoom into center at 4x     | Disabled |
-
-### Vector 6: Multi-PDF Test Coverage
-
-Current test uses only `ginger-pickles.pdf`. Verify fix works across different documents:
-
-| PDF                        | Characteristic           |
-|----------------------------|--------------------------|
-| `test-pattern.pdf`         | Synthetic test image     |
-| `marie-neurath.pdf`        | Known flicker exhibitor  |
-| `mixed-dimensions.pdf`     | Variable page sizes      |
-| `Popular_Mechanics_*.pdf`  | Large magazine scans     |
 
 ### Vector 7: Desktop Viewport Testing
 
@@ -396,6 +366,8 @@ Compare tile request patterns between:
 - OSD config `immediateRender: true` at line 3598
 
 ### Vector 14: Initial View Animation Abort
+
+**iPad observation (2024-12-02)**: Missing **tiles** at viewer edges, not missing pages. Surrounding tiles of incomplete pages beyond the initial view ARE present. This confirms the bug is at the tile level, not page level - OSD's viewport-to-tile intersection is missing edge tiles.
 
 **Hypothesis**: Tiles for edge pages are requested, then aborted during initial view settling.
 
