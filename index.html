@@ -31,7 +31,7 @@ SETPOINT
   PHASE 2 MODULARIZATION COMPLETE (2025-11-24):
   ✓ Phase 2.1: TileGenerator class extracted (~520 lines)
     - generateTile(), _renderTile(), _drawPageIntersection()
-    - _renderBlankTile(), _getTileBounds(), _generateTileFingerprint()
+    - _getTileBounds(), _generateTileFingerprint()
   ✓ Phase 2.2: CacheManager class extracted (~120 lines)
     - scheduleRedraw(), _requestPagesAsync(), _invalidateTilesUsingPages()
   ✓ Phase 2.3: BackgroundRenderer class (previously extracted)
@@ -1760,90 +1760,6 @@ SETPOINT
           }
 
           /**
-           * Visual inspection of OSD canvas for red stripe patterns (incomplete tiles)
-           * Detects SEMI-TRANSPARENT red overlay specifically (not solid red PDF content)
-           * The incomplete tile indicator uses rgba(255, 0, 0, 0.3) diagonal stripes
-           * @returns {Object} { hasRedStripes: boolean, sampleCount: number, stripePatternCount: number }
-           */
-          inspectVisual() {
-            const viewer = window.osdViewerRef;
-            if (!viewer) return { hasRedStripes: false, error: 'No viewer' };
-
-            // Get the OSD canvas (main viewer only, not navigator)
-            const canvas = viewer.drawer.canvas;
-            if (!canvas) return { hasRedStripes: false, error: 'No canvas' };
-
-            const ctx = canvas.getContext('2d');
-            const width = canvas.width;
-            const height = canvas.height;
-
-            let sampleCount = 0;
-            let stripePatternCount = 0;
-
-            // Helper to check if a pixel looks like our SPECIFIC stripe pattern
-            // Our stripes use rgba(255,0,0,0.3) which when blended creates:
-            // - Strong red channel elevation (r - g > 40 and r - b > 40)
-            // - NOT pure red (PDF content red is typically 255,0,0)
-            // - Requires BOTH high red AND suppressed green/blue
-            const isIncompleteStripeRed = (r, g, b) => {
-              // Must have significant red dominance over both g and b
-              const redDominance = Math.min(r - g, r - b);
-              if (redDominance < 40) return false;
-
-              // Must not be pure PDF red (which would be ~255,0,0 or similar)
-              if (r > 250 && g < 20 && b < 20) return false;
-
-              // Must have moderate red intensity (not too dark, not white)
-              if (r < 100 || r > 240) return false;
-
-              // Green and blue should be similar (stripe over content)
-              if (Math.abs(g - b) > 30) return false;
-
-              return true;
-            };
-
-            // Sample along diagonal lines to detect the stripe pattern
-            // The stripe uses 8px width with 32px spacing at 45 degrees
-            for (let startX = 0; startX < width; startX += 80) {
-              for (let startY = 0; startY < height; startY += 80) {
-                let stripePixelsFound = 0;
-                let totalSampled = 0;
-
-                // Sample a grid within this region
-                for (let dx = 0; dx < 64 && startX + dx < width; dx += 8) {
-                  for (let dy = 0; dy < 64 && startY + dy < height; dy += 8) {
-                    const pixel = ctx.getImageData(startX + dx, startY + dy, 1, 1).data;
-                    sampleCount++;
-                    totalSampled++;
-
-                    if (isIncompleteStripeRed(pixel[0], pixel[1], pixel[2])) {
-                      stripePixelsFound++;
-                    }
-                  }
-                }
-
-                // Stripe pattern covers ~25% of area (8px stripe, 32px spacing)
-                // If 15-40% of samples are stripe-red, it's likely our pattern
-                const stripeRatio = stripePixelsFound / totalSampled;
-                if (stripeRatio > 0.10 && stripeRatio < 0.50 && stripePixelsFound >= 3) {
-                  stripePatternCount++;
-                }
-              }
-            }
-
-            // Consider stripes detected if found in multiple regions
-            // Require more regions to reduce false positives
-            const hasStripes = stripePatternCount >= 3;
-            return {
-              hasRedStripes: hasStripes,
-              sampleCount,
-              stripePatternCount,
-              regionsChecked: Math.ceil(width / 80) * Math.ceil(height / 80),
-              note: hasStripes ? 'Incomplete tile stripes detected' : 'No stripe pattern found'
-            };
-          }
-
-          /**
            * Inspect tile quality by querying tile cache directly
            * Bypasses registry (which may be stale) and checks actual cache state
            * @param {string|number|Array} additionalLevels - 'lowres' (default), 'all', 'none', specific level, or array
@@ -1925,18 +1841,6 @@ SETPOINT
             }
 
             return issues;
-          }
-
-          /**
-           * Heal incomplete tiles - DEPRECATED
-           * Healing is no longer needed with the streaming model.
-           * TiledImage recreation at two points (initial batch, all low-res) handles refresh.
-           * This stub remains for API compatibility.
-           * @returns {Promise<Object>} Empty report (no healing performed)
-           */
-          async healIncompleteTiles(levels = null, options = {}) {
-            // Healing disabled - streaming model handles tile refresh via recreation
-            return { scanned: 0, incomplete: [], healed: [], failed: [], disabled: true };
           }
         }
 
@@ -2367,11 +2271,11 @@ SETPOINT
               return !hasPrimary && !hasFallback;
             });
 
-            // If missing pages (no primary OR fallback), request them and return placeholder
+            // If missing pages (no primary OR fallback), request them and return null
+            // OSD will display nothing for this tile until pages are ready
             if (missingPages.length > 0) {
               ts.cacheManager._requestPagesAsync(missingPages, resolution);
-              // Return uncached placeholder tile (red stripes indicate incomplete)
-              return this._renderBlankTile();
+              return null;
             }
 
             // Render tile
@@ -2690,38 +2594,6 @@ SETPOINT
             } catch (err) {
               console.warn(`Failed to draw page ${pageNum}:`, err);
               return false;
-            }
-          }
-
-          /**
-           * Render a blank tile (when page data not available)
-           */
-          _renderBlankTile() {
-            const ts = this.tileStreamer;
-            const w = ts.tileCanvas.width;
-            const h = ts.tileCanvas.height;
-
-            // Fill with background color
-            ts.tileCtx.fillStyle = CONFIG.BACKGROUND_COLOR;
-            ts.tileCtx.fillRect(0, 0, w, h);
-
-            // Draw red diagonal stripes to visually indicate incomplete tile
-            // This provides a visual indicator independent of the registry
-            ts.tileCtx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
-            ts.tileCtx.lineWidth = 4;
-            const stripeSpacing = 32;
-            for (let i = -h; i < w + h; i += stripeSpacing) {
-              ts.tileCtx.beginPath();
-              ts.tileCtx.moveTo(i, 0);
-              ts.tileCtx.lineTo(i + h, h);
-              ts.tileCtx.stroke();
-            }
-
-            // Return as data URL
-            if (CONFIG.TILE_FORMAT === 'png') {
-              return ts.tileCanvas.toDataURL('image/png');
-            } else {
-              return ts.tileCanvas.toDataURL('image/jpeg', CONFIG.TILE_JPEG_QUALITY);
             }
           }
 
@@ -3620,20 +3492,6 @@ SETPOINT
           /**
            * Phase 2.4: Delegate to QualityInspector module
            */
-          async healIncompleteTiles(levels = null) {
-            return await this.qualityInspector.healIncompleteTiles(levels);
-          }
-
-          /**
-           * Phase 2.4: Delegate to QualityInspector module
-           */
-          inspectVisual() {
-            return this.qualityInspector.inspectVisual();
-          }
-
-          /**
-           * Phase 2.4: Delegate to QualityInspector module
-           */
           _identifyRequiredTiles(level) {
             return this.qualityInspector._identifyRequiredTiles(level);
           }
@@ -3647,13 +3505,6 @@ SETPOINT
            */
           _renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom) {
             return this.tileGenerator._renderTile(level, x, y, scale, key, neededPages, resolution, tileLeft, tileTop, tileRight, tileBottom);
-          }
-
-          /**
-           * Phase 2.1: Delegate to TileGenerator module
-           */
-          _renderBlankTile() {
-            return this.tileGenerator._renderBlankTile();
           }
 
           /**
@@ -3977,37 +3828,6 @@ SETPOINT
           const [showDebug, setShowDebug] = useState(isDebugMode);
           const [showVerboseLogging, setShowVerboseLogging] = useState(false);
           const [showTileLabels, setShowTileLabels] = useDebugPersistedState('tile_labels', false, showDebug);
-          const [tileInspectorResult, setTileInspectorResult] = useState(null); // {type: 'heal'|'visual', data: ...}
-          const [healBlink, setHealBlink] = useState(false);
-          const [visualBlink, setVisualBlink] = useState(false);
-          const [recreateBlink, setRecreateBlink] = useState(false);
-
-          // Helper to trigger button blink animation
-          const triggerBlink = (buttonType) => {
-            if (buttonType === 'heal') {
-              setHealBlink(true);
-              setTimeout(() => setHealBlink(false), 600);
-            } else if (buttonType === 'visual') {
-              setVisualBlink(true);
-              setTimeout(() => setVisualBlink(false), 600);
-            } else if (buttonType === 'recreate') {
-              setRecreateBlink(true);
-              setTimeout(() => setRecreateBlink(false), 600);
-            }
-          };
-
-          // Expose blink trigger for automatic healing
-          useEffect(() => {
-            window.__triggerInspectorBlink = triggerBlink;
-            return () => { delete window.__triggerInspectorBlink; };
-          }, []);
-
-          // Auto-Inspector DISABLED - no longer needed with on-demand rendering
-          // useEffect(() => {
-          //   if (!showDebug) return;
-          //   const timer = setTimeout(() => { ... }, 3000);
-          //   return () => clearTimeout(timer);
-          // }, [showDebug]);
           const [showTileBorders, setShowTileBorders] = useDebugPersistedState('tile_borders', false, showDebug);
           const [debugUpdateCounter, setDebugUpdateCounter] = useState(0);
           const [currentFilename, setCurrentFilename] = useState('');
@@ -4670,10 +4490,7 @@ SETPOINT
                   }
                 }
 
-                // TRIGGER 1: DISABLED - async tile loading (v1.11.0) updates tiles in place
-                // Stripes no longer generated, so recreation is unnecessary and causes flicker
                 if (window.viewer && window.tileStreamerRef) {
-                  // recreateTiledImage(`initial batch complete (${pagesToRender.length} pages)`);
 
                   // Remove progress overlay
                   if (overlayDiv && overlayDiv.parentNode) {
@@ -5099,7 +4916,6 @@ SETPOINT
                 // Non-critical - OSD will request it anyway
               }
 
-              // await recreateTiledImage('all low-res pages complete');
             }
 
             console.log('[Background] Progressive minimap rendering complete');
@@ -5252,51 +5068,6 @@ SETPOINT
             setIsLoading(false);
             setLoadingStatus('');
             setPdfFile(null);
-          };
-
-          /**
-           * Recreate TiledImage - Forces OSD to re-request all tiles with current content
-           * Called at two points: (1) after initial batch, (2) after all low-res complete
-           * @param {string} reason - Log message explaining why recreation is happening
-           * @returns {Promise<void>}
-           */
-          const recreateTiledImage = async (reason = 'content update') => {
-            const viewer = window.osdViewerRef;
-            if (!viewer || !window.tileStreamerRef) return;
-
-            // Save viewport state
-            const currentZoom = viewer.viewport.getZoom();
-            const currentCenter = viewer.viewport.getCenter();
-
-            // Clear tile cache for fresh regeneration
-            window.tileStreamerRef.tileCache?.clear();
-
-            // Remove old TiledImage
-            const oldTiledImage = viewer.world.getItemAt(0);
-            if (oldTiledImage) {
-              viewer.world.removeItem(oldTiledImage);
-            }
-
-            // Brief pause for cleanup
-            await new Promise(resolve => setTimeout(resolve, 50));
-
-            // Add fresh TiledImage
-            return new Promise((resolve) => {
-              viewer.addTiledImage({
-                tileSource: window.tileStreamerRef.getOSDConfig(),
-                success: () => {
-                  viewer.viewport.zoomTo(currentZoom, null, true);
-                  viewer.viewport.panTo(currentCenter, true);
-                  // Visual feedback: blink the Recreate button in debug panel
-                  window.__triggerInspectorBlink?.('recreate');
-                  resolve();
-                },
-                error: (event) => {
-                  console.error('[TiledImage] Recreation error:', event);
-                  resolve();
-                }
-              });
-            });
           };
 
           const initializeViewer = (numPages, pageWidth, pageHeight, showNavigator = undefined, filename = 'PDF') => {
@@ -5461,87 +5232,6 @@ SETPOINT
                 }
               }
             });
-
-            // ============================================================
-            // Auto-Inspector: Simple interval-based visual inspection
-            // ============================================================
-            // Runs every 2 seconds. If red stripes detected, recreate TiledImage.
-            // Simple and reliable - no clever event-based triggers.
-            // ============================================================
-            let autoInspectorInterval = null;
-            let lastRecreationTime = 0;
-            const AUTO_INSPECT_INTERVAL_MS = 2000; // Check every 2 seconds
-            const RECREATION_COOLDOWN_MS = 3000;   // Don't recreate more than once per 3s
-
-            const runAutoInspector = async () => {
-              if (!window.tileStreamerRef || !window.osdViewerRef) return;
-
-              try {
-                const ts = window.tileStreamerRef;
-
-                // Quick check: Are all pages cached? If so, tiles should be complete
-                const lowResCached = ts.pageStreamer?.lowResPageCache?.size || 0;
-                const highResCached = ts.pageStreamer?.highResPageCache?.size || 0;
-                const totalPages = ts.numPages || 0;
-
-                // If all pages are cached (both resolutions), no need to heal
-                if (lowResCached >= totalPages && highResCached >= totalPages) {
-                  // All pages ready - skip visual inspection (avoids false positives)
-                  return;
-                }
-
-                // Blink Visual button
-                if (window.__triggerInspectorBlink) {
-                  window.__triggerInspectorBlink('visual');
-                }
-
-                const visualResult = window.tileStreamerRef.inspectVisual();
-
-                if (visualResult && visualResult.hasRedStripes) {
-                  // Check cooldown
-                  const now = Date.now();
-                  if (now - lastRecreationTime < RECREATION_COOLDOWN_MS) {
-                    if (CONFIG.VERBOSE_LOGGING) {
-                      console.log('[Auto-Inspector] Stripes detected but in cooldown');
-                    }
-                    return;
-                  }
-
-                  if (CONFIG.VERBOSE_LOGGING) console.log(`[Auto-Inspector] ${visualResult.stripePatternCount} regions with stripes - HARD HEAL`);
-
-                  // Blink Heal button
-                  if (window.__triggerInspectorBlink) {
-                    window.__triggerInspectorBlink('heal');
-                  }
-
-                  // HEAL: Recreate TiledImage to force OSD to re-request tiles
-                  // Pages render naturally via background renderer - no need to force
-                  // Each recreation gives tiles another chance to render complete
-                  const tiledImage = window.osdViewerRef.world.getItemAt(0);
-
-                  if (tiledImage) {
-                    if (CONFIG.VERBOSE_LOGGING) console.log('[Auto-Inspector] Recreating TiledImage');
-                    const tileSource = tiledImage.source;
-                    const currentBounds = window.osdViewerRef.viewport.getBounds();
-                    window.osdViewerRef.world.removeItem(tiledImage);
-                    window.osdViewerRef.addTiledImage({
-                      tileSource: tileSource,
-                      success: () => {
-                        window.osdViewerRef.viewport.fitBounds(currentBounds, true);
-                      }
-                    });
-                    lastRecreationTime = now;
-                  }
-                }
-              } catch (error) {
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.error('[Auto-Inspector] Error:', error);
-                }
-              }
-            };
-
-            // Auto-inspector DISABLED - rely on on-demand rendering and debounced reset instead
-            // autoInspectorInterval = setInterval(runAutoInspector, AUTO_INSPECT_INTERVAL_MS);
 
             // Resume background rendering after user interactions settle
             viewer.addHandler('animation-finish', () => {
@@ -5827,15 +5517,6 @@ SETPOINT
                   },
                   parallelRendering: window.__parallelRenderStats || null
                 };
-              },
-              // Heal incomplete tiles by detecting and fixing missing pages
-              // Defaults to ALL levels (0 to maxLevel) if not specified
-              healIncompleteTiles: async (levels = null) => {
-                if (!tileStreamer) {
-                  console.error('[Tile Healing] TileStreamer not available');
-                  return { error: 'TileStreamer not initialized' };
-                }
-                return await tileStreamer.healIncompleteTiles(levels);
               },
               // Query what tiles are currently visible in viewport
               getVisibleTiles: () => {
@@ -6381,90 +6062,12 @@ SETPOINT
                                 console.error('[Debug] Error during recreation:', error);
                               }
                             }}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white ${recreateBlink ? 'blink-active' : ''}`}
+                            className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white"
                             style={{ pointerEvents: 'auto' }}
                           >
                             Recreate
                           </button>
                         </div>
-                      </div>
-
-                      {/* Tile Inspector */}
-                      <div className="mb-2 sm:mb-3 pb-2 border-b border-gray-700">
-                        <div className="text-yellow-400 font-bold mb-2 text-[10px] sm:text-xs">Tile Inspector</div>
-                        <div className="flex flex-wrap gap-1 sm:gap-2 mb-2">
-                          <button
-                            onClick={async () => {
-                              if (!window.tileStreamerRef) return;
-                              triggerBlink('heal');
-                              setTileInspectorResult({ type: 'healing', timestamp: Date.now() });
-                              const report = await window.tileStreamerRef.healIncompleteTiles();
-                              setTileInspectorResult({ type: 'heal', report, timestamp: Date.now() });
-                            }}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-orange-600 hover:bg-orange-700 text-white ${healBlink ? 'blink-active' : ''}`}
-                            style={{ pointerEvents: 'auto' }}
-                          >
-                            Heal
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (!window.tileStreamerRef) return;
-                              triggerBlink('visual');
-                              const result = window.tileStreamerRef.inspectVisual();
-                              setTileInspectorResult({ type: 'visual', result, timestamp: Date.now() });
-                            }}
-                            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-purple-600 hover:bg-purple-700 text-white ${visualBlink ? 'blink-active' : ''}`}
-                            style={{ pointerEvents: 'auto' }}
-                          >
-                            Visual
-                          </button>
-                          <button
-                            onClick={() => setTileInspectorResult(null)}
-                            className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors bg-gray-600 hover:bg-gray-700 text-white"
-                            style={{ pointerEvents: 'auto' }}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                        {/* Results display */}
-                        {tileInspectorResult && (
-                          <div className="text-[9px] sm:text-[10px] bg-gray-800 p-2 rounded max-h-32 overflow-y-auto">
-                            {tileInspectorResult.type === 'healing' && (
-                              <div className="text-orange-300">Healing in progress...</div>
-                            )}
-                            {tileInspectorResult.type === 'heal' && (
-                              <div>
-                                <div className="text-orange-300 font-bold">Healing Results:</div>
-                                {tileInspectorResult.report?.skipped ? (
-                                  <div className="text-gray-400">Skipped - healing already in progress</div>
-                                ) : tileInspectorResult.report?.cooldown ? (
-                                  <div className="text-gray-400">Skipped - cooldown after recreation</div>
-                                ) : (
-                                  <div className="text-white">
-                                    Scanned: {tileInspectorResult.report?.scanned || 0} |
-                                    Incomplete: {tileInspectorResult.report?.incomplete?.length || 0} |
-                                    Healed: {tileInspectorResult.report?.healed?.length || 0} |
-                                    Failed: {tileInspectorResult.report?.failed?.length || 0}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            {tileInspectorResult.type === 'visual' && (
-                              <div>
-                                <div className="text-purple-300 font-bold">Visual Inspection:</div>
-                                {tileInspectorResult.result?.error ? (
-                                  <div className="text-red-400">Error: {tileInspectorResult.result.error}</div>
-                                ) : (
-                                  <div className={tileInspectorResult.result?.hasRedStripes ? "text-red-400" : "text-green-400"}>
-                                    {tileInspectorResult.result?.hasRedStripes
-                                      ? `Incomplete tiles detected! (${tileInspectorResult.result.stripePatternCount} regions with stripe pattern)`
-                                      : `Clean - no stripe pattern found (${tileInspectorResult.result?.regionsChecked} regions checked)`}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
 
                       {/* Page Rendering & Cache */}

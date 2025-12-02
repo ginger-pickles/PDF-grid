@@ -28,14 +28,19 @@
     .loading { color: #888; }
     .live-viewer { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
     .live-viewer h2 { margin: 0 0 10px 0; font-size: 1.1em; }
+    .live-viewer h2 a { color: #8cf; text-decoration: none; }
+    .live-viewer h2 a:hover { text-decoration: underline; }
     .live-viewer iframe { border: 1px solid #444; border-radius: 4px; display: block; }
     .live-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
     .live-controls button { background: #444; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
     .live-controls button:hover { background: #555; }
-    .global-controls { margin: 15px 0; }
-    .global-controls button { background: #444; border: none; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9em; margin: 0 4px; }
+    .global-controls { margin: 15px 0; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .global-controls button { background: #444; border: none; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
     .global-controls button:hover { background: #555; }
     .global-controls button.running { background: #654; cursor: wait; }
+    .global-controls select { background: #444; border: none; color: #fff; padding: 8px 12px; border-radius: 4px; font-size: 0.9em; }
+    .global-controls input[type=text] { background: #333; border: 1px solid #555; color: #fff; padding: 7px 12px; border-radius: 4px; font-size: 0.9em; width: 200px; }
+    .pdf-selector { display: flex; align-items: center; gap: 8px; }
     .diff-chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; background: #333; padding: 4px; border-radius: 4px; margin: 8px 0; }
     .diff-bar { flex: 1; min-width: 20px; background: #4a4; border-radius: 2px 2px 0 0; position: relative; }
     .diff-bar.flicker { background: #a44; }
@@ -50,6 +55,7 @@
 
   <script>
     const animStates = {};
+    let selectedPdf = null; // Will be set from results
 
     function getAnimData(id) {
       if (!animStates[id]) {
@@ -169,7 +175,39 @@
 
     function reloadViewer() {
       const iframe = document.getElementById('live-iframe');
-      if (iframe) iframe.src = iframe.src;
+      if (iframe) {
+        iframe.src = '../?pdf=' + encodeURIComponent(selectedPdf);
+      }
+    }
+
+    function updatePdf(newPdf) {
+      selectedPdf = newPdf;
+      reloadViewer();
+      // Update the title link
+      const titleLink = document.querySelector('.live-viewer h2 a');
+      if (titleLink) {
+        titleLink.href = '../?pdf=' + encodeURIComponent(selectedPdf);
+      }
+    }
+
+    function loadPdfList() {
+      fetch('/list-pdfs')
+        .then(r => r.json())
+        .then(data => {
+          const select = document.getElementById('pdf-select');
+          if (!select || !data.pdfs) return;
+
+          // Clear and repopulate
+          select.innerHTML = '';
+          data.pdfs.forEach(pdf => {
+            const opt = document.createElement('option');
+            opt.value = pdf;
+            opt.textContent = pdf;
+            if (pdf === selectedPdf) opt.selected = true;
+            select.appendChild(opt);
+          });
+        })
+        .catch(err => console.log('Could not load PDF list:', err));
     }
 
     function playAllAnims() {
@@ -186,30 +224,55 @@
       });
     }
 
-    function runTest() {
+    let testInProgress = false;
+
+    function toggleTest() {
       const btn = document.getElementById('run-test-btn');
       if (!btn) return;
-      btn.classList.add('running');
-      btn.textContent = 'Running...';
-      btn.disabled = true;
 
-      fetch('/run-test')
-        .then(r => r.json())
-        .then(result => {
-          btn.classList.remove('running');
-          btn.disabled = false;
-          btn.textContent = result.success ? 'Run Test (PASSED)' : 'Run Test (FAILED)';
-          // Reload results after short delay
-          setTimeout(() => {
-            location.reload();
-          }, 500);
-        })
-        .catch(err => {
-          btn.classList.remove('running');
-          btn.disabled = false;
-          btn.textContent = 'Run Test (Error)';
-          console.error('Test error:', err);
-        });
+      if (testInProgress) {
+        // Stop the test
+        btn.textContent = 'Stopping...';
+        btn.disabled = true;
+        fetch('/stop-test')
+          .then(r => r.json())
+          .then(result => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.disabled = false;
+            btn.textContent = result.stopped ? 'Run Test (Stopped)' : 'Run Test';
+          })
+          .catch(err => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.disabled = false;
+            btn.textContent = 'Run Test';
+            console.error('Stop error:', err);
+          });
+      } else {
+        // Start the test
+        testInProgress = true;
+        btn.classList.add('running');
+        btn.textContent = 'Stop';
+
+        fetch('/run-test?pdf=' + encodeURIComponent(selectedPdf))
+          .then(r => r.json())
+          .then(result => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.textContent = result.success ? 'Run Test (PASSED)' : 'Run Test (FAILED)';
+            // Reload results after short delay
+            setTimeout(() => {
+              location.reload();
+            }, 500);
+          })
+          .catch(err => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.textContent = 'Run Test (Error)';
+            console.error('Test error:', err);
+          });
+      }
     }
 
     function renderReport(results) {
@@ -223,10 +286,12 @@
         </div>
       ` : '';
 
+      const appUrl = '../?pdf=' + encodeURIComponent(results.pdf);
+      const iframeHeight = vp.height + 120; // Match phase section heights (image + chart + controls)
       const liveViewerHTML = `
         <div class="live-viewer">
-          <h2>Live Viewer (${vp.width}x${vp.height})</h2>
-          <iframe id="live-iframe" src="../?pdf=${results.pdf}" width="${vp.width}" height="${vp.height}"></iframe>
+          <h2><a href="${appUrl}" target="_blank">Live Viewer (${vp.width}x${iframeHeight})</a></h2>
+          <iframe id="live-iframe" src="${appUrl}" width="${vp.width}" height="${iframeHeight}"></iframe>
           <div class="live-controls">
             <button onclick="reloadViewer()">Reload</button>
           </div>
@@ -240,7 +305,13 @@
         </div>
         <p class="meta">PDF: ${results.pdf} | Viewport: ${vp.width}x${vp.height} | Run: ${results.timestamp} | Total: ${results.totalDuration}ms</p>
         <div class="global-controls">
-          <button id="run-test-btn" onclick="runTest()">Run Test</button>
+          <div class="pdf-selector">
+            <label>PDF:</label>
+            <select id="pdf-select" onchange="updatePdf(this.value)">
+              <option value="${results.pdf}">${results.pdf}</option>
+            </select>
+          </div>
+          <button id="run-test-btn" onclick="toggleTest()">Run Test</button>
           <button onclick="playAllAnims()">Play All</button>
           <button onclick="pauseAllAnims()">Pause All</button>
         </div>
@@ -254,11 +325,9 @@
     fetch('lft-results.json')
       .then(r => r.json())
       .then(results => {
+        selectedPdf = results.pdf;
         document.getElementById('report').innerHTML = renderReport(results);
-        // Auto-play animations
-        document.querySelectorAll('.animator').forEach(el => {
-          toggleAnim(el.id);
-        });
+        loadPdfList();
       })
       .catch(err => {
         document.getElementById('report').innerHTML = `<p class="fail">Error loading results: ${err.message}</p>`;

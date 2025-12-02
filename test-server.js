@@ -27,6 +27,7 @@ const MIME_TYPES = {
 };
 
 let testRunning = false;
+let testProcess = null;
 
 function serveFile(res, filepath) {
   const ext = path.extname(filepath);
@@ -43,7 +44,7 @@ function serveFile(res, filepath) {
   });
 }
 
-function runTest(res) {
+function runTest(res, pdfPath) {
   if (testRunning) {
     res.writeHead(409, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Test already running' }));
@@ -53,23 +54,43 @@ function runTest(res) {
   testRunning = true;
   res.writeHead(200, { 'Content-Type': 'application/json' });
 
-  const proc = spawn('npx', ['playwright', 'test', 'tests/long-form-test.spec.js', '--project=chromium'], {
+  // Pass PDF path as environment variable
+  const env = { ...process.env };
+  if (pdfPath) {
+    env.TEST_PDF = pdfPath;
+  }
+
+  testProcess = spawn('npx', ['playwright', 'test', 'tests/long-form-test.spec.js', '--project=chromium'], {
     cwd: ROOT,
+    env: env,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
   let output = '';
-  proc.stdout.on('data', d => output += d.toString());
-  proc.stderr.on('data', d => output += d.toString());
+  testProcess.stdout.on('data', d => output += d.toString());
+  testProcess.stderr.on('data', d => output += d.toString());
 
-  proc.on('close', code => {
+  testProcess.on('close', code => {
     testRunning = false;
+    testProcess = null;
     res.end(JSON.stringify({
       success: code === 0,
       exitCode: code,
       output: output.slice(-2000) // Last 2000 chars
     }));
   });
+}
+
+function stopTest(res) {
+  if (!testRunning || !testProcess) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ stopped: false, message: 'No test running' }));
+    return;
+  }
+
+  testProcess.kill('SIGTERM');
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ stopped: true }));
 }
 
 const server = http.createServer((req, res) => {
@@ -79,13 +100,38 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (url.pathname === '/run-test') {
-    runTest(res);
+    const pdfPath = url.searchParams.get('pdf');
+    runTest(res, pdfPath);
     return;
   }
 
   if (url.pathname === '/test-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ running: testRunning }));
+    return;
+  }
+
+  if (url.pathname === '/stop-test') {
+    stopTest(res);
+    return;
+  }
+
+  if (url.pathname === '/list-pdfs') {
+    // List PDF files in demo/ folder
+    const demoDir = path.join(ROOT, 'demo');
+    fs.readdir(demoDir, (err, files) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Could not read demo folder' }));
+        return;
+      }
+      const pdfs = files
+        .filter(f => f.toLowerCase().endsWith('.pdf'))
+        .map(f => 'demo/' + f)
+        .sort();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ pdfs }));
+    });
     return;
   }
 
