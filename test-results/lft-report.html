@@ -3,12 +3,12 @@
 <head>
   <title>LFT Report</title>
   <style>
-    body { font-family: system-ui, sans-serif; padding: 20px; background: #1a1a1a; color: #eee; }
+    body { font-family: system-ui, sans-serif; padding: 20px; background: #1a1a1a; color: #eee; text-align: center; }
     h1 { margin-bottom: 10px; }
     .meta { color: #888; font-size: 0.9em; margin: 10px 0 20px 0; }
     .phase { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
     .phase h2 { margin: 0 0 10px 0; font-size: 1.1em; }
-    .metrics { font-family: monospace; font-size: 0.85em; background: #333; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+    .metrics { font-family: monospace; font-size: 0.85em; background: #333; padding: 8px; border-radius: 4px; margin-bottom: 10px; max-width: 375px; word-wrap: break-word; }
     .pass { color: #4f4; }
     .fail { color: #f44; }
     .summary { font-size: 1.2em; padding: 12px 20px; border-radius: 8px; margin: 0; display: inline-block; }
@@ -26,6 +26,21 @@
     .anim-controls input[type=range] { flex: 1; }
     .frame-num { font-family: monospace; font-size: 0.85em; min-width: 50px; }
     .loading { color: #888; }
+    .live-viewer { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
+    .live-viewer h2 { margin: 0 0 10px 0; font-size: 1.1em; }
+    .live-viewer iframe { border: 1px solid #444; border-radius: 4px; display: block; }
+    .live-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .live-controls button { background: #444; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+    .live-controls button:hover { background: #555; }
+    .global-controls { margin: 15px 0; }
+    .global-controls button { background: #444; border: none; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9em; margin: 0 4px; }
+    .global-controls button:hover { background: #555; }
+    .global-controls button.running { background: #654; cursor: wait; }
+    .diff-chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; background: #333; padding: 4px; border-radius: 4px; margin: 8px 0; }
+    .diff-bar { flex: 1; min-width: 20px; background: #4a4; border-radius: 2px 2px 0 0; position: relative; }
+    .diff-bar.flicker { background: #a44; }
+    .diff-bar span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: 0.7em; color: #888; }
+    .threshold-line { position: absolute; left: 0; right: 0; border-top: 1px dashed #f84; }
   </style>
 </head>
 <body>
@@ -55,7 +70,7 @@
       const frameNum = container.querySelector('.frame-num');
 
       state.index = index;
-      img.src = 'data:image/png;base64,' + state.frames[index].data;
+      img.src = state.frames[index].file;
       label.textContent = state.frames[index].label;
       slider.value = index;
       frameNum.textContent = (index + 1) + '/' + state.frames.length;
@@ -84,22 +99,40 @@
       showFrame(id, parseInt(index));
     }
 
+    function renderDiffChart(diffs, threshold) {
+      const maxVal = Math.max(...diffs, threshold * 2, 10);
+      const thresholdPct = (threshold / maxVal) * 100;
+      const bars = diffs.map((d, i) => {
+        const height = Math.max((d / maxVal) * 100, 2);
+        const isFlicker = d >= threshold;
+        return `<div class="diff-bar${isFlicker ? ' flicker' : ''}" style="height: ${height}%"><span>${d}%</span></div>`;
+      }).join('');
+      return `
+        <div class="diff-chart" style="position: relative;">
+          <div class="threshold-line" style="bottom: ${thresholdPct}%"></div>
+          ${bars}
+        </div>
+      `;
+    }
+
     function renderPhase(p, phaseIdx) {
       const hasMultiple = p.screenshots.length > 1;
       const animatorId = `animator-${phaseIdx}`;
 
       if (hasMultiple) {
+        const chartHTML = p.diffs && p.diffs.length > 0 ? renderDiffChart(p.diffs, p.threshold || 5) : '';
         return `
           <div class="phase">
             <h2>${p.name}</h2>
             <div class="metrics">
               Duration: ${p.duration}ms |
               Flickers: <span class="${p.flickers > 0 ? 'fail' : 'pass'}">${p.flickers}</span>
-              ${p.note ? `| ${p.note}` : ''}
+              ${p.threshold ? `| Threshold: ${p.threshold}%` : ''}
             </div>
+            ${chartHTML}
             <div class="animator" id="${animatorId}">
               <div class="anim-display">
-                <img class="anim-img" src="data:image/png;base64,${p.screenshots[0].data}" alt="Frame">
+                <img class="anim-img" src="${p.screenshots[0].file}" alt="Frame">
                 <div class="anim-label">${p.screenshots[0].label}</div>
               </div>
               <div class="anim-controls">
@@ -108,7 +141,7 @@
                        oninput="seekAnim('${animatorId}', this.value)">
                 <span class="frame-num">1/${p.screenshots.length}</span>
               </div>
-              <div class="anim-data" style="display:none">${JSON.stringify(p.screenshots.map(s => ({label: s.label, data: s.data})))}</div>
+              <div class="anim-data" style="display:none">${JSON.stringify(p.screenshots.map(s => ({label: s.label, file: s.file})))}</div>
             </div>
           </div>
         `;
@@ -125,7 +158,7 @@
               ${p.screenshots.map(s => `
                 <div class="shot">
                   <div class="label">${s.label}</div>
-                  <img src="data:image/png;base64,${s.data}" alt="${s.label}">
+                  <img src="${s.file}" alt="${s.label}">
                 </div>
               `).join('')}
             </div>
@@ -134,8 +167,54 @@
       }
     }
 
+    function reloadViewer() {
+      const iframe = document.getElementById('live-iframe');
+      if (iframe) iframe.src = iframe.src;
+    }
+
+    function playAllAnims() {
+      document.querySelectorAll('.animator').forEach(el => {
+        const state = animStates[el.id];
+        if (state && !state.playing) toggleAnim(el.id);
+      });
+    }
+
+    function pauseAllAnims() {
+      document.querySelectorAll('.animator').forEach(el => {
+        const state = animStates[el.id];
+        if (state && state.playing) toggleAnim(el.id);
+      });
+    }
+
+    function runTest() {
+      const btn = document.getElementById('run-test-btn');
+      if (!btn) return;
+      btn.classList.add('running');
+      btn.textContent = 'Running...';
+      btn.disabled = true;
+
+      fetch('/run-test')
+        .then(r => r.json())
+        .then(result => {
+          btn.classList.remove('running');
+          btn.disabled = false;
+          btn.textContent = result.success ? 'Run Test (PASSED)' : 'Run Test (FAILED)';
+          // Reload results after short delay
+          setTimeout(() => {
+            location.reload();
+          }, 500);
+        })
+        .catch(err => {
+          btn.classList.remove('running');
+          btn.disabled = false;
+          btn.textContent = 'Run Test (Error)';
+          console.error('Test error:', err);
+        });
+    }
+
     function renderReport(results) {
       const phaseHTML = results.phases.map((p, i) => renderPhase(p, i)).join('');
+      const vp = results.viewport || { width: 375, height: 667 };
 
       const errorsHTML = results.errors.length > 0 ? `
         <div class="errors">
@@ -144,12 +223,28 @@
         </div>
       ` : '';
 
+      const liveViewerHTML = `
+        <div class="live-viewer">
+          <h2>Live Viewer (${vp.width}x${vp.height})</h2>
+          <iframe id="live-iframe" src="../?pdf=${results.pdf}" width="${vp.width}" height="${vp.height}"></iframe>
+          <div class="live-controls">
+            <button onclick="reloadViewer()">Reload</button>
+          </div>
+        </div>
+      `;
+
       return `
         <h1>LFT: Long-Form Test</h1>
         <div class="summary ${results.passed ? 'pass' : 'fail'}">
           ${results.passed ? 'PASSED' : 'FAILED'} - ${results.totalFlickers} flickers detected
         </div>
-        <p class="meta">PDF: ${results.pdf} | Run: ${results.timestamp} | Total: ${results.totalDuration}ms</p>
+        <p class="meta">PDF: ${results.pdf} | Viewport: ${vp.width}x${vp.height} | Run: ${results.timestamp} | Total: ${results.totalDuration}ms</p>
+        <div class="global-controls">
+          <button id="run-test-btn" onclick="runTest()">Run Test</button>
+          <button onclick="playAllAnims()">Play All</button>
+          <button onclick="pauseAllAnims()">Pause All</button>
+        </div>
+        ${liveViewerHTML}
         ${errorsHTML}
         ${phaseHTML}
       `;

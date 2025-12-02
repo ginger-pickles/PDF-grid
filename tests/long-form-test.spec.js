@@ -15,7 +15,19 @@ const path = require('path');
 const TEST_PDF = 'demo/ginger-pickles.pdf';
 const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
-const FLICKER_THRESHOLD = 10; // % of pixels changed to count as flicker
+const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
+const FLICKER_THRESHOLD = 5; // % of pixels changed to count as flicker
+const VIEWPORT = { width: 375, height: 667 }; // Mobile viewport for test economy
+
+// Save screenshot to file, return relative path
+function saveScreenshot(buffer, filename) {
+  if (!fs.existsSync(SCREENSHOTS_DIR)) {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  }
+  const filepath = path.join(SCREENSHOTS_DIR, filename);
+  fs.writeFileSync(filepath, buffer);
+  return `screenshots/${filename}`;
+}
 
 // Compare two screenshots, return % difference
 async function compareScreenshots(page, shot1, shot2) {
@@ -75,12 +87,16 @@ test.describe('LFT: Long-Form Test', () => {
     const results = {
       pdf: TEST_PDF,
       timestamp: new Date().toISOString(),
+      viewport: VIEWPORT,
       phases: [],
       errors: [],
       totalFlickers: 0,
       totalDuration: 0,
       passed: false
     };
+
+    // Set viewport to match test parameters
+    await page.setViewportSize(VIEWPORT);
 
     const startTime = Date.now();
 
@@ -103,9 +119,11 @@ test.describe('LFT: Long-Form Test', () => {
     for (let i = 0; i < P1_SAMPLE_COUNT; i++) {
       await page.waitForTimeout(P1_SAMPLE_INTERVAL);
       const shot = await page.screenshot({ type: 'png' });
+      const filename = `p1-load-${String(i+1).padStart(2, '0')}.png`;
+      const filepath = saveScreenshot(shot, filename);
       loadShots.push({
         label: `+${(i+1)*P1_SAMPLE_INTERVAL}ms`,
-        data: shot.toString('base64')
+        file: filepath
       });
     }
 
@@ -123,27 +141,31 @@ test.describe('LFT: Long-Form Test', () => {
     const flickerDiffs = [];
     const SAMPLE_INTERVAL = 250; // ms between samples (doubled from 500)
     const SAMPLE_COUNT = 10;     // number of samples (doubled from 5)
+    let prevBuffer = null;
 
     // Take 10 screenshots over 2.5 seconds to detect flicker
     for (let i = 0; i < SAMPLE_COUNT; i++) {
       await page.waitForTimeout(SAMPLE_INTERVAL);
       const shot = await page.screenshot({ type: 'png' });
       const b64 = shot.toString('base64');
+      const filename = `p2-settle-${String(i+1).padStart(2, '0')}.png`;
+      const filepath = saveScreenshot(shot, filename);
 
       // Compare to previous frame
-      if (settleShots.length > 0) {
-        const prevB64 = settleShots[settleShots.length - 1].data;
+      if (prevBuffer) {
+        const prevB64 = prevBuffer.toString('base64');
         const diff = await compareScreenshots(page, prevB64, b64);
         flickerDiffs.push(diff);
         const isFlicker = diff >= FLICKER_THRESHOLD;
         if (isFlicker) results.totalFlickers++;
         settleShots.push({
           label: `+${(i+1)*SAMPLE_INTERVAL}ms (${diff.toFixed(1)}%${isFlicker ? ' FLICKER' : ''})`,
-          data: b64
+          file: filepath
         });
       } else {
-        settleShots.push({ label: `+${(i+1)*SAMPLE_INTERVAL}ms (baseline)`, data: b64 });
+        settleShots.push({ label: `+${(i+1)*SAMPLE_INTERVAL}ms (baseline)`, file: filepath });
       }
+      prevBuffer = shot;
     }
 
     const p2Flickers = flickerDiffs.filter(d => d >= FLICKER_THRESHOLD).length;
@@ -151,7 +173,8 @@ test.describe('LFT: Long-Form Test', () => {
       name: 'Phase 2: Settle (Flicker Check)',
       duration: Date.now() - p2Start,
       flickers: p2Flickers,
-      note: `Threshold: ${FLICKER_THRESHOLD}% | Diffs: ${flickerDiffs.map(d => d.toFixed(1) + '%').join(', ')}`,
+      threshold: FLICKER_THRESHOLD,
+      diffs: flickerDiffs.map(d => parseFloat(d.toFixed(1))),
       screenshots: settleShots
     });
 
