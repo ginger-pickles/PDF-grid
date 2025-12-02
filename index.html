@@ -146,7 +146,7 @@ SETPOINT
         const CONFIG = {
           // Version - IMPORTANT: Keep in sync with git tag
           // When tagging a release, update this version to match the tag
-          VERSION: '1.11.0',
+          VERSION: '1.11.1',
 
           // Debug
           DEBUG_MODE: false, // Enable verbose logging, detailed error messages, and tile borders
@@ -4669,10 +4669,10 @@ SETPOINT
                   }
                 }
 
-                // TRIGGER 1: Recreate TiledImage after initial batch renders
-                // Stripes in viewport will be replaced with actual content
+                // TRIGGER 1: DISABLED - async tile loading (v1.11.0) updates tiles in place
+                // Stripes no longer generated, so recreation is unnecessary and causes flicker
                 if (window.viewer && window.tileStreamerRef) {
-                  recreateTiledImage(`initial batch complete (${pagesToRender.length} pages)`);
+                  // recreateTiledImage(`initial batch complete (${pagesToRender.length} pages)`);
 
                   // Remove progress overlay
                   if (overlayDiv && overlayDiv.parentNode) {
@@ -5088,8 +5088,8 @@ SETPOINT
               }
             }
 
-            // TRIGGER 2: Recreate TiledImage after all low-res pages complete
-            // Navigator will now show full content instead of stripes
+            // TRIGGER 2: DISABLED - async tile loading (v1.11.0) updates tiles in place
+            // Stripes no longer generated, so recreation is unnecessary and causes flicker
             if (window.tileStreamerRef && window.osdViewerRef) {
               // Pre-generate level 0 tile (overview) with all pages
               try {
@@ -5098,7 +5098,7 @@ SETPOINT
                 // Non-critical - OSD will request it anyway
               }
 
-              await recreateTiledImage('all low-res pages complete');
+              // await recreateTiledImage('all low-res pages complete');
             }
 
             console.log('[Background] Progressive minimap rendering complete');

@@ -9,6 +9,10 @@ const { defineConfig, devices } = require('@playwright/test');
 module.exports = defineConfig({
   testDir: './tests',
 
+  // Output directory for Playwright artifacts (videos, traces)
+  // Use subdirectory to avoid deleting our custom HTML reports in test-results/
+  outputDir: 'test-results/.playwright-artifacts',
+
   // Maximum time one test can run
   timeout: 60 * 1000, // Increased for slower, more realistic panning tests
 
@@ -53,11 +57,8 @@ module.exports = defineConfig({
     {
       name: 'chromium',
       use: {
-        viewport: null,
-        deviceScaleFactor: undefined,
-        launchOptions: {
-          args: ['--window-size=1200,1000']
-        }
+        // Mobile-size viewport for economy
+        viewport: { width: 375, height: 667 },
       },
     },
     // {

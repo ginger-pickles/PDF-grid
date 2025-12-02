@@ -48,6 +48,13 @@ Comprehensive flicker detection using page screenshots.
 
 ## Development Vectors
 
+## Vector -2: Remove things rather than add things.
+
+## Vector -1: Improve tile loading.
+
+## Vector 0: Reduce Flicker
+
+
 ### Vector 1: Exteroceptive over Interoceptive
 
 Tests should verify what the user **sees**, not what the code **reports**.
@@ -96,25 +103,9 @@ console.log(`⚠ FLICKER frame ${i}: ${pct}%`);
 
 **Direction**: Every significant observation logged in real-time.
 
-### Vector 5: Phase-Specific Thresholds
 
-Different phases have different stability expectations.
 
-| Phase     | Sampling | Threshold       | Notes                               |
-|-----------|----------|-----------------|-------------------------------------|
-| Load      | 50ms     | Track direction | Expect change, watch for regression |
-| Settled   | 50ms     | 0.1%            | Any change is suspect               |
-| Animation | 50ms     | Track settling  | Measure time-to-stable              |
 
-**Direction**: Parameterize detection per phase.
-
-### Vector 6: Browser Comparison
-
-Behavior differs across browsers. Firefox may not exhibit Chromium's issues.
-
-**Direction**: Run identical tests on multiple browser projects, compare results.
-
----
 
 ## Commands
 
@@ -154,23 +145,28 @@ Note: Do not remove code yet. iOS may have cache limitations requiring stripe re
 
 ### Hypotheses and Proposed Corrections
 
-| Hypothesis                          | Evidence                                      | Proposed Correction                          | Status   |
-|-------------------------------------|-----------------------------------------------|----------------------------------------------|----------|
-| `recreateTiledImage()` 50ms gap     | Function explicitly waits 50ms during swap    | Reduce delay or use crossfade transition     | Untested |
-| Auto-Inspector false triggers       | Checks for stripes that no longer exist       | Disable Auto-Inspector or remove dead code   | Untested |
-| React state change triggers redraw  | Debug panel updates cause visible refresh     | Memoize OSD interaction, isolate from state  | Untested |
-| OSD tile cache invalidation         | Tiles re-request after initial display        | Increase cache size or prevent invalidation  | Untested |
-| Multiple `forceRedraw()` calls      | Called from multiple code paths               | Debounce or consolidate redraw triggers      | Untested |
+| Hypothesis                          | Evidence                                      | Proposed Correction                          | Status        |
+|-------------------------------------|-----------------------------------------------|----------------------------------------------|---------------|
+| `recreateTiledImage()` 50ms gap     | Function explicitly waits 50ms during swap    | Disabled both call sites (lines 4675, 5101)  | **APPLIED**   |
+| Auto-Inspector false triggers       | Checks for stripes that no longer exist       | Already disabled (line 5543 commented)       | **N/A**       |
+| React state change triggers redraw  | Debug panel updates cause visible refresh     | Memoize OSD interaction, isolate from state  | Untested      |
+| OSD tile cache invalidation         | Tiles re-request after initial display        | Increase cache size or prevent invalidation  | Untested      |
+| Multiple `forceRedraw()` calls      | Lines 2907, 4075-4076, 6316-6318              | Debounce or consolidate redraw triggers      | **NEXT**      |
 
 ### Investigation Order
 
-1. **Disable Auto-Inspector** - Quick test, may eliminate periodic flickers
-2. **Profile `recreateTiledImage()` calls** - Add logging to confirm when/if called
-3. **Isolate React from OSD** - Check if debug panel state affects display
-4. **Review `forceRedraw()` call sites** - Map all triggers, look for redundancy
+1. ~~**Disable Auto-Inspector**~~ - Already disabled
+2. ~~**Disable `recreateTiledImage()` calls**~~ - Done (2 call sites disabled)
+3. **Review `forceRedraw()` call sites** - Map all triggers, look for redundancy
+4. **Isolate React from OSD** - Check if debug panel state affects display
+
+### Current Test Results
+
+- **LFT at 10% threshold**: 3 flickers detected during settle phase
+- **Report**: `test-results/lft-report.html` (with animation controls)
 
 ---
 
 ## Background
 
-See Sunday-original.md for notes from the last branch. See also Changelog.
+See the equivalent file in parent branch(es) for earlier notes. See also Changelog.
