@@ -162,8 +162,69 @@ Note: Do not remove code yet. iOS may have cache limitations requiring stripe re
 
 ### Current Test Results
 
-- **LFT at 10% threshold**: 3 flickers detected during settle phase
-- **Report**: `test-results/lft-report.html` (with animation controls)
+- **LFT at 5% threshold**: **0 flickers** - PASSED
+- **Root cause fixed**: `tiledImage.reset()` disabled (line 2899)
+- **Report**: `test-results/lft-report.html` (with animation controls, live viewer, run button)
+
+---
+
+## Resolution (2024-12-02)
+
+### Root Cause Identified
+
+The `tiledImage.reset()` call in `_scheduleReset()` was clearing OpenSeadragon's internal tile cache, causing a visual gap when content was re-rendered. This was triggering after a 500ms debounce and causing 6.1% pixel changes detected as flicker.
+
+### Fix Applied
+
+```javascript
+// Line 2898-2900 in index.html
+// Reset clears OSD's internal tile cache
+// DISABLED: tiledImage.reset() causes visual flicker
+// tiledImage.reset();
+this._lastResetTime = Date.now();
+```
+
+### Test Infrastructure
+
+- **File-based screenshots**: PNGs saved to `test-results/screenshots/` instead of base64 in JSON
+- **Visual diff chart**: Bar chart with threshold line showing frame-to-frame differences
+- **Live viewer**: Iframe in report showing PDF at test viewport size
+- **Run Test button**: Triggers Playwright test from report UI via `test-server.js`
+
+---
+
+## Next Development Vectors
+
+With the core flicker fix in place, these are potential next steps:
+
+### Vector 5: Re-enable Disabled LFT Phases
+
+The Pan, Grid, and Detail phases were disabled during debugging. Now that base flicker is fixed, re-enable to ensure no flicker during navigation operations.
+
+| Phase  | Operation                  | Status   |
+|--------|----------------------------|----------|
+| Pan    | Pan to 3 positions         | Disabled |
+| Grid   | Zoom to show all pages     | Disabled |
+| Detail | Zoom into center at 4x     | Disabled |
+
+### Vector 6: Multi-PDF Test Coverage
+
+Current test uses only `ginger-pickles.pdf`. Verify fix works across different documents:
+
+| PDF                        | Characteristic           |
+|----------------------------|--------------------------|
+| `test-pattern.pdf`         | Synthetic test image     |
+| `marie-neurath.pdf`        | Known flicker exhibitor  |
+| `mixed-dimensions.pdf`     | Variable page sizes      |
+| `Popular_Mechanics_*.pdf`  | Large magazine scans     |
+
+### Vector 7: Desktop Viewport Testing
+
+Current test uses mobile viewport (375x667) for economy. Desktop viewports may exhibit different behavior due to more tiles loaded simultaneously.
+
+### Vector 8: Performance Metrics
+
+Add timing metrics to LFT: time-to-first-tile, time-to-fully-loaded, memory usage during load.
 
 ---
 
