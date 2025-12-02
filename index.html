@@ -2896,7 +2896,8 @@ SETPOINT
                 if (!tiledImage) return;
 
                 // Reset clears OSD's internal tile cache
-                tiledImage.reset();
+                // DISABLED: tiledImage.reset() causes visual flicker
+                // tiledImage.reset();
                 this._lastResetTime = Date.now();
 
                 // Force OSD to re-request tiles with fresh content
