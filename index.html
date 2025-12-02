@@ -3270,6 +3270,12 @@ SETPOINT
               downloadTileStart: function(context) {
                 const { level, x, y } = context.postData;
 
+                // DIAGNOSTIC: Log tile requests for debugging edge tile issues
+                const tileKey = `${level}_${x}_${y}`;
+                if (!window.__tileLog) window.__tileLog = { requests: [], aborts: [], completes: [] };
+                window.__tileLog.requests.push({ key: tileKey, time: Date.now() });
+                console.log(`[Tile REQUEST] ${tileKey}`);
+
                 // Each tile gets its own canvas (OSD caches reference, not copy)
                 const canvas = document.createElement('canvas');
                 canvas.width = Math.round(self.tileWidth);
@@ -3281,6 +3287,8 @@ SETPOINT
 
                 if (result.ready) {
                   // All pages available - finish immediately
+                  if (window.__tileLog) window.__tileLog.completes.push({ key: tileKey, time: Date.now(), immediate: true });
+                  console.log(`[Tile COMPLETE] ${tileKey} (immediate)`);
                   context.finish(ctx);
                 } else {
                   // Pages missing - queue for later
@@ -3311,6 +3319,13 @@ SETPOINT
               downloadTileAbort: function(context) {
                 const { level, x, y } = context.postData;
                 const jobKey = `${level}_${x}_${y}`;
+
+                // DIAGNOSTIC: Log tile aborts
+                if (window.__tileLog) {
+                  window.__tileLog.aborts.push({ key: jobKey, time: Date.now() });
+                }
+                console.log(`[Tile ABORT] ${jobKey}`);
+
                 if (self.pendingJobs.delete(jobKey)) {
                   if (CONFIG.VERBOSE_LOGGING) {
                     console.log(`[Async Tile] Aborted job ${jobKey}`);
@@ -3440,6 +3455,8 @@ SETPOINT
                   job.resolution, job.neededPages, job.tileBounds
                 );
                 // Signal OSD that tile is ready
+                if (window.__tileLog) window.__tileLog.completes.push({ key: jobKey, time: Date.now(), immediate: false });
+                console.log(`[Tile COMPLETE] ${jobKey} (delayed)`);
                 job.context.finish(job.ctx);
                 this.pendingJobs.delete(jobKey);
 
@@ -3595,7 +3612,7 @@ SETPOINT
               visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
               constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
-              immediateRender: true,
+              immediateRender: true, // true = render best level first (faster perceived load)
               preload: true,
               maxImageCacheCount: CONFIG.OSD_MAX_IMAGE_CACHE, // 0 = disabled to prevent stale tiles after healing
               zoomPerScroll: 1.5, // Increase scroll wheel sensitivity (default: 1.2)

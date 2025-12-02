@@ -1,6 +1,10 @@
 REPORTING
 ---------
 
+Reports shall be kept under 500 lines.
+If over 500 LoC, automatically-generated reports should be condensed immediately after creation.
+
+
 Reports should follow the format:
 TITLE
 EFFECTIVITY
@@ -11,7 +15,9 @@ CONCLUSION
 APPENDICES
 
 
+Reports should contain block diagrams to illustrate concepts.
 
-Automatically-generated reports should be condensed to 1/2 their original length immediately after first creation.
+Reports should contain tables to list topic, information, and remarks more densely than outline-formattetd text.
 
-Illustations are good. Tables are good. Markdown tables should be formatted to look good as plain text.
+Tables shall be formatted with whitespace for readability.
+

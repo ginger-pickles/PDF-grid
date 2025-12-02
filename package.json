@@ -28,7 +28,8 @@
   },
   "homepage": "https://github.com/ginger-pickles/PDF-grid#readme",
   "devDependencies": {
-    "@playwright/test": "^1.56.1"
+    "@playwright/test": "^1.56.1",
+    "pngjs": "^7.0.0"
   },
   "dependencies": {
     "express": "^5.1.0"

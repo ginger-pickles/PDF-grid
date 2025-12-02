@@ -4,9 +4,9 @@
 - generic [ref=e3]:
   - generic [ref=e5]:
     - button "?" [ref=e6] [cursor=pointer]
-    - textbox "Enter PDF URL or choose local file..." [ref=e7]: demo/demo-1.pdf
-    - button "Open URL" [ref=e8] [cursor=pointer]
-    - generic [ref=e9] [cursor=pointer]: Local PDF
+    - textbox "Enter PDF URL or choose local file..." [ref=e7]: demo/test-pattern.pdf
+    - button "URL" [ref=e8] [cursor=pointer]
+    - generic [ref=e9] [cursor=pointer]: PDF
   - generic [ref=e16]:
     - generic "Go home" [ref=e17]:
       - img "Go home"

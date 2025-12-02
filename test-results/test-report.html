@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; background: #1a1a1a; color: #eee; text-align: center; }
+    h1 { margin-bottom: 10px; }
+    .meta { color: #888; font-size: 0.9em; margin: 10px 0 20px 0; }
+    .phase { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
+    .phase h2 { margin: 0 0 10px 0; font-size: 1.1em; }
+    .metrics { font-family: monospace; font-size: 1em; background: #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; max-width: 375px; word-wrap: break-word; }
+    .metrics-table { width: 100%; border-collapse: collapse; }
+    .metrics-table td { padding: 6px 10px; border-bottom: 1px solid #444; font-size: 1em; }
+    .metrics-table td:first-child { color: #aaa; text-align: right; width: 50%; }
+    .metrics-table td:nth-child(2) { text-align: left; }
+    .metrics-table td:last-child { text-align: center; width: 60px; }
+    .metrics-table tr:last-child td { border-bottom: none; }
+    .metric-override { background: #555; border: none; color: #fff; padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 0.9em; min-width: 50px; }
+    .metric-override:hover { background: #666; }
+    .metric-override.pass { background: #383; }
+    .metric-override.fail { background: #833; }
+    .metric-override.pending { background: #555; }
+    .pass { color: #4f4; }
+    .fail { color: #f44; }
+    .summary { font-size: 1.2em; padding: 12px 20px; border-radius: 8px; margin: 0; display: inline-block; }
+    .summary.pass { background: #143; }
+    .summary.fail { background: #411; }
+    .errors { background: #411; padding: 15px; border-radius: 8px; margin: 20px 0; display: inline-block; }
+    .errors pre { margin: 0; white-space: pre-wrap; }
+    .animator { display: block; }
+    .anim-display { position: relative; display: inline-block; }
+    .anim-img { border: 1px solid #444; border-radius: 4px; display: block; }
+    .anim-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.8); padding: 3px 6px; border-radius: 3px; font-family: monospace; font-size: 0.8em; }
+    .anim-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .anim-controls button { background: #444; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+    .anim-controls button:hover { background: #555; }
+    .anim-controls input[type=range] { flex: 1; }
+    .frame-num { font-family: monospace; font-size: 0.85em; min-width: 50px; }
+    .loading { color: #888; }
+    .live-viewer { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
+    .live-viewer h2 { margin: 0 0 10px 0; font-size: 1.1em; }
+    .live-viewer h2 a { color: #8cf; text-decoration: none; }
+    .live-viewer h2 a:hover { text-decoration: underline; }
+    .live-viewer iframe { border: 1px solid #444; border-radius: 4px; display: block; }
+    .live-controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .live-controls button { background: #444; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+    .live-controls button:hover { background: #555; }
+    .global-controls { margin: 15px 0; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .global-controls button { background: #444; border: none; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+    .global-controls button:hover { background: #555; }
+    .global-controls button.running { background: #654; cursor: wait; }
+    .global-controls button.active { background: #458; }
+    .global-controls select { background: #444; border: none; color: #fff; padding: 8px 12px; border-radius: 4px; font-size: 0.9em; }
+    .global-controls input[type=text] { background: #333; border: 1px solid #555; color: #fff; padding: 7px 12px; border-radius: 4px; font-size: 0.9em; width: 200px; }
+    .pdf-selector { display: flex; align-items: center; gap: 8px; }
+    .test-type-selector { display: flex; align-items: center; gap: 4px; justify-content: center; margin-bottom: 15px; }
+    .test-type-selector button { padding: 10px 24px; font-size: 1em; }
+    .verdict-btn { background: #555; border: none; color: #fff; padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 0.8em; min-width: 50px; }
+    .verdict-btn:hover { background: #666; }
+    .verdict-btn.pass { background: #383; }
+    .verdict-btn.fail { background: #833; }
+    .verdict-btn.pending { background: #555; }
+    .test-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0; padding: 4px 8px; background: #333; border-radius: 4px; }
+    .test-row .test-name { font-size: 0.85em; color: #ccc; }
+    .diff-chart { display: flex; align-items: flex-end; gap: 2px; height: 60px; background: #333; padding: 4px; border-radius: 4px; margin: 8px 0; }
+    .diff-bar { flex: 1; min-width: 20px; background: #4a4; border-radius: 2px 2px 0 0; position: relative; }
+    .diff-bar.flicker { background: #a44; }
+    .diff-bar span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: 0.7em; color: #888; }
+    .threshold-line { position: absolute; left: 0; right: 0; border-top: 1px dashed #f84; }
+    .single-shot { margin-top: 10px; }
+    .single-shot img { border: 1px solid #444; border-radius: 4px; max-width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="report">
+    <p class="loading">Loading results...</p>
+  </div>
+
+  <script>
+    const animStates = {};
+    const verdictOverrides = {}; // { phaseIdx: 'pass' | 'fail' | null }
+    let selectedPdf = null;
+    let currentTestType = 'lft'; // 'sft' or 'lft'
+    let currentResults = null;
+
+    const manualTests = {}; // { testId_phaseIdx: 'pass' | 'fail' | 'pending' }
+    const metricOverrides = {}; // { phaseIdx_metricKey: 'pass' | 'fail' | null }
+
+    function cycleMetricOverride(phaseIdx, metricKey) {
+      const key = `${phaseIdx}_${metricKey}`;
+      const current = metricOverrides[key];
+      if (current === undefined || current === 'pending') {
+        metricOverrides[key] = 'pass';
+      } else if (current === 'pass') {
+        metricOverrides[key] = 'fail';
+      } else {
+        delete metricOverrides[key];
+      }
+      updateMetricOverrideBtn(phaseIdx, metricKey);
+      updateOverallVerdict();
+      saveResults();
+    }
+
+    function updateMetricOverrideBtn(phaseIdx, metricKey) {
+      const key = `${phaseIdx}_${metricKey}`;
+      const btn = document.getElementById(`metric-btn-${key}`);
+      if (!btn) return;
+      const verdict = metricOverrides[key] || 'pending';
+      btn.className = `metric-override ${verdict}`;
+      btn.textContent = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+    }
+
+    // Cycle: pending -> pass -> fail -> pending
+    function cycleVerdict(phaseIdx) {
+      const current = verdictOverrides[phaseIdx];
+      if (current === undefined || current === 'pending') {
+        verdictOverrides[phaseIdx] = 'pass';
+      } else if (current === 'pass') {
+        verdictOverrides[phaseIdx] = 'fail';
+      } else {
+        delete verdictOverrides[phaseIdx];
+      }
+      updateVerdictBtn(phaseIdx);
+      updateOverallVerdict();
+      saveResults();
+    }
+
+    function cycleManualTest(testId) {
+      const current = manualTests[testId];
+      if (current === undefined || current === 'pending') {
+        manualTests[testId] = 'pass';
+      } else if (current === 'pass') {
+        manualTests[testId] = 'fail';
+      } else {
+        delete manualTests[testId];
+      }
+      updateManualTestBtn(testId);
+      updateOverallVerdict();
+      saveResults();
+    }
+
+    function updateVerdictBtn(phaseIdx) {
+      const btn = document.getElementById(`verdict-btn-${phaseIdx}`);
+      if (!btn) return;
+      const verdict = verdictOverrides[phaseIdx] || 'pending';
+      btn.className = `verdict-btn ${verdict}`;
+      btn.textContent = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+    }
+
+    function updateManualTestBtn(testId) {
+      const btn = document.getElementById(`manual-btn-${testId}`);
+      if (!btn) return;
+      const verdict = manualTests[testId] || 'pending';
+      btn.className = `verdict-btn ${verdict}`;
+      btn.textContent = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+    }
+
+    function getPhaseOriginalVerdict(phase) {
+      const hasFlickers = (phase.flickers || 0) > 0;
+      const noContent = phase.metrics && phase.metrics.hasContent === false;
+      return !hasFlickers && !noContent;
+    }
+
+    function computeOverallVerdict() {
+      if (!currentResults || !currentResults.phases) return currentResults?.passed;
+
+      // Check each automated phase
+      for (let i = 0; i < currentResults.phases.length; i++) {
+        const override = verdictOverrides[i];
+        if (override === 'fail') return false;
+        if (override === undefined || override === 'pending') {
+          if (!getPhaseOriginalVerdict(currentResults.phases[i])) return false;
+        }
+      }
+
+      // Check manual tests - any explicit fail fails overall
+      for (const testId of Object.keys(manualTests)) {
+        if (manualTests[testId] === 'fail') return false;
+      }
+
+      // Check metric overrides - any explicit fail fails overall
+      for (const key of Object.keys(metricOverrides)) {
+        if (metricOverrides[key] === 'fail') return false;
+      }
+
+      // Check for errors
+      if (currentResults.errors && currentResults.errors.length > 0) return false;
+      return true;
+    }
+
+    function updateOverallVerdict() {
+      const newPassed = computeOverallVerdict();
+      const summaryEl = document.querySelector('.summary');
+      if (!summaryEl) return;
+
+      const isLFT = currentResults?.testType === 'lft';
+      const summaryText = isLFT
+        ? `${newPassed ? 'PASSED' : 'FAILED'} - ${currentResults?.totalFlickers || 0} flickers detected`
+        : `${newPassed ? 'PASSED' : 'FAILED'}`;
+
+      summaryEl.className = `summary ${newPassed ? 'pass' : 'fail'}`;
+      summaryEl.textContent = summaryText;
+
+      if (currentResults) {
+        currentResults.passed = newPassed;
+        currentResults.verdictOverrides = Object.keys(verdictOverrides).length > 0
+          ? { ...verdictOverrides } : undefined;
+        currentResults.manualTests = Object.keys(manualTests).length > 0
+          ? { ...manualTests } : undefined;
+        currentResults.metricOverrides = Object.keys(metricOverrides).length > 0
+          ? { ...metricOverrides } : undefined;
+      }
+    }
+
+    function saveResults() {
+      if (!currentResults) return;
+      const jsonFile = currentTestType === 'sft' ? 'sft-results.json' : 'lft-results.json';
+      fetch('/save-results?file=' + encodeURIComponent(jsonFile), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentResults)
+      }).catch(err => console.log('Could not save results:', err));
+    }
+
+    function getAnimData(id) {
+      if (!animStates[id]) {
+        const container = document.getElementById(id);
+        const dataEl = container.querySelector('.anim-data');
+        const frames = JSON.parse(dataEl.textContent);
+        animStates[id] = { frames, index: 0, playing: false, interval: null };
+      }
+      return animStates[id];
+    }
+
+    function showFrame(id, index) {
+      const state = getAnimData(id);
+      const container = document.getElementById(id);
+      const img = container.querySelector('.anim-img');
+      const label = container.querySelector('.anim-label');
+      const slider = container.querySelector('input[type=range]');
+      const frameNum = container.querySelector('.frame-num');
+
+      state.index = index;
+      img.src = state.frames[index].file;
+      label.textContent = state.frames[index].label;
+      slider.value = index;
+      frameNum.textContent = (index + 1) + '/' + state.frames.length;
+    }
+
+    function toggleAnim(id) {
+      const state = getAnimData(id);
+      const container = document.getElementById(id);
+      const btn = container.querySelector('button');
+
+      if (state.playing) {
+        clearInterval(state.interval);
+        state.playing = false;
+        btn.textContent = 'Play';
+      } else {
+        state.playing = true;
+        btn.textContent = 'Pause';
+        state.interval = setInterval(() => {
+          const next = (state.index + 1) % state.frames.length;
+          showFrame(id, next);
+        }, 500);
+      }
+    }
+
+    function seekAnim(id, index) {
+      showFrame(id, parseInt(index));
+    }
+
+    function renderDiffChart(diffs, threshold) {
+      const maxVal = Math.max(...diffs, threshold * 2, 10);
+      const thresholdPct = (threshold / maxVal) * 100;
+      const bars = diffs.map((d, i) => {
+        const height = Math.max((d / maxVal) * 100, 2);
+        const isFlicker = d >= threshold;
+        return `<div class="diff-bar${isFlicker ? ' flicker' : ''}" style="height: ${height}%"><span>${d}%</span></div>`;
+      }).join('');
+      return `
+        <div class="diff-chart" style="position: relative;">
+          <div class="threshold-line" style="bottom: ${thresholdPct}%"></div>
+          ${bars}
+        </div>
+      `;
+    }
+
+    function renderMetrics(metrics, phaseIdx) {
+      if (!metrics) return '';
+      // Filter out redundant/technical metrics
+      const skipKeys = ['expectedPages', 'zoom', 'boundsWidth', 'hasContent'];
+      const rows = Object.entries(metrics)
+        .filter(([k]) => !skipKeys.includes(k))
+        .map(([k, v]) => {
+          const displayVal = typeof v === 'boolean'
+            ? `<span class="${v ? 'pass' : 'fail'}">${v ? 'YES' : 'NO'}</span>`
+            : (Array.isArray(v) ? v.join(', ') : v);
+          const key = `${phaseIdx}_${k}`;
+          const verdict = metricOverrides[key] || 'pending';
+          const label = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+          return `<tr>
+            <td>${k}</td>
+            <td>${displayVal}</td>
+            <td><button class="metric-override ${verdict}" id="metric-btn-${key}" onclick="cycleMetricOverride(${phaseIdx}, '${k}')">${label}</button></td>
+          </tr>`;
+        });
+
+      // Add manual "No Missing Tiles" row
+      const manualKey = `noMissingTiles_${phaseIdx}`;
+      const manualVerdict = manualTests[manualKey] || 'pending';
+      const manualLabel = manualVerdict === 'pending' ? '?' : (manualVerdict === 'pass' ? 'Pass' : 'Fail');
+      rows.push(`<tr>
+        <td>No Missing Tiles</td>
+        <td><span class="pass">visual</span></td>
+        <td><button class="metric-override ${manualVerdict}" id="manual-btn-${manualKey}" onclick="cycleManualTest('${manualKey}')">${manualLabel}</button></td>
+      </tr>`);
+
+      return `<table class="metrics-table">${rows.join('')}</table>`;
+    }
+
+    function renderPhase(p, phaseIdx, testType) {
+      const hasMultiple = p.screenshots && p.screenshots.length > 1;
+      const animatorId = `animator-${phaseIdx}`;
+
+      // Build metrics display
+      const metricsHTML = p.metrics ? renderMetrics(p.metrics, phaseIdx) :
+        (p.diffs ? `Duration: ${p.duration}ms | Flickers: <span class="${(p.flickers || 0) > 0 ? 'fail' : 'pass'}">${p.flickers || 0}</span>${p.threshold ? ` | Threshold: ${p.threshold}%` : ''}` :
+        (p.note ? p.note : `Duration: ${p.duration}ms`));
+
+      // Optional diff chart (LFT only)
+      const chartHTML = (p.diffs && p.diffs.length > 0) ? renderDiffChart(p.diffs, p.threshold || 5) : '';
+
+      // Multiple screenshots: use animator
+      if (hasMultiple) {
+        return `
+          <div class="phase">
+            <h2>${p.name}</h2>
+            <div class="metrics">${metricsHTML}</div>
+            ${chartHTML}
+            <div class="animator" id="${animatorId}">
+              <div class="anim-display">
+                <img class="anim-img" src="${p.screenshots[0].file}" alt="Frame">
+                <div class="anim-label">${p.screenshots[0].label}</div>
+              </div>
+              <div class="anim-controls">
+                <button onclick="toggleAnim('${animatorId}')">Play</button>
+                <input type="range" min="0" max="${p.screenshots.length - 1}" value="0"
+                       oninput="seekAnim('${animatorId}', this.value)">
+                <span class="frame-num">1/${p.screenshots.length}</span>
+              </div>
+              <div class="anim-data" style="display:none">${JSON.stringify(p.screenshots.map(s => ({label: s.label, file: s.file})))}</div>
+            </div>
+          </div>
+        `;
+      }
+      // Single screenshot
+      else {
+        const screenshot = p.screenshots && p.screenshots[0];
+        return `
+          <div class="phase">
+            <h2>${p.name}</h2>
+            <div class="metrics">${metricsHTML}</div>
+            ${screenshot ? `
+              <div class="single-shot">
+                <img src="${screenshot.file}" alt="${screenshot.label || p.name}">
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+    }
+
+    function reloadViewer() {
+      const iframe = document.getElementById('live-iframe');
+      if (iframe) {
+        iframe.src = '../?pdf=' + encodeURIComponent(selectedPdf);
+      }
+    }
+
+    function updatePdf(newPdf) {
+      selectedPdf = newPdf;
+      reloadViewer();
+      const titleLink = document.querySelector('.live-viewer h2 a');
+      if (titleLink) {
+        titleLink.href = '../?pdf=' + encodeURIComponent(selectedPdf);
+      }
+    }
+
+    function loadPdfList() {
+      fetch('/list-pdfs')
+        .then(r => r.json())
+        .then(data => {
+          const select = document.getElementById('pdf-select');
+          if (!select || !data.pdfs) return;
+          select.innerHTML = '';
+          data.pdfs.forEach(pdf => {
+            const opt = document.createElement('option');
+            opt.value = pdf;
+            opt.textContent = pdf;
+            if (pdf === selectedPdf) opt.selected = true;
+            select.appendChild(opt);
+          });
+        })
+        .catch(err => console.log('Could not load PDF list:', err));
+    }
+
+    function playAllAnims() {
+      document.querySelectorAll('.animator').forEach(el => {
+        const state = animStates[el.id];
+        if (state && !state.playing) toggleAnim(el.id);
+      });
+    }
+
+    function pauseAllAnims() {
+      document.querySelectorAll('.animator').forEach(el => {
+        const state = animStates[el.id];
+        if (state && state.playing) toggleAnim(el.id);
+      });
+    }
+
+    let testInProgress = false;
+
+    function toggleTest() {
+      const btn = document.getElementById('run-test-btn');
+      if (!btn) return;
+
+      if (testInProgress) {
+        btn.textContent = 'Stopping...';
+        btn.disabled = true;
+        fetch('/stop-test')
+          .then(r => r.json())
+          .then(result => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.disabled = false;
+            btn.textContent = result.stopped ? 'Run (Stopped)' : 'Run';
+          })
+          .catch(err => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.disabled = false;
+            btn.textContent = 'Run';
+            console.error('Stop error:', err);
+          });
+      } else {
+        testInProgress = true;
+        btn.classList.add('running');
+        btn.textContent = 'Stop';
+
+        fetch(`/run-test?type=${currentTestType}&pdf=` + encodeURIComponent(selectedPdf))
+          .then(r => r.json())
+          .then(result => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.textContent = result.success ? 'Run (PASSED)' : 'Run (FAILED)';
+            setTimeout(() => loadResults(currentTestType), 500);
+          })
+          .catch(err => {
+            testInProgress = false;
+            btn.classList.remove('running');
+            btn.textContent = 'Run (Error)';
+            console.error('Test error:', err);
+          });
+      }
+    }
+
+    function switchTestType(type) {
+      currentTestType = type;
+      // Update URL without reload
+      const url = new URL(window.location);
+      url.searchParams.set('type', type);
+      history.replaceState({}, '', url);
+      // Clear animation states
+      Object.keys(animStates).forEach(k => {
+        if (animStates[k].interval) clearInterval(animStates[k].interval);
+        delete animStates[k];
+      });
+      loadResults(type);
+    }
+
+    function renderReport(results) {
+      const testType = results.testType || 'lft';
+      const isLFT = testType === 'lft';
+      const testName = isLFT ? 'LFT: Long-Form Test' : 'SFT: Short-Form Test';
+
+      const phaseHTML = results.phases.map((p, i) => renderPhase(p, i, testType)).join('');
+      const vp = results.viewport || { width: 375, height: 667 };
+
+      const errorsHTML = results.errors && results.errors.length > 0 ? `
+        <div class="errors">
+          <h3>Console Errors (${results.errors.length})</h3>
+          <pre>${results.errors.join('\n')}</pre>
+        </div>
+      ` : '';
+
+      const appUrl = '../?pdf=' + encodeURIComponent(results.pdf);
+      const iframeHeight = vp.height + 120;
+      const liveViewerHTML = `
+        <div class="live-viewer">
+          <h2><a href="${appUrl}" target="_blank">Live Viewer (${vp.width}x${iframeHeight})</a></h2>
+          <iframe id="live-iframe" src="${appUrl}" width="${vp.width}" height="${iframeHeight}"></iframe>
+          <div class="live-controls">
+            <button onclick="reloadViewer()">Reload</button>
+          </div>
+        </div>
+      `;
+
+      // Summary varies by test type
+      const summaryText = isLFT
+        ? `${results.passed ? 'PASSED' : 'FAILED'} - ${results.totalFlickers || 0} flickers detected`
+        : `${results.passed ? 'PASSED' : 'FAILED'}`;
+
+      // Animation controls only for LFT
+      const animControlsHTML = isLFT ? `
+        <button onclick="playAllAnims()">Play All</button>
+        <button onclick="pauseAllAnims()">Pause All</button>
+      ` : '';
+
+      return `
+        <div class="test-type-selector">
+          <button onclick="switchTestType('sft')" class="${testType === 'sft' ? 'active' : ''}">SFT</button>
+          <button onclick="switchTestType('lft')" class="${testType === 'lft' ? 'active' : ''}">LFT</button>
+        </div>
+        <h1>${testName}</h1>
+        <div class="summary ${results.passed ? 'pass' : 'fail'}">
+          ${summaryText}
+        </div>
+        <p class="meta">PDF: ${results.pdf} | Viewport: ${vp.width}x${vp.height} | Run: ${results.timestamp} | Total: ${results.totalDuration}ms</p>
+        <div class="global-controls">
+          <div class="pdf-selector">
+            <label>PDF:</label>
+            <select id="pdf-select" onchange="updatePdf(this.value)">
+              <option value="${results.pdf}">${results.pdf}</option>
+            </select>
+          </div>
+          <button id="run-test-btn" onclick="toggleTest()">Run</button>
+          ${animControlsHTML}
+        </div>
+        ${liveViewerHTML}
+        ${errorsHTML}
+        ${phaseHTML}
+      `;
+    }
+
+    function loadResults(type) {
+      const jsonFile = type === 'sft' ? 'sft-results.json' : 'lft-results.json';
+      document.getElementById('report').innerHTML = '<p class="loading">Loading results...</p>';
+
+      fetch(jsonFile)
+        .then(r => {
+          if (!r.ok) throw new Error(`No ${type.toUpperCase()} results found`);
+          return r.json();
+        })
+        .then(results => {
+          currentResults = results;
+          selectedPdf = results.pdf;
+          // Restore verdict overrides from saved results
+          Object.keys(verdictOverrides).forEach(k => delete verdictOverrides[k]);
+          if (results.verdictOverrides) {
+            Object.entries(results.verdictOverrides).forEach(([k, v]) => {
+              verdictOverrides[parseInt(k)] = v;
+            });
+          }
+          // Restore manual tests from saved results
+          Object.keys(manualTests).forEach(k => delete manualTests[k]);
+          if (results.manualTests) {
+            Object.entries(results.manualTests).forEach(([k, v]) => {
+              manualTests[k] = v;
+            });
+          }
+          // Restore metric overrides from saved results
+          Object.keys(metricOverrides).forEach(k => delete metricOverrides[k]);
+          if (results.metricOverrides) {
+            Object.entries(results.metricOverrides).forEach(([k, v]) => {
+              metricOverrides[k] = v;
+            });
+          }
+          document.getElementById('report').innerHTML = renderReport(results);
+          loadPdfList();
+        })
+        .catch(err => {
+          const testName = type === 'sft' ? 'SFT: Short-Form Test' : 'LFT: Long-Form Test';
+          const defaultPdf = 'demo/test-pattern.pdf';
+          selectedPdf = selectedPdf || defaultPdf;
+          const vp = { width: 375, height: 667 };
+          const iframeHeight = vp.height + 120;
+          const appUrl = '../?pdf=' + encodeURIComponent(selectedPdf);
+
+          document.getElementById('report').innerHTML = `
+            <div class="test-type-selector">
+              <button onclick="switchTestType('sft')" class="${type === 'sft' ? 'active' : ''}">SFT</button>
+              <button onclick="switchTestType('lft')" class="${type === 'lft' ? 'active' : ''}">LFT</button>
+            </div>
+            <h1>${testName}</h1>
+            <p class="meta" style="color: #888;">No test results available. Run a test to see results.</p>
+            <div class="global-controls">
+              <div class="pdf-selector">
+                <label>PDF:</label>
+                <select id="pdf-select" onchange="updatePdf(this.value)">
+                  <option value="${selectedPdf}">${selectedPdf}</option>
+                </select>
+              </div>
+              <button id="run-test-btn" onclick="toggleTest()">Run</button>
+            </div>
+            <div class="live-viewer">
+              <h2><a href="${appUrl}" target="_blank">Live Viewer (${vp.width}x${iframeHeight})</a></h2>
+              <iframe id="live-iframe" src="${appUrl}" width="${vp.width}" height="${iframeHeight}"></iframe>
+              <div class="live-controls">
+                <button onclick="reloadViewer()">Reload</button>
+              </div>
+            </div>
+          `;
+          loadPdfList();
+        });
+    }
+
+    // Initialize: check URL param for test type
+    const urlParams = new URLSearchParams(window.location.search);
+    currentTestType = urlParams.get('type') || 'lft';
+    loadResults(currentTestType);
+  </script>
+</body>
+</html>

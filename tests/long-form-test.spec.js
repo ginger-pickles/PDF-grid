@@ -12,7 +12,7 @@ const { setupOfflineRoutes } = require('./test-helpers');
 const fs = require('fs');
 const path = require('path');
 
-const TEST_PDF = 'demo/ginger-pickles.pdf';
+const TEST_PDF = process.env.TEST_PDF || 'demo/ginger-pickles.pdf';
 const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
 const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
@@ -85,6 +85,7 @@ test.describe('LFT: Long-Form Test', () => {
     test.setTimeout(120000);
 
     const results = {
+      testType: 'lft',
       pdf: TEST_PDF,
       timestamp: new Date().toISOString(),
       viewport: VIEWPORT,
@@ -112,19 +113,35 @@ test.describe('LFT: Long-Form Test', () => {
     await page.waitForFunction(() => window.viewer && window.tileStreamerRef, { timeout: 30000 });
 
     const loadShots = [];
+    const loadDiffs = [];
     const P1_SAMPLE_INTERVAL = 250; // ms between samples
     const P1_SAMPLE_COUNT = 12;     // 3 seconds total
+    let p1PrevBuffer = null;
 
     // Sample during load period
     for (let i = 0; i < P1_SAMPLE_COUNT; i++) {
       await page.waitForTimeout(P1_SAMPLE_INTERVAL);
       const shot = await page.screenshot({ type: 'png' });
+      const b64 = shot.toString('base64');
       const filename = `p1-load-${String(i+1).padStart(2, '0')}.png`;
       const filepath = saveScreenshot(shot, filename);
-      loadShots.push({
-        label: `+${(i+1)*P1_SAMPLE_INTERVAL}ms`,
-        file: filepath
-      });
+
+      // Compare to previous frame
+      if (p1PrevBuffer) {
+        const prevB64 = p1PrevBuffer.toString('base64');
+        const diff = await compareScreenshots(page, prevB64, b64);
+        loadDiffs.push(diff);
+        loadShots.push({
+          label: `+${(i+1)*P1_SAMPLE_INTERVAL}ms (${diff.toFixed(1)}%)`,
+          file: filepath
+        });
+      } else {
+        loadShots.push({
+          label: `+${(i+1)*P1_SAMPLE_INTERVAL}ms (baseline)`,
+          file: filepath
+        });
+      }
+      p1PrevBuffer = shot;
     }
 
     results.phases.push({
@@ -132,6 +149,7 @@ test.describe('LFT: Long-Form Test', () => {
       duration: Date.now() - p1Start,
       flickers: 0,
       note: 'Content building during load',
+      diffs: loadDiffs.map(d => parseFloat(d.toFixed(1))),
       screenshots: loadShots
     });
 

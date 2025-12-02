@@ -1,0 +1,143 @@
+{
+  "testType": "lft",
+  "pdf": "demo/ginger-pickles.pdf",
+  "timestamp": "2025-12-02T03:53:49.459Z",
+  "viewport": {
+    "width": 375,
+    "height": 667
+  },
+  "phases": [
+    {
+      "name": "Phase 1: Load",
+      "duration": 7252,
+      "flickers": 0,
+      "note": "Content building during load",
+      "diffs": [
+        0.2,
+        0.2,
+        39.7,
+        0.2,
+        21.3,
+        3.8,
+        0.9,
+        0.9,
+        0.9,
+        0.1,
+        0
+      ],
+      "screenshots": [
+        {
+          "label": "+250ms (baseline)",
+          "file": "screenshots/p1-load-01.png"
+        },
+        {
+          "label": "+500ms (0.2%)",
+          "file": "screenshots/p1-load-02.png"
+        },
+        {
+          "label": "+750ms (0.2%)",
+          "file": "screenshots/p1-load-03.png"
+        },
+        {
+          "label": "+1000ms (39.7%)",
+          "file": "screenshots/p1-load-04.png"
+        },
+        {
+          "label": "+1250ms (0.2%)",
+          "file": "screenshots/p1-load-05.png"
+        },
+        {
+          "label": "+1500ms (21.3%)",
+          "file": "screenshots/p1-load-06.png"
+        },
+        {
+          "label": "+1750ms (3.8%)",
+          "file": "screenshots/p1-load-07.png"
+        },
+        {
+          "label": "+2000ms (0.9%)",
+          "file": "screenshots/p1-load-08.png"
+        },
+        {
+          "label": "+2250ms (0.9%)",
+          "file": "screenshots/p1-load-09.png"
+        },
+        {
+          "label": "+2500ms (0.9%)",
+          "file": "screenshots/p1-load-10.png"
+        },
+        {
+          "label": "+2750ms (0.1%)",
+          "file": "screenshots/p1-load-11.png"
+        },
+        {
+          "label": "+3000ms (0.0%)",
+          "file": "screenshots/p1-load-12.png"
+        }
+      ]
+    },
+    {
+      "name": "Phase 2: Settle (Flicker Check)",
+      "duration": 3496,
+      "flickers": 0,
+      "threshold": 5,
+      "diffs": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "screenshots": [
+        {
+          "label": "+250ms (baseline)",
+          "file": "screenshots/p2-settle-01.png"
+        },
+        {
+          "label": "+500ms (0.0%)",
+          "file": "screenshots/p2-settle-02.png"
+        },
+        {
+          "label": "+750ms (0.0%)",
+          "file": "screenshots/p2-settle-03.png"
+        },
+        {
+          "label": "+1000ms (0.0%)",
+          "file": "screenshots/p2-settle-04.png"
+        },
+        {
+          "label": "+1250ms (0.0%)",
+          "file": "screenshots/p2-settle-05.png"
+        },
+        {
+          "label": "+1500ms (0.0%)",
+          "file": "screenshots/p2-settle-06.png"
+        },
+        {
+          "label": "+1750ms (0.0%)",
+          "file": "screenshots/p2-settle-07.png"
+        },
+        {
+          "label": "+2000ms (0.0%)",
+          "file": "screenshots/p2-settle-08.png"
+        },
+        {
+          "label": "+2250ms (0.0%)",
+          "file": "screenshots/p2-settle-09.png"
+        },
+        {
+          "label": "+2500ms (0.0%)",
+          "file": "screenshots/p2-settle-10.png"
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "totalFlickers": 0,
+  "totalDuration": 10748,
+  "passed": true
+}
