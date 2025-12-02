@@ -1,0 +1,153 @@
+{
+  "testType": "sft",
+  "pdf": "demo/test-pattern.pdf",
+  "timestamp": "2025-12-02T07:12:17.175Z",
+  "viewport": {
+    "width": 375,
+    "height": 667
+  },
+  "phases": [
+    {
+      "name": "State 1: Initial View",
+      "duration": 650,
+      "metrics": {
+        "numPages": 12,
+        "hasContent": true,
+        "expectedPages": [
+          1,
+          2,
+          3
+        ],
+        "allPagesVisible": false,
+        "allPagesCorrectRes": true
+      },
+      "verification": {
+        "expectedPages": [
+          1,
+          2,
+          3
+        ],
+        "pageResults": [
+          {
+            "page": 1,
+            "visible": false,
+            "correctResolution": false,
+            "screenRegion": {
+              "left": 63,
+              "top": 158,
+              "right": 314,
+              "bottom": 512
+            },
+            "samples": {
+              "uniqueColors": 2,
+              "avgBrightness": 40.24444444444419,
+              "edgeSharpness": 0,
+              "edgeSamples": 0
+            }
+          },
+          {
+            "page": 2,
+            "visible": false,
+            "correctResolution": false,
+            "screenRegion": {
+              "left": 316,
+              "top": 158,
+              "right": 375,
+              "bottom": 512
+            },
+            "samples": {
+              "uniqueColors": 2,
+              "avgBrightness": 40.47457627118889,
+              "edgeSharpness": 0,
+              "edgeSamples": 0
+            }
+          },
+          {
+            "page": 3,
+            "visible": true,
+            "correctResolution": true,
+            "screenRegion": {
+              "left": 316,
+              "top": 513,
+              "right": 375,
+              "bottom": 667
+            },
+            "samples": {
+              "uniqueColors": 285,
+              "avgBrightness": 184.01500721500798,
+              "edgeSharpness": 0.41215323645970936,
+              "edgeSamples": 936
+            }
+          }
+        ],
+        "allPagesVisible": false,
+        "allPagesCorrectRes": true,
+        "gridBounds": {
+          "left": 14219.999999999998,
+          "top": -1412.3519999999994,
+          "right": 17891.999999999996,
+          "bottom": 4580.351999999999
+        },
+        "osdBounds": {
+          "x": 0.4793689320388349,
+          "y": -0.04761165048543688,
+          "width": 0.12378640776699029,
+          "height": 0.20201941747572813
+        }
+      },
+      "tileLog": {
+        "requests": [
+          {
+            "key": "3_3_0",
+            "time": 1764659542196
+          },
+          {
+            "key": "3_2_0",
+            "time": 1764659542233
+          }
+        ],
+        "aborts": [],
+        "completes": [
+          {
+            "key": "3_3_0",
+            "time": 1764659542604,
+            "immediate": false
+          },
+          {
+            "key": "3_2_0",
+            "time": 1764659542606,
+            "immediate": false
+          }
+        ]
+      },
+      "screenshots": [
+        {
+          "label": "Initial",
+          "file": "screenshots/sft-state1-initial.png"
+        },
+        {
+          "label": "Stable",
+          "file": "screenshots/sft-state1-stable.png"
+        }
+      ]
+    },
+    {
+      "name": "State 2: Grid Overview",
+      "duration": 1361,
+      "metrics": {
+        "zoom": 1,
+        "boundsWidth": 1,
+        "hasContent": true
+      },
+      "screenshots": [
+        {
+          "label": "Grid view",
+          "file": "screenshots/sft-state2-grid.png"
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "totalDuration": 7041,
+  "passed": false
+}

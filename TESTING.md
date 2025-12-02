@@ -14,6 +14,9 @@ Tests shall use visual feedback to detect correct operation. Traceability: Eyes 
 Tests shall use automated measurement and data collection, not manual guess-and-check. Traceability: Mechanisation of effort.
 Tests shall not involve user console inspection. Traceability: Mechanisation of effort. User specification of requirements, not implementation.
 Tests shall retain test results for inspection in test-results folder until overwritten by next test. Traceability: Review of test results.
+Tests shall output a human-readable report.html file showing screenshots.
+Tests shall not rm or mv the test-results/ folder.
+Tests shall not rm or mv the report.html files within test-results/,
 
 There shall be functional tests.
 There shall be short-form and long-form functional tests.
@@ -27,19 +30,10 @@ Tests shall not be constructed in a way that allows reward hacking.
 
 ## Test Organization
 
-```
-tests/
-├── functional/
-│   ├── core-features.spec.js    # Basic load/render/interaction
-│   └── edge-cases.spec.js       # Error handling, edge cases
-├── visual/
-│   ├── blank-tiles.spec.js      # Tile rendering validation
-│   └── missing-pages-grid.spec.js
-├── memory/
-│   └── zoom-operations.spec.js  # Memory/cache behavior
-└── archived/                    # Deprecated tests (60+)
-```
 
+
+  1. Have the test write results to lft-results.json
+  2. Create a standalone lft-report.html that fetches and renders that JSON
 
 
 ## Running Tests

@@ -377,6 +377,29 @@ When viewer opens, OSD animates to initial position. Tiles requested during anim
 
 **Potential fix**: Delay initial tile requests until animation settles, or re-request aborted tiles after settling.
 
+### Vector 15: Level 0 Tile Not Requested (ROOT CAUSE IDENTIFIED)
+
+**Diagnostic tile logging (2024-12-02)** reveals the root cause:
+
+| Run | Status | Tiles Requested | Level 0 (`0_0_0`) |
+|-----|--------|-----------------|-------------------|
+| PASS | All visible | `0_0_0`, `3_2_0`, `3_3_0` | **Requested** |
+| FAIL | [1,2] missing | `3_2_0`, `3_3_0` | **Not requested** |
+
+**Mechanism**: The level 0 tile (`0_0_0`) is a low-resolution fallback that covers the entire viewport. When requested, all pages have at least low-res content. When missing, only high-res tiles (level 3) are rendered, covering only part of the viewport.
+
+**Browser behavior differences**:
+- Chromium: Intermittent (level 0 sometimes requested, sometimes not)
+- Firefox: 100% failure rate (level 0 never requested in small viewport)
+
+**No aborts observed**: The `aborts` array is empty in all runs. Tiles aren't being cancelled - they're never requested in the first place.
+
+**Investigation direction**:
+1. Why does OSD sometimes skip level 0 tile requests?
+2. Is there a `minLevel` or `maxLevel` constraint affecting this?
+3. Does viewport size affect which tile levels are requested?
+4. Can we force level 0 tiles to always be requested?
+
 ### Vector 12: Parametric Test Waits
 
 Test waits should be calculated based on input file characteristics, not hardcoded.
