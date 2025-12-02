@@ -490,6 +490,159 @@ From [OSD docs](https://openseadragon.github.io/docs/OpenSeadragon.Viewer.html):
 
 ---
 
+### Vector 17: PDF.js Render Timing Race Condition (ROOT CAUSE IDENTIFIED)
+
+**Date**: 2024-12-02
+
+**Original observation**: Pages 2,3 missing in initial mobile viewport (375x667). Edge tiles appeared incomplete.
+
+**Investigation summary**:
+1. Initial hypothesis: Edge tile quantization mismatch → **REJECTED**
+2. Edge tiles (like L0 `0_0_0`) have valid bounds (75% coverage is correct, not a bug)
+3. **Actual root cause**: PDF.js page render timing race condition
+
+**Root cause confirmed**: Tiles complete BEFORE all needed pages finish rendering.
+
+**Timeline from passing test (shows race even when "passing"):**
+```
+350138ms - Render START: pages 1,2,3 high-res (all same ms!)
+350500ms - Render COMPLETE: page 2 high (FIRST)
+350617ms - Render COMPLETE: page 1 high
+350633ms - Tile 3_3_0 COMPLETE ← Tile finishes here
+350633ms - Cache miss: page 3 (not ready yet!)
+350641ms - Render COMPLETE: page 3 high (8ms AFTER tile!)
+```
+
+**Key findings:**
+1. PDF.js renders pages in non-deterministic order (p2→p1→p3, not sequential)
+2. Tiles complete with whatever pages are ready at that moment
+3. Late pages show as low-res (from L0 fallback) or missing entirely
+4. Race outcome varies: pass (all ready), partial (mixed res), fail (pages missing)
+
+**Evidence from test data:**
+- `cacheMisses`: Page 3 missing high AND low res when L3 tile completed
+- `renderCompletes`: Order was p2→p1→p3, not p1→p2→p3
+- `pageDraws`: Only pages ready before tile completion were drawn
+
+**Potential fixes (ranked by invasiveness):**
+1. **Pre-render visible pages**: Before viewer init, ensure pages 1-3 canvases ready
+2. **Delay tile completion**: Wait for all `neededPages` before `context.finish(ctx)`
+3. **Retry mechanism**: If pages missing, defer tile completion and retry
+
+**Status**: Root cause confirmed. Proceeding with Option 3 (retry mechanism).
+
+---
+
+### Vector 18: Incomplete Tile Retry Mechanism
+
+**Date**: 2024-12-02
+
+**Approach**: Option 3 from Vector 17 - retry mechanism for tiles with missing pages.
+
+**Rationale**:
+- Large PDFs with hundreds of pages and arbitrary initial views
+- Blocking on all pages would delay initial display unacceptably
+- Progressive enhancement: show what's available, improve as pages render
+
+**Implementation design**:
+1. Track incomplete tiles in `_drawPageIntersection()` when cache miss occurs
+2. Store `{ tileKey, pageNum, resolution }` in a pending retry set
+3. When page render completes, check pending retries for that page
+4. Invalidate affected tiles and schedule redraw
+5. OSD re-requests tiles, they complete with full content
+
+**Key integration points**:
+- `_drawPageIntersection()`: Record cache misses with tile context
+- `renderPage()` completion: Trigger retry for affected tiles
+- Existing `_invalidateTilesUsingPages()` and `scheduleRedraw()` for tile refresh
+
+**Implementation**:
+1. Added `pendingRetries` Map to TileStreamer (line 3007)
+2. In `_drawPageIntersection()`: Register cache misses for retry (lines 2584-2590)
+3. In `renderPage()` completion: Check pending retries and trigger targeted reset (lines 833-845)
+4. Added `_forceRetryReset()` to CacheManager (lines 2883-2916)
+
+**Testing**: 6/6 consecutive test runs passed (vs intermittent failures before).
+
+**Status**: Complete.
+
+---
+
+### Vector 19: OSD placeholderFillStyle (Future)
+
+**Date**: 2024-12-02
+
+**OSD Feature**: `placeholderFillStyle` option draws a colored placeholder while tiles load.
+
+**Usage**:
+```javascript
+viewer.addTiledImage({
+  tileSource: mySource,
+  placeholderFillStyle: 'rgb(200, 200, 200)'  // Gray placeholder
+});
+```
+
+**Potential application**: Show gray rectangles while PDF pages render, providing visual feedback during initial load.
+
+**Known issues**: Had bugs in OSD 2.3.0 where placeholder wasn't drawn when `lastDrawn` array was empty ([Issue #1283](https://github.com/openseadragon/openseadragon/issues/1283)).
+
+**Status**: Not implemented. Consider for progressive loading UX.
+
+---
+
+### Vector 20: OSD Tile State Properties (Future)
+
+**Date**: 2024-12-02
+
+**OSD Tile properties** for state management:
+- `tile.loaded` (Boolean) - Is tile data loaded?
+- `tile.loading` (Boolean) - Is tile currently loading?
+- `tile.exists` (Boolean) - Set `false` for sparse images or failed tiles
+- `tile.opacity` (Number) - Current opacity (for fade animations)
+
+**Retry via `tile.exists`**:
+```javascript
+viewer.addHandler('tile-load-failed', function(event) {
+  setTimeout(function() {
+    event.tile.exists = true;  // Reset to trigger retry
+  }, 1);
+});
+```
+
+**Events**:
+- `tile-loaded` - Fires when tile completes
+- `tile-load-failed` - Fires when tile fails (can reset `exists` to retry)
+- `fully-loaded-change` - Fires when all visible tiles loaded/unloaded
+
+**Status**: Not used. Our retry mechanism uses `tiledImage.reset()` instead.
+
+---
+
+### Vector 21: tiledImage.reset() Usage Analysis
+
+**Date**: 2024-12-02
+
+**Current usage in codebase**:
+
+| Location | Line | Status | When Called |
+|----------|------|--------|-------------|
+| `_scheduleReset()` | 2857 | **DISABLED** | Was called by `scheduleRedraw()` |
+| `_forceRetryReset()` | 2904 | **ENABLED** | Only when `pendingRetries` has tiles waiting |
+| `_requestPagesAsync()` | 2938-2939 | Comment only | Uses `needsDraw()` instead |
+
+**Why disabled in `_scheduleReset()`**: Causes visual flicker by forcing OSD to re-request ALL tiles, even those already complete.
+
+**Why enabled in `_forceRetryReset()`**: Surgical reset - only triggered when tiles actually need retry (incomplete pages). Accepts brief flicker as tradeoff for correctness.
+
+**Alternative approaches not using reset**:
+1. Never complete tiles until all pages ready (Option 2 - delays initial display)
+2. Use `tile.exists = false` + retry handler (requires tracking per-tile)
+3. Update canvas in-place via `getTileCacheDataAsContext2D()` (complex)
+
+**Status**: Current hybrid approach (soft redraw normally, hard reset for retries) balances UX and correctness.
+
+---
+
 ## Background
 
 See the equivalent file in parent branch(es) for earlier notes. See also Changelog.
