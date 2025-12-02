@@ -485,6 +485,8 @@ test.describe('SFT: Short-Form Test', () => {
         allPagesCorrectRes: state1Verification.allPagesCorrectRes
       },
       verification: state1Verification,
+      // DIAGNOSTIC: Capture tile request/abort/complete log
+      tileLog: await page.evaluate(() => window.__tileLog || { requests: [], aborts: [], completes: [] }),
       screenshots: [
         { label: 'Initial', file: initialFile },
         { label: 'Stable', file: stableFile }
