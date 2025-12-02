@@ -28,6 +28,37 @@ Test patterns shall be used that reveal common failure modes.
 Tests shall not be constructed in a way that allows reward hacking.
 
 
+## Testing Principles
+
+### Vector 1: Exteroceptive tests over Interoceptive tests
+
+Tests should verify what the user **sees**, not what the code **reports**.
+
+| Approach      | Risk                                                   |
+|---------------|--------------------------------------------------------|
+| Interoceptive | False positives - internal state correct, screen blank |
+| Exteroceptive | Catches real failures the user would experience        |
+
+**Direction**: Every pass/fail criterion should have an exteroceptive component.
+
+### Vector 2: Screenshot Comparison, Not Canvas Sampling
+
+Canvas `getImageData()` misses visual flickers. Page screenshots capture what user sees.
+
+**Direction**: All visual assertions should use page screenshots.
+
+### Vector 4: Immediate Logging
+
+Test results must not be lost on abort. Log findings immediately, not at end.
+
+```javascript
+// Log immediately when detected
+console.log(`⚠ FLICKER frame ${i}: ${pct}%`);
+```
+
+**Direction**: Every significant observation logged in real-time.
+
+
 ## Test Organization
 
 

@@ -829,20 +829,8 @@ SETPOINT
                   window.tileStreamerRef._invalidateTilesUsingPages([pageNum], resolution);
                   // Complete any pending async tile jobs waiting for this page
                   window.tileStreamerRef.finishPendingJobs([pageNum]);
-
-                  // Vector 18: Check for pending retries and trigger targeted reset
-                  const retryKey = `${pageNum}_${resolution}`;
-                  const pendingTiles = window.tileStreamerRef.pendingRetries.get(retryKey);
-                  if (pendingTiles && pendingTiles.size > 0) {
-                    console.log(`[RETRY TRIGGERED] page ${pageNum} ${resolution} ready, ${pendingTiles.size} tiles waiting: ${[...pendingTiles].join(', ')}`);
-                    // Clear pending retries for this page
-                    window.tileStreamerRef.pendingRetries.delete(retryKey);
-                    // Force OSD to re-request tiles (surgical reset only when retries pending)
-                    window.tileStreamerRef.cacheManager._forceRetryReset();
-                  } else {
-                    // No retries pending - just trigger soft redraw
-                    window.tileStreamerRef.scheduleRedraw();
-                  }
+                  // Trigger soft redraw to display newly available pages
+                  window.tileStreamerRef.scheduleRedraw();
                 }
 
                 // Return decoded Image (works with drawImage just like canvas)
@@ -2286,20 +2274,17 @@ SETPOINT
               return cached;
             }
 
-            // Check if all needed pages are available at the requested resolution
-            // If not, try fallback to opposite resolution before returning stripes
+            // Check if all needed pages are available at the REQUIRED resolution
+            // Vector 12 Fix: No fallback - only accept correct resolution
             const pageCache = ts.pageStreamer._getPageCache(resolution);
-            const fallbackRes = resolution === 'high' ? 'low' : 'high';
-            const fallbackCache = ts.pageStreamer._getPageCache(fallbackRes);
 
-            // Count pages available at primary or fallback resolution
+            // Count pages missing at the required resolution
             const missingPages = neededPages.filter(p => {
-              const hasPrimary = pageCache.has(`${p}_${resolution}`);
-              const hasFallback = fallbackCache.has(`${p}_${fallbackRes}`);
-              return !hasPrimary && !hasFallback;
+              const hasCorrectResolution = pageCache.has(`${p}_${resolution}`);
+              return !hasCorrectResolution;
             });
 
-            // If missing pages (no primary OR fallback), request them and return null
+            // If missing pages at required resolution, request them and return null
             // OSD will display nothing for this tile until pages are ready
             if (missingPages.length > 0) {
               ts.cacheManager._requestPagesAsync(missingPages, resolution);
@@ -2502,12 +2487,12 @@ SETPOINT
                           pageBottom <= tileTop ? 'page-above-tile' : 'page-below-tile'
                 });
               }
-              return false;
+              return true; // No intersection - success (nothing to draw)
             }
 
             // Skip blank cells
             if (pageNum === 0) {
-              return false;
+              return true; // Blank cell - success (nothing to draw)
             }
 
             // Get decoded page from cache (JPEG data URLs are automatically decoded)
@@ -2567,45 +2552,16 @@ SETPOINT
               }
             }
 
-            // Fallback logic if page not available
+            // Vector 12 Simplification: Abort tile composition if page missing
+            // No retry mechanism - rely on pendingJobs queue instead
             if (!pageCanvas) {
-              // Try opposite resolution as fallback
-              const fallbackRes = resolution === 'high' ? 'low' : 'high';
-              pageCanvas = ts.pageStreamer.getDecodedPage(pageNum, fallbackRes);
-
-              if (pageCanvas) {
-                ts.stats.tilesRenderedFallback++;
-                ts._updateRenderRateWindow(0, 1);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[ABORT COMPOSITION] tile ${debugKey} L${level}: page ${pageNum} ${resolution} not available`);
               }
-
-              if (!pageCanvas) {
-                // DIAGNOSTIC: Log cache misses for level 3 pages 2,3 (Vector 17)
-                if (pageNum >= 2 && pageNum <= 3 && level >= 3 && window.__tileLog) {
-                  if (!window.__tileLog.cacheMisses) window.__tileLog.cacheMisses = [];
-                  window.__tileLog.cacheMisses.push({
-                    page: pageNum,
-                    tile: debugKey,
-                    level: level,
-                    resolution: resolution,
-                    fallbackRes: fallbackRes,
-                    time: Date.now()
-                  });
-                  console.log(`[CACHE MISS] p${pageNum} for tile ${debugKey} L${level}: no ${resolution} or ${fallbackRes} canvas`);
-                }
-
-                // Vector 18: Register tile for retry when page becomes available
-                const retryKey = `${pageNum}_${resolution}`;
-                if (!ts.pendingRetries.has(retryKey)) {
-                  ts.pendingRetries.set(retryKey, new Set());
-                }
-                ts.pendingRetries.get(retryKey).add(debugKey);
-                console.log(`[RETRY REGISTERED] tile ${debugKey} waiting for page ${pageNum} ${resolution}`);
-
-                return false; // No canvas available at all
-              }
-            } else {
-              ts.stats.tilesRenderedFull++;
+              return false; // Abort - tile should be queued via pendingJobs
             }
+
+            ts.stats.tilesRenderedFull++;
 
             // Calculate intersection region in grid coordinates
             const intersectLeft = Math.max(tileLeft, pageLeft);
@@ -2714,17 +2670,24 @@ SETPOINT
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             // Draw portions of pages that intersect this tile
+            // Track if all needed pages were successfully drawn
+            let allPagesDrawn = true;
             for (let row = 0; row < gridRows; row++) {
               for (let col = 0; col < gridCols; col++) {
-                this._drawPageIntersection(
+                const wasDrawn = this._drawPageIntersection(
                   row, col, tileLeft, tileTop, tileRight, tileBottom,
                   scale, `${level}_${x}_${y}`, resolution, level, ctx
                 );
+                if (!wasDrawn) allPagesDrawn = false;
               }
             }
 
-            // Update render rate stats
-            ts._updateRenderRateWindow(1, 0);
+            // Update render rate stats only if successful
+            if (allPagesDrawn) {
+              ts._updateRenderRateWindow(1, 0);
+            }
+
+            return allPagesDrawn; // Return success flag
           }
 
           /**
@@ -2881,41 +2844,6 @@ SETPOINT
           }
 
           /**
-           * Vector 18: Force OSD to re-request tiles when retries are pending
-           * This is more aggressive than scheduleRedraw() - it actually resets OSD's cache
-           */
-          _forceRetryReset() {
-            // Debounce multiple retry triggers
-            if (this._retryResetTimeout) {
-              clearTimeout(this._retryResetTimeout);
-            }
-
-            this._retryResetTimeout = setTimeout(() => {
-              this._retryResetTimeout = null;
-
-              try {
-                if (!window.osdViewerRef || !window.osdViewerRef.world) return;
-
-                const tiledImage = window.osdViewerRef.world.getItemAt(0);
-                if (!tiledImage) return;
-
-                console.log('[RETRY RESET] Forcing OSD to re-request tiles');
-                // Reset clears OSD's internal tile cache, forcing re-requests
-                tiledImage.reset();
-
-                // Force redraw after reset
-                requestAnimationFrame(() => {
-                  if (window.osdViewerRef) {
-                    window.osdViewerRef.world.needsDraw();
-                  }
-                });
-              } catch (err) {
-                console.warn('[RETRY RESET] Error:', err);
-              }
-            }, 100); // Short delay to batch multiple page completions
-          }
-
-          /**
            * Request pages asynchronously and invalidate affected tiles
            */
           _requestPagesAsync(pageNums, resolution) {
@@ -3057,10 +2985,6 @@ SETPOINT
             // Pending tile jobs for async downloadTileStart pattern
             // Maps jobKey (level_x_y) to {context, canvas, ctx, missingPages, resolution, ...}
             this.pendingJobs = new Map();
-
-            // Pending retries for incomplete tiles (Vector 18)
-            // Maps pageNum_resolution to Set of tileKeys that need retry when page renders
-            this.pendingRetries = new Map();
 
             // Diagnostics: Track fallback tiles vs full tiles
             this.stats = {
@@ -3549,15 +3473,14 @@ SETPOINT
             // Determine resolution based on level
             const resolution = level <= this.minimapMaxLevel ? 'low' : 'high';
 
-            // Check which pages are available
+            // Check which pages are available at the REQUIRED resolution
+            // Vector 12 Fix: No fallback - only accept correct resolution
+            // This ensures stable level-to-resolution mapping (impedance matching)
             const pageCache = this.pageStreamer._getPageCache(resolution);
-            const fallbackRes = resolution === 'high' ? 'low' : 'high';
-            const fallbackCache = this.pageStreamer._getPageCache(fallbackRes);
 
             const missingPages = neededPages.filter(p => {
-              const hasPrimary = pageCache.has(`${p}_${resolution}`);
-              const hasFallback = fallbackCache.has(`${p}_${fallbackRes}`);
-              return !hasPrimary && !hasFallback;
+              const hasCorrectResolution = pageCache.has(`${p}_${resolution}`);
+              return !hasCorrectResolution;
             });
 
             if (missingPages.length > 0) {
@@ -3566,7 +3489,21 @@ SETPOINT
             }
 
             // Ready - render to provided context
-            this.tileGenerator._renderTileToContext(level, x, y, ctx, resolution, neededPages, tileBounds);
+            // Check if composition succeeded (all pages drawn)
+            const success = this.tileGenerator._renderTileToContext(level, x, y, ctx, resolution, neededPages, tileBounds);
+            if (!success) {
+              // Composition failed (page evicted during render) - treat as not ready
+              // Re-check which pages are actually missing now
+              const stillMissing = neededPages.filter(p => {
+                const hasCorrectResolution = pageCache.has(`${p}_${resolution}`);
+                return !hasCorrectResolution;
+              });
+
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[COMPOSITION FAILED] tile ${level}_${x}_${y}: pages ${stillMissing.join(',')} evicted during render`);
+              }
+              return { ready: false, missingPages: stillMissing, resolution, neededPages, tileBounds };
+            }
             return { ready: true };
           }
 
@@ -3582,15 +3519,13 @@ SETPOINT
 
             // Check each pending job
             for (const [jobKey, job] of this.pendingJobs) {
-              // Check if all missing pages are now available
+              // Check if all missing pages are now available at REQUIRED resolution
+              // Vector 12 Fix: No fallback - only complete when correct resolution ready
               const pageCache = this.pageStreamer._getPageCache(job.resolution);
-              const fallbackRes = job.resolution === 'high' ? 'low' : 'high';
-              const fallbackCache = this.pageStreamer._getPageCache(fallbackRes);
 
               const stillMissing = job.missingPages.filter(p => {
-                const hasPrimary = pageCache.has(`${p}_${job.resolution}`);
-                const hasFallback = fallbackCache.has(`${p}_${fallbackRes}`);
-                return !hasPrimary && !hasFallback;
+                const hasCorrectResolution = pageCache.has(`${p}_${job.resolution}`);
+                return !hasCorrectResolution;
               });
 
               if (stillMissing.length === 0) {
@@ -3602,19 +3537,27 @@ SETPOINT
             for (const jobKey of jobsToComplete) {
               const job = this.pendingJobs.get(jobKey);
               if (job) {
-                // Render to job's canvas
-                this.tileGenerator._renderTileToContext(
+                // Render to job's canvas - check if composition succeeded
+                const success = this.tileGenerator._renderTileToContext(
                   job.level, job.x, job.y, job.ctx,
                   job.resolution, job.neededPages, job.tileBounds
                 );
-                // Signal OSD that tile is ready
-                if (window.__tileLog) window.__tileLog.completes.push({ key: jobKey, time: Date.now(), immediate: false });
-                console.log(`[Tile COMPLETE] ${jobKey} (delayed)`);
-                job.context.finish(job.ctx);
-                this.pendingJobs.delete(jobKey);
 
-                if (CONFIG.VERBOSE_LOGGING) {
-                  console.log(`[Async Tile] Completed pending job ${jobKey}`);
+                if (success) {
+                  // Signal OSD that tile is ready
+                  if (window.__tileLog) window.__tileLog.completes.push({ key: jobKey, time: Date.now(), immediate: false });
+                  console.log(`[Tile COMPLETE] ${jobKey} (delayed)`);
+                  job.context.finish(job.ctx);
+                  this.pendingJobs.delete(jobKey);
+
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[Async Tile] Completed pending job ${jobKey}`);
+                  }
+                } else {
+                  // Composition failed - keep job in queue, will retry next time
+                  if (CONFIG.VERBOSE_LOGGING) {
+                    console.log(`[COMPOSITION FAILED] ${jobKey}: keeping in queue for retry`);
+                  }
                 }
               }
             }
@@ -3810,8 +3753,8 @@ SETPOINT
               const isDebugVisible = urlParams.has('debug') && urlParams.get('debug') !== 'false' && urlParams.get('debug') !== '0';
               if (isDebugVisible) {
                 const persistedTileBorders = localStorage.getItem('pdfgrid_tile_borders');
-                if (viewer.drawer && persistedTileBorders) {
-                  viewer.drawer.debugMode = JSON.parse(persistedTileBorders);
+                if (viewer.setDebugMode && persistedTileBorders) {
+                  viewer.setDebugMode(JSON.parse(persistedTileBorders));
                 }
               }
 
@@ -4061,10 +4004,10 @@ SETPOINT
           React.useEffect(() => { CONFIG.TILE_LABELS = showTileLabels; }, [showTileLabels]);
 
           React.useEffect(() => {
-            if (window.viewer && window.viewer.drawer) {
-              window.viewer.drawer.debugMode = showTileBorders;
+            if (window.viewer && window.viewer.setDebugMode) {
+              window.viewer.setDebugMode(showTileBorders);
+              // setDebugMode automatically triggers redraw, but force it to be sure
               window.viewer.forceRedraw();
-              if (window.viewer.navigator) window.viewer.navigator.forceRedraw();
             }
           }, [showTileBorders]);
 
