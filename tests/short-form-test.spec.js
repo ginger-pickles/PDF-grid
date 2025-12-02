@@ -3,7 +3,7 @@
  *
  * Quick validation that basic functionality works.
  * Tests two states: initial page load and grid overview.
- * Outputs HTML report to test-results/sft-report.html
+ * Outputs JSON to test-results/sft-results.json
  *
  * Duration: <30 seconds
  */
@@ -13,64 +13,20 @@ const { setupOfflineRoutes } = require('./test-helpers');
 const fs = require('fs');
 const path = require('path');
 
-const TEST_PDF = 'demo/test-pattern.pdf';
+const TEST_PDF = process.env.TEST_PDF || 'demo/test-pattern.pdf';
 const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
+const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
+const VIEWPORT = { width: 375, height: 667 };
 
-function generateHTML(results) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <title>SFT Report - ${new Date().toISOString()}</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #1a1a1a; color: #eee; }
-    h1 { border-bottom: 2px solid #444; padding-bottom: 10px; }
-    .state { margin: 20px 0; padding: 20px; background: #2a2a2a; border-radius: 8px; }
-    .state h2 { margin-top: 0; }
-    .screenshot { max-width: 100%; border: 1px solid #444; border-radius: 4px; }
-    .pass { color: #4f4; }
-    .fail { color: #f44; }
-    .metrics { font-family: monospace; background: #333; padding: 10px; border-radius: 4px; margin: 10px 0; }
-    .summary { font-size: 1.5em; padding: 20px; text-align: center; border-radius: 8px; margin-top: 20px; }
-    .summary.pass { background: #143; }
-    .summary.fail { background: #411; }
-  </style>
-</head>
-<body>
-  <h1>SFT: Short-Form Test</h1>
-  <p>PDF: ${results.pdf} | Run: ${results.timestamp}</p>
-
-  <div class="state">
-    <h2>State 1: Initial View</h2>
-    <div class="metrics">
-      Pages: ${results.state1.numPages} |
-      Visual Content: <span class="${results.state1.hasContent ? 'pass' : 'fail'}">${results.state1.hasContent ? 'YES' : 'NO'}</span>
-    </div>
-    <img class="screenshot" src="data:image/png;base64,${results.state1.screenshot}" alt="State 1">
-  </div>
-
-  <div class="state">
-    <h2>State 2: Grid Overview</h2>
-    <div class="metrics">
-      Zoom: ${results.state2.zoom} |
-      Bounds Width: ${results.state2.boundsWidth} |
-      Visual Content: <span class="${results.state2.hasContent ? 'pass' : 'fail'}">${results.state2.hasContent ? 'YES' : 'NO'}</span>
-    </div>
-    <img class="screenshot" src="data:image/png;base64,${results.state2.screenshot}" alt="State 2">
-  </div>
-
-  ${results.errors.length > 0 ? `
-  <div class="state">
-    <h2 class="fail">Errors (${results.errors.length})</h2>
-    <pre>${results.errors.join('\n')}</pre>
-  </div>
-  ` : ''}
-
-  <div class="summary ${results.passed ? 'pass' : 'fail'}">
-    ${results.passed ? 'PASSED' : 'FAILED'}
-  </div>
-</body>
-</html>`;
+// Save screenshot to file, return relative path
+function saveScreenshot(buffer, filename) {
+  if (!fs.existsSync(SCREENSHOTS_DIR)) {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  }
+  const filepath = path.join(SCREENSHOTS_DIR, filename);
+  fs.writeFileSync(filepath, buffer);
+  return `screenshots/${filename}`;
 }
 
 test.describe('SFT: Short-Form Test', () => {
@@ -79,15 +35,22 @@ test.describe('SFT: Short-Form Test', () => {
     await setupOfflineRoutes(page);
   });
 
-  test('Two-state validation with HTML report', async ({ page }) => {
+  test('Two-state validation with JSON report', async ({ page }) => {
     const results = {
+      testType: 'sft',
       pdf: TEST_PDF,
       timestamp: new Date().toISOString(),
-      state1: {},
-      state2: {},
+      viewport: VIEWPORT,
+      phases: [],
       errors: [],
+      totalDuration: 0,
       passed: false
     };
+
+    const startTime = Date.now();
+
+    // Set viewport
+    await page.setViewportSize(VIEWPORT);
 
     page.on('console', msg => {
       if (msg.type() === 'error') {
@@ -102,15 +65,18 @@ test.describe('SFT: Short-Form Test', () => {
     // === LOAD ===
     await page.goto(`${BASE_URL}/?pdf=${TEST_PDF}`);
     await page.waitForFunction(() => window.viewer && window.tileStreamerRef, { timeout: 30000 });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(3000); // Allow tiles to render
 
-    // === STATE 1: INITIAL VIEW ===
+    // === PHASE 1: INITIAL VIEW ===
+    const p1Start = Date.now();
     const state1Data = await page.evaluate(() => ({
       hasViewer: !!window.viewer,
       numPages: window.tileStreamerRef?.numPages || 0,
     }));
 
     const state1Screenshot = await page.screenshot({ type: 'png' });
+    const state1File = saveScreenshot(state1Screenshot, 'sft-state1-initial.png');
+
     const state1HasContent = await page.evaluate(() => {
       const canvas = document.querySelector('.openseadragon-canvas canvas');
       if (!canvas) return false;
@@ -126,13 +92,20 @@ test.describe('SFT: Short-Form Test', () => {
       return colors.size >= 10;
     });
 
-    results.state1 = {
-      numPages: state1Data.numPages,
-      hasContent: state1HasContent,
-      screenshot: state1Screenshot.toString('base64')
-    };
+    results.phases.push({
+      name: 'State 1: Initial View',
+      duration: Date.now() - p1Start,
+      metrics: {
+        numPages: state1Data.numPages,
+        hasContent: state1HasContent
+      },
+      screenshots: [
+        { label: 'Initial load', file: state1File }
+      ]
+    });
 
-    // === STATE 2: OVERVIEW ===
+    // === PHASE 2: GRID OVERVIEW ===
+    const p2Start = Date.now();
     await page.evaluate(() => {
       const ts = window.tileStreamerRef;
       if (ts && ts.gridDims) {
@@ -152,6 +125,8 @@ test.describe('SFT: Short-Form Test', () => {
     }));
 
     const state2Screenshot = await page.screenshot({ type: 'png' });
+    const state2File = saveScreenshot(state2Screenshot, 'sft-state2-grid.png');
+
     const state2HasContent = await page.evaluate(() => {
       const canvas = document.querySelector('.openseadragon-canvas canvas');
       if (!canvas) return false;
@@ -166,29 +141,37 @@ test.describe('SFT: Short-Form Test', () => {
       return colors.size >= 10;
     });
 
-    results.state2 = {
-      zoom: state2Data.zoom.toFixed(3),
-      boundsWidth: state2Data.boundsWidth.toFixed(3),
-      hasContent: state2HasContent,
-      screenshot: state2Screenshot.toString('base64')
-    };
+    results.phases.push({
+      name: 'State 2: Grid Overview',
+      duration: Date.now() - p2Start,
+      metrics: {
+        zoom: parseFloat(state2Data.zoom.toFixed(3)),
+        boundsWidth: parseFloat(state2Data.boundsWidth.toFixed(3)),
+        hasContent: state2HasContent
+      },
+      screenshots: [
+        { label: 'Grid view', file: state2File }
+      ]
+    });
 
-    // === DETERMINE PASS/FAIL ===
+    // === FINALIZE ===
+    results.totalDuration = Date.now() - startTime;
     results.passed = state1Data.numPages > 0 &&
                      state1HasContent &&
                      state2HasContent &&
                      results.errors.length === 0;
 
-    // === WRITE HTML REPORT ===
+    // === WRITE JSON RESULTS ===
     if (!fs.existsSync(RESULTS_DIR)) {
       fs.mkdirSync(RESULTS_DIR, { recursive: true });
     }
-    const reportPath = path.join(RESULTS_DIR, 'sft-report.html');
-    fs.writeFileSync(reportPath, generateHTML(results));
-    console.log(`\nHTML report: ${reportPath}\n`);
+    const jsonPath = path.join(RESULTS_DIR, 'sft-results.json');
+    fs.writeFileSync(jsonPath, JSON.stringify(results, null, 2));
+    console.log(`\nResults: ${jsonPath}`);
+    console.log(`Passed: ${results.passed}\n`);
 
     // === ASSERTIONS ===
-    expect(state1Data.numPages).toBeGreaterThan(0);
+    expect(state1Data.numPages, 'No pages loaded').toBeGreaterThan(0);
     expect(state1HasContent, 'State 1: No visual content').toBe(true);
     expect(state2HasContent, 'State 2: No visual content').toBe(true);
     expect(results.errors.length, 'Console errors detected').toBe(0);

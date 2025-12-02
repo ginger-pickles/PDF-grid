@@ -1,7 +1,8 @@
 /**
- * Test Server for LFT
+ * Test Server
  *
  * Serves static files AND provides /run-test endpoint to trigger Playwright tests.
+ * Supports both SFT (Short-Form Test) and LFT (Long-Form Test).
  *
  * Usage: node test-server.js [port]
  * Default port: 8000
@@ -26,6 +27,11 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
 };
 
+const TEST_SPECS = {
+  sft: 'tests/short-form-test.spec.js',
+  lft: 'tests/long-form-test.spec.js'
+};
+
 let testRunning = false;
 let testProcess = null;
 
@@ -44,12 +50,15 @@ function serveFile(res, filepath) {
   });
 }
 
-function runTest(res, pdfPath) {
+function runTest(res, testType, pdfPath) {
   if (testRunning) {
     res.writeHead(409, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Test already running' }));
     return;
   }
+
+  // Validate test type
+  const testSpec = TEST_SPECS[testType] || TEST_SPECS.lft;
 
   testRunning = true;
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -60,7 +69,7 @@ function runTest(res, pdfPath) {
     env.TEST_PDF = pdfPath;
   }
 
-  testProcess = spawn('npx', ['playwright', 'test', 'tests/long-form-test.spec.js', '--project=chromium'], {
+  testProcess = spawn('npx', ['playwright', 'test', testSpec, '--project=chromium'], {
     cwd: ROOT,
     env: env,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -76,6 +85,7 @@ function runTest(res, pdfPath) {
     res.end(JSON.stringify({
       success: code === 0,
       exitCode: code,
+      testType: testType,
       output: output.slice(-2000) // Last 2000 chars
     }));
   });
@@ -100,8 +110,9 @@ const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (url.pathname === '/run-test') {
+    const testType = url.searchParams.get('type') || 'lft';
     const pdfPath = url.searchParams.get('pdf');
-    runTest(res, pdfPath);
+    runTest(res, testType, pdfPath);
     return;
   }
 
@@ -135,6 +146,39 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === '/save-results' && req.method === 'POST') {
+    const filename = url.searchParams.get('file');
+    // Only allow saving to test-results/*.json
+    if (!filename || !filename.endsWith('.json') || filename.includes('/') || filename.includes('..')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid filename' }));
+      return;
+    }
+    const filepath = path.join(ROOT, 'test-results', filename);
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        // Validate JSON
+        const data = JSON.parse(body);
+        fs.writeFile(filepath, JSON.stringify(data, null, 2), err => {
+          if (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Could not save file' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ saved: true, file: filename }));
+        });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+      }
+    });
+    return;
+  }
+
   // Static file serving
   let filepath = path.join(ROOT, url.pathname);
   if (url.pathname === '/' || url.pathname.endsWith('/')) {
@@ -153,6 +197,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Test server running at http://localhost:${PORT}/`);
-  console.log(`LFT Report: http://localhost:${PORT}/test-results/lft-report.html`);
-  console.log(`Run test: http://localhost:${PORT}/run-test`);
+  console.log(`Test Report: http://localhost:${PORT}/test-results/test-report.html`);
+  console.log(`Run SFT: http://localhost:${PORT}/run-test?type=sft`);
+  console.log(`Run LFT: http://localhost:${PORT}/run-test?type=lft`);
 });
