@@ -228,6 +228,199 @@ Add timing metrics to LFT: time-to-first-tile, time-to-fully-loaded, memory usag
 
 ---
 
+## Grid Oracle & Visual Verification (2024-12-02)
+
+### Problem: Missing Tiles in Initial View
+
+SFT State 1 shows missing tiles where pages 2 and 3 should appear. The bug persists regardless of wait timing - it's a rendering issue, not a test timing issue.
+
+### Test Oracle Approach
+
+A **test oracle** is a simplified reference implementation that calculates expected output without the complexity of the full system. Created `lib/grid-oracle.js`:
+
+```javascript
+const GridOracle = require('./lib/grid-oracle.js');
+
+// What pages should be visible in the initial view?
+const result = GridOracle.getExpectedInitialPages(12, 612, 792, 375, 667);
+// → { pages: [1, 2, 3], viewBounds: {...}, gridDims: {...} }
+```
+
+### Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `generatePattern(numPages)` | Create triangular stagger pattern |
+| `calculateDimensions()` | Pure grid geometry calculation |
+| `getPagesInBounds()` | Find pages intersecting a viewport |
+| `getExpectedInitialPages()` | High-level API for tests |
+| `osdBoundsToGrid()` | Convert OSD normalized coords to grid pixels |
+
+### Visual Verification Principle
+
+> **"No accounting tricks"** - The test must verify actual pixels, not internal state.
+
+Pass/fail must be determined by visual inspection of rendered output:
+
+1. Oracle says: "Pages [1, 2, 3] should be visible"
+2. Test calculates: "Page 2 should appear at screen region (x1, y1, x2, y2)"
+3. Test samples: Actual pixels in that region
+4. Decision: Does region contain content (not black/background)?
+
+Invalid shortcuts that **must not** be used:
+- `pendingJobs.size === 0` (internal state)
+- `pageCache.has(key)` (cache state)
+- `waitForTimeout(3000)` (arbitrary delay)
+
+### Current Bug Status
+
+| Viewport | Expected Pages | Actual | Status |
+|----------|---------------|--------|--------|
+| 375x667 | [1, 2, 3] | [1] | **FAIL** |
+
+Pages 2 and 3 are not rendering in the initial zoomed view, though they render correctly when zooming out to grid overview.
+
+### Next Step
+
+Implement visual verification in SFT:
+1. Use oracle to get expected pages
+2. For each page, calculate screen region from viewport bounds
+3. Sample pixels in each region
+4. Pass if all expected regions have content; fail otherwise
+
+---
+
+## Visual Verification: Coordinate System Discovery (2024-12-02)
+
+### Vector 9: Use App's Actual Pattern, Not Oracle's
+
+The oracle generates a 5-row triangular pattern for 12 pages. The app uses a 12x12 overlapping/sliding pattern.
+
+| Source | Pattern Size | Page 1 Position | Column |
+|--------|-------------|-----------------|--------|
+| Oracle | 5 rows      | Row 0, Col 4    | 4      |
+| App    | 12 rows     | Row 0, Col 6    | 6      |
+
+**App pattern structure** (truncated):
+```
+[[0,0,0,0,0,0,1,2,3,4,5,6],
+ [0,0,0,0,0,1,2,3,4,5,6,7],
+ [0,0,0,0,1,2,3,4,5,6,7,8],
+ ...diagonal sliding continues...]
+```
+
+**Coordinate calculation error**:
+- Test computed page 1 at gridX=9900 (triangular col 4)
+- App has page 1 at gridX≈14832 (actual col 6)
+- Viewport at 14220-17892
+- Triangular says no intersection; app pattern shows intersection
+
+**Direction**: Visual verification must use app's actual `ts.pattern` property, not regenerate pattern from oracle.
+
+### Vector 10: Exteroceptive Resolution Detection
+
+Tests should detect not just page presence but also rendering quality:
+
+| Check | Method | Pass Criterion |
+|-------|--------|----------------|
+| Presence | Pixel color diversity | >5 unique colors in region |
+| Resolution | Edge sharpness | High gradient values at content boundaries |
+
+```javascript
+// Edge sharpness for resolution detection
+const gradient = Math.abs(pixel - neighbor);
+const sharpness = gradients.filter(g => g > threshold).length / total;
+// sharpness > 0.3 indicates hi-res; low values suggest blurry/low-res tiles
+```
+
+**Direction**: Report "page visible but low-res" vs "page visible and hi-res" vs "page missing".
+
+### Vector 11: Intermittent Tile Rendering Bug Detected
+
+SFT visual verification is now detecting a real rendering bug:
+
+| Page | Expected Screen Region | Pixel Result | Status |
+|------|------------------------|--------------|--------|
+| 1    | (63, 158)-(314, 512) [251x354] | 82 colors | ✓ visible |
+| 2    | (316, 158)-(375, 512) [59x354] | 2 colors  | ✗ MISSING |
+| 3    | (316, 513)-(375, 667) [59x154] | 1 color   | ✗ MISSING |
+
+**User observation**: "The behavior of the app is intermittent. Sometimes it works, sometimes it does not."
+
+**Root cause hypothesis**: Tiles at viewport edge are not always rendered. Race condition in tile prioritization or visibility calculation.
+
+**New finding (2024-12-02)**: Bug is **viewport-size dependent**:
+- Occurs in mobile viewport (375x667) used by SFT
+- Does NOT occur in larger desktop windows
+- Suggests tile visibility calculation or priority queue behaves differently at small viewport sizes
+
+**Investigation direction**:
+1. Check OSD tile loading priority for edge tiles
+2. Examine if viewport bounds check has off-by-one or timing issue
+3. Run test multiple times to confirm intermittency rate
+4. Compare tile queue behavior between mobile and desktop viewports
+5. Check if OSD's `visibilityRatio` or similar parameter affects small-viewport behavior
+
+### Vector 13: OSD Tile Request Analysis (Promising)
+
+**Hypothesis**: OSD never requests tiles for edge regions in small viewports.
+
+The async tile system (`downloadTileStart` → `pendingJobs` → `finishPendingJobs`) works correctly. But if OSD doesn't request tiles for the edge regions, no job is ever created.
+
+| Layer | Behavior | Status |
+|-------|----------|--------|
+| OSD tile request | Decides which tiles to request | **SUSPECT** |
+| downloadTileStart | Queues jobs for missing pages | Working |
+| finishPendingJobs | Completes tiles when pages ready | Working |
+
+**Why small viewports are affected**:
+- Pages 2 and 3 occupy only ~59px width at viewport edge
+- OSD's internal tile coverage calculation may:
+  - Consider them "barely visible" and deprioritize
+  - Have a minimum coverage threshold
+  - Abort during initial settling animation
+
+**Diagnostic approach**:
+```javascript
+// Add to downloadTileStart to log all tile requests
+console.log(`[OSD Request] Tile ${level}_${x}_${y}`);
+```
+
+Compare tile request patterns between:
+- Mobile viewport (375x667) - bug present
+- Desktop viewport (1200x800) - bug absent
+
+**Related code**:
+- `downloadTileStart` at line 3270
+- `downloadTileAbort` at line 3311 - tiles may be aborted during animation
+- OSD config `immediateRender: true` at line 3598
+
+### Vector 14: Initial View Animation Abort
+
+**Hypothesis**: Tiles for edge pages are requested, then aborted during initial view settling.
+
+When viewer opens, OSD animates to initial position. Tiles requested during animation may be aborted via `downloadTileAbort` if viewport moves before they complete.
+
+**Evidence needed**: Log `downloadTileAbort` calls to see if edge tiles are being cancelled.
+
+**Potential fix**: Delay initial tile requests until animation settles, or re-request aborted tiles after settling.
+
+### Vector 12: Parametric Test Waits
+
+Test waits should be calculated based on input file characteristics, not hardcoded.
+
+| Current | Problem | Future |
+|---------|---------|--------|
+| `waitForTimeout(500)` | Too long for small files, too short for large | Calculate from page count + tile count |
+| `waitForTimeout(3000)` | Arbitrary grid settle time | Wait for OSD animation complete event |
+
+**Direction**:
+- Small PDFs (< 20 pages): minimal waits
+- Large PDFs (100+ pages): proportionally longer waits
+- Prefer event-based waiting over fixed timeouts
+
+---
+
 ## Background
 
 See the equivalent file in parent branch(es) for earlier notes. See also Changelog.

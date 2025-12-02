@@ -8,7 +8,18 @@
     .meta { color: #888; font-size: 0.9em; margin: 10px 0 20px 0; }
     .phase { margin: 20px 0; padding: 15px; background: #2a2a2a; border-radius: 8px; display: inline-block; }
     .phase h2 { margin: 0 0 10px 0; font-size: 1.1em; }
-    .metrics { font-family: monospace; font-size: 0.85em; background: #333; padding: 8px; border-radius: 4px; margin-bottom: 10px; max-width: 375px; word-wrap: break-word; }
+    .metrics { font-family: monospace; font-size: 1em; background: #333; padding: 10px; border-radius: 4px; margin-bottom: 10px; max-width: 375px; word-wrap: break-word; }
+    .metrics-table { width: 100%; border-collapse: collapse; }
+    .metrics-table td { padding: 6px 10px; border-bottom: 1px solid #444; font-size: 1em; }
+    .metrics-table td:first-child { color: #aaa; text-align: right; width: 50%; }
+    .metrics-table td:nth-child(2) { text-align: left; }
+    .metrics-table td:last-child { text-align: center; width: 60px; }
+    .metrics-table tr:last-child td { border-bottom: none; }
+    .metric-override { background: #555; border: none; color: #fff; padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 0.9em; min-width: 50px; }
+    .metric-override:hover { background: #666; }
+    .metric-override.pass { background: #383; }
+    .metric-override.fail { background: #833; }
+    .metric-override.pending { background: #555; }
     .pass { color: #4f4; }
     .fail { color: #f44; }
     .summary { font-size: 1.2em; padding: 12px 20px; border-radius: 8px; margin: 0; display: inline-block; }
@@ -73,6 +84,31 @@
     let currentResults = null;
 
     const manualTests = {}; // { testId_phaseIdx: 'pass' | 'fail' | 'pending' }
+    const metricOverrides = {}; // { phaseIdx_metricKey: 'pass' | 'fail' | null }
+
+    function cycleMetricOverride(phaseIdx, metricKey) {
+      const key = `${phaseIdx}_${metricKey}`;
+      const current = metricOverrides[key];
+      if (current === undefined || current === 'pending') {
+        metricOverrides[key] = 'pass';
+      } else if (current === 'pass') {
+        metricOverrides[key] = 'fail';
+      } else {
+        delete metricOverrides[key];
+      }
+      updateMetricOverrideBtn(phaseIdx, metricKey);
+      updateOverallVerdict();
+      saveResults();
+    }
+
+    function updateMetricOverrideBtn(phaseIdx, metricKey) {
+      const key = `${phaseIdx}_${metricKey}`;
+      const btn = document.getElementById(`metric-btn-${key}`);
+      if (!btn) return;
+      const verdict = metricOverrides[key] || 'pending';
+      btn.className = `metric-override ${verdict}`;
+      btn.textContent = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+    }
 
     // Cycle: pending -> pass -> fail -> pending
     function cycleVerdict(phaseIdx) {
@@ -142,6 +178,11 @@
         if (manualTests[testId] === 'fail') return false;
       }
 
+      // Check metric overrides - any explicit fail fails overall
+      for (const key of Object.keys(metricOverrides)) {
+        if (metricOverrides[key] === 'fail') return false;
+      }
+
       // Check for errors
       if (currentResults.errors && currentResults.errors.length > 0) return false;
       return true;
@@ -166,6 +207,8 @@
           ? { ...verdictOverrides } : undefined;
         currentResults.manualTests = Object.keys(manualTests).length > 0
           ? { ...manualTests } : undefined;
+        currentResults.metricOverrides = Object.keys(metricOverrides).length > 0
+          ? { ...metricOverrides } : undefined;
       }
     }
 
@@ -177,27 +220,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(currentResults)
       }).catch(err => console.log('Could not save results:', err));
-    }
-
-    function renderTestRow(testName, testId, isManual, phaseIdx) {
-      let verdict, btnId, onclick;
-      if (isManual) {
-        const key = `${testId}_${phaseIdx}`;
-        verdict = manualTests[key] || 'pending';
-        btnId = `manual-btn-${key}`;
-        onclick = `cycleManualTest('${key}')`;
-      } else {
-        verdict = verdictOverrides[phaseIdx] || 'pending';
-        btnId = `verdict-btn-${phaseIdx}`;
-        onclick = `cycleVerdict(${phaseIdx})`;
-      }
-      const label = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
-      return `
-        <div class="test-row">
-          <span class="test-name">${testName}</span>
-          <button class="verdict-btn ${verdict}" id="${btnId}" onclick="${onclick}">${label}</button>
-        </div>
-      `;
     }
 
     function getAnimData(id) {
@@ -264,48 +286,57 @@
       `;
     }
 
-    function renderMetrics(metrics) {
+    function renderMetrics(metrics, phaseIdx) {
       if (!metrics) return '';
-      return Object.entries(metrics).map(([k, v]) => {
-        const displayVal = typeof v === 'boolean'
-          ? `<span class="${v ? 'pass' : 'fail'}">${v ? 'YES' : 'NO'}</span>`
-          : v;
-        return `${k}: ${displayVal}`;
-      }).join(' | ');
+      // Filter out redundant/technical metrics
+      const skipKeys = ['expectedPages', 'zoom', 'boundsWidth', 'hasContent'];
+      const rows = Object.entries(metrics)
+        .filter(([k]) => !skipKeys.includes(k))
+        .map(([k, v]) => {
+          const displayVal = typeof v === 'boolean'
+            ? `<span class="${v ? 'pass' : 'fail'}">${v ? 'YES' : 'NO'}</span>`
+            : (Array.isArray(v) ? v.join(', ') : v);
+          const key = `${phaseIdx}_${k}`;
+          const verdict = metricOverrides[key] || 'pending';
+          const label = verdict === 'pending' ? '?' : (verdict === 'pass' ? 'Pass' : 'Fail');
+          return `<tr>
+            <td>${k}</td>
+            <td>${displayVal}</td>
+            <td><button class="metric-override ${verdict}" id="metric-btn-${key}" onclick="cycleMetricOverride(${phaseIdx}, '${k}')">${label}</button></td>
+          </tr>`;
+        });
+
+      // Add manual "No Missing Tiles" row
+      const manualKey = `noMissingTiles_${phaseIdx}`;
+      const manualVerdict = manualTests[manualKey] || 'pending';
+      const manualLabel = manualVerdict === 'pending' ? '?' : (manualVerdict === 'pass' ? 'Pass' : 'Fail');
+      rows.push(`<tr>
+        <td>No Missing Tiles</td>
+        <td><span class="pass">visual</span></td>
+        <td><button class="metric-override ${manualVerdict}" id="manual-btn-${manualKey}" onclick="cycleManualTest('${manualKey}')">${manualLabel}</button></td>
+      </tr>`);
+
+      return `<table class="metrics-table">${rows.join('')}</table>`;
     }
 
     function renderPhase(p, phaseIdx, testType) {
       const hasMultiple = p.screenshots && p.screenshots.length > 1;
       const animatorId = `animator-${phaseIdx}`;
 
-      // Get automated test name - use metric name if available (SFT), else phase name (LFT)
-      let autoTestName;
-      if (p.metrics && p.metrics.hasContent !== undefined) {
-        autoTestName = 'hasContent';
-      } else if (p.flickers !== undefined) {
-        autoTestName = 'No Flickers';
-      } else {
-        autoTestName = p.name.includes(':') ? p.name.split(':')[1].trim() : p.name;
-      }
+      // Build metrics display
+      const metricsHTML = p.metrics ? renderMetrics(p.metrics, phaseIdx) :
+        (p.diffs ? `Duration: ${p.duration}ms | Flickers: <span class="${(p.flickers || 0) > 0 ? 'fail' : 'pass'}">${p.flickers || 0}</span>${p.threshold ? ` | Threshold: ${p.threshold}%` : ''}` :
+        (p.note ? p.note : `Duration: ${p.duration}ms`));
 
-      // Test rows: automated + no missing tiles
-      const testRowsHTML = `
-        ${renderTestRow(autoTestName, null, false, phaseIdx)}
-        ${renderTestRow('No Missing Tiles', 'noMissingTiles', true, phaseIdx)}
-      `;
+      // Optional diff chart (LFT only)
+      const chartHTML = (p.diffs && p.diffs.length > 0) ? renderDiffChart(p.diffs, p.threshold || 5) : '';
 
-      // For LFT with multiple screenshots and diff data
-      if (hasMultiple && p.diffs) {
-        const chartHTML = p.diffs.length > 0 ? renderDiffChart(p.diffs, p.threshold || 5) : '';
+      // Multiple screenshots: use animator
+      if (hasMultiple) {
         return `
           <div class="phase">
             <h2>${p.name}</h2>
-            <div class="metrics">
-              Duration: ${p.duration}ms |
-              Flickers: <span class="${(p.flickers || 0) > 0 ? 'fail' : 'pass'}">${p.flickers || 0}</span>
-              ${p.threshold ? `| Threshold: ${p.threshold}%` : ''}
-            </div>
-            ${testRowsHTML}
+            <div class="metrics">${metricsHTML}</div>
             ${chartHTML}
             <div class="animator" id="${animatorId}">
               <div class="anim-display">
@@ -323,16 +354,13 @@
           </div>
         `;
       }
-      // For SFT or single screenshot phases
+      // Single screenshot
       else {
-        const metricsHTML = p.metrics ? renderMetrics(p.metrics) :
-          (p.note ? p.note : `Duration: ${p.duration}ms`);
         const screenshot = p.screenshots && p.screenshots[0];
         return `
           <div class="phase">
             <h2>${p.name}</h2>
             <div class="metrics">${metricsHTML}</div>
-            ${testRowsHTML}
             ${screenshot ? `
               <div class="single-shot">
                 <img src="${screenshot.file}" alt="${screenshot.label || p.name}">
@@ -539,6 +567,13 @@
           if (results.manualTests) {
             Object.entries(results.manualTests).forEach(([k, v]) => {
               manualTests[k] = v;
+            });
+          }
+          // Restore metric overrides from saved results
+          Object.keys(metricOverrides).forEach(k => delete metricOverrides[k]);
+          if (results.metricOverrides) {
+            Object.entries(results.metricOverrides).forEach(([k, v]) => {
+              metricOverrides[k] = v;
             });
           }
           document.getElementById('report').innerHTML = renderReport(results);
