@@ -3612,7 +3612,7 @@ SETPOINT
               visibilityRatio: CONFIG.OSD_VISIBILITY_RATIO,
               constrainDuringPan: false, // Allow panning beyond bounds when zoomed in
               homeFillsViewer: false,
-              immediateRender: true,
+              immediateRender: true, // true = render best level first (faster perceived load)
               preload: true,
               maxImageCacheCount: CONFIG.OSD_MAX_IMAGE_CACHE, // 0 = disabled to prevent stale tiles after healing
               zoomPerScroll: 1.5, // Increase scroll wheel sensitivity (default: 1.2)

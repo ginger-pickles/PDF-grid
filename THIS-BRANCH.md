@@ -416,6 +416,44 @@ Test waits should be calculated based on input file characteristics, not hardcod
 
 ---
 
+### Vector 16: immediateRender Investigation (Inconclusive)
+
+**Date**: 2024-12-02
+
+**Hypothesis**: OSD's `immediateRender: true` causes it to skip level 0 fallback tiles.
+
+From [OSD docs](https://openseadragon.github.io/docs/OpenSeadragon.Viewer.html):
+- `immediateRender: true` = "Render the best closest level first, ignoring the lowering levels"
+- `immediateRender: false` = Progressive loading (loads level 0 first)
+
+**Test**: Changed `immediateRender: true` → `false` at line 3615.
+
+**Results**:
+| Setting | Level 0 Requested | Initial View | Grid Overview |
+|---------|-------------------|--------------|---------------|
+| `true` (original) | Sometimes | Intermittent | **Works** |
+| `false` | Yes (always) | More consistent | **BROKEN** |
+
+**Observation**: With `immediateRender: false`:
+- Tile log shows `0_0_0` always requested
+- Initial view shows all pages (fix works!)
+- But grid overview stops rendering (visual regression)
+
+**Status**: Reverted to `immediateRender: true`. The change fixes the initial view but breaks overview rendering. Need to understand why overview breaks.
+
+**Possible explanations**:
+1. `immediateRender: false` delays tile rendering when zooming out
+2. Need to combine with other OSD settings
+3. Grid overview uses different code path affected by this setting
+
+**Next steps** (not yet attempted):
+1. Investigate how overview/home view triggers tile loading
+2. Check if `preload: true` interacts with `immediateRender`
+3. Look for OSD events to wait for after zoom operations
+4. Review [OSD issue #1020](https://github.com/openseadragon/openseadragon/issues/1020) - loading too many tiles after similar change
+
+---
+
 ## Background
 
 See the equivalent file in parent branch(es) for earlier notes. See also Changelog.

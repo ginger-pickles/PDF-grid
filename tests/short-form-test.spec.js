@@ -389,8 +389,8 @@ test.describe('SFT: Short-Form Test', () => {
       return pendingCount === 0 && hasLowResPages;
     }, { timeout: 15000 });
 
-    // Minimal settle time for OSD rendering
-    await page.waitForTimeout(100);
+    // Settle time for OSD to complete render pass after tiles loaded
+    await page.waitForTimeout(300);
 
     // Capture 2: Stable - after async jobs complete
     const state1Data = await page.evaluate(() => {
@@ -506,8 +506,8 @@ test.describe('SFT: Short-Form Test', () => {
       }
     });
 
-    // Wait for grid animation to complete
-    await page.waitForTimeout(500);
+    // Wait for grid animation to complete and tiles to render
+    await page.waitForTimeout(1000);
 
     const state2Data = await page.evaluate(() => ({
       zoom: window.viewer.viewport.getZoom(),
