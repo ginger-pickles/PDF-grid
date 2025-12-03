@@ -1577,6 +1577,27 @@ SETPOINT
             }
             this.cache.clear();
           }
+
+          /**
+           * Update maximum cache size
+           * If new size is smaller, evict tiles to fit using smart eviction strategy
+           *
+           * @param {number} newSize - New maximum cache size
+           */
+          setCapacity(newSize) {
+            this.maxSize = newSize;
+
+            // If cache is now oversized, evict tiles using smart strategy
+            while (this.cache.size > this.maxSize) {
+              const evictKey = this._selectTileToEvict();
+              this.cache.set(evictKey, null);
+              this.cache.delete(evictKey);
+              // Notify callback of eviction
+              if (this.onEvict) {
+                this.onEvict(evictKey);
+              }
+            }
+          }
         }
 
         // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -4043,10 +4064,10 @@ SETPOINT
           const [fallbackRendering, setFallbackRendering] = usePersistedState('fallback_rendering', CONFIG.FALLBACK_RENDERING_ENABLED);
           const [resolutionMode, setResolutionMode] = usePersistedState('resolution_mode', CONFIG.RESOLUTION_MODE, 'string');
 
-          // Cache size parameters - persisted to localStorage
-          const [tileCacheSize, setTileCacheSize] = usePersistedState('tile_cache_size', CONFIG.MAX_CACHE_SIZE, 'int');
-          const [lowResPageCacheSize, setLowResPageCacheSize] = usePersistedState('lowres_cache_size', CONFIG.PAGE_CACHE_MAX_SIZE_LOW, 'int');
-          const [highResPageCacheSize, setHighResPageCacheSize] = usePersistedState('highres_cache_size', CONFIG.PAGE_CACHE_MAX_SIZE_HIGH, 'int');
+          // Cache size parameters - NOT persisted, recalculated per-PDF on load
+          const [tileCacheSize, setTileCacheSize] = useState(CONFIG.MAX_CACHE_SIZE);
+          const [lowResPageCacheSize, setLowResPageCacheSize] = useState(CONFIG.PAGE_CACHE_MAX_SIZE_LOW);
+          const [highResPageCacheSize, setHighResPageCacheSize] = useState(CONFIG.PAGE_CACHE_MAX_SIZE_HIGH);
           const [viewportRadius, setViewportRadius] = usePersistedState('viewport_radius', CONFIG.VIEWPORT_PRIORITY_RADIUS, 'int');
 
           const viewerRef = useRef(null);
@@ -4344,6 +4365,34 @@ SETPOINT
           React.useEffect(() => { CONFIG.PAGE_CACHE_MAX_SIZE_HIGH = highResPageCacheSize; }, [highResPageCacheSize]);
           React.useEffect(() => { CONFIG.VIEWPORT_PRIORITY_RADIUS = viewportRadius; }, [viewportRadius]);
 
+          // Update actual cache instances when UI controls change
+          React.useEffect(() => {
+            if (window.tileStreamerRef?.tileCache) {
+              window.tileStreamerRef.tileCache.setCapacity(tileCacheSize);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Control] TileCache capacity updated to ${tileCacheSize}`);
+              }
+            }
+          }, [tileCacheSize]);
+
+          React.useEffect(() => {
+            if (window.pageStreamerRef?.lowResPageCache) {
+              window.pageStreamerRef.lowResPageCache.setCapacity(lowResPageCacheSize);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Control] LowRes PageCache capacity updated to ${lowResPageCacheSize}`);
+              }
+            }
+          }, [lowResPageCacheSize]);
+
+          React.useEffect(() => {
+            if (window.pageStreamerRef?.highResPageCache) {
+              window.pageStreamerRef.highResPageCache.setCapacity(highResPageCacheSize);
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Control] HighRes PageCache capacity updated to ${highResPageCacheSize}`);
+              }
+            }
+          }, [highResPageCacheSize]);
+
           // Live update debug stats every 500ms when debug panel is shown
           React.useEffect(() => {
             if (!showDebug) return;
@@ -4556,8 +4605,18 @@ SETPOINT
               const pageStreamer = new PageStreamer(pdf);
               window.pageStreamerRef = pageStreamer; // Store globally for TileStreamer access
 
-              // Update cache sizes based on PDF page count
+              // Update cache sizes based on PDF page count (auto-optimization)
               pageStreamer.updateCacheSizes(pdf.numPages, isIOSSafari);
+
+              // Update UI controls to show actual cache capacity (don't persist)
+              const actualLowResCapacity = pageStreamer.lowResPageCache.maxSize;
+              const actualHighResCapacity = pageStreamer.highResPageCache.maxSize;
+              setLowResPageCacheSize(actualLowResCapacity);
+              setHighResPageCacheSize(actualHighResCapacity);
+
+              if (CONFIG.VERBOSE_LOGGING) {
+                console.log(`[Cache Control] Auto-calculated cache sizes: lowRes=${actualLowResCapacity}, highRes=${actualHighResCapacity}`);
+              }
 
               // SIMPLIFIED INIT: Get page dimensions directly from PDF.js (no rendering needed)
               // This replaces Phase 1-3 with immediate viewer init
@@ -6107,7 +6166,7 @@ SETPOINT
 
                   return (
                     <div
-                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 max-w-[48vw] sm:max-w-md max-h-[80vh] flex flex-col"
+                      className="absolute bottom-2 left-2 sm:bottom-4 sm:left-4 rounded-lg text-[10px] sm:text-xs font-mono text-white shadow-2xl z-50 w-[48vw] sm:w-96 max-h-[80vh] flex flex-col"
                       style={{
                         backgroundColor: 'rgba(17, 24, 39, 0.90)',
                         backdropFilter: 'blur(8px)'
@@ -6305,7 +6364,6 @@ SETPOINT
                           <div className="space-y-0.5 pt-2 border-t border-gray-700">
                             <div className="flex items-center justify-between">
                               <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
-                              {/* TODO: Ensure this input value reflects the actual cache capacity */}
                               <input
                                 type="number"
                                 value={lowResPageCacheSize}
@@ -6327,7 +6385,6 @@ SETPOINT
                           <div className="space-y-0.5 pt-2 border-t border-gray-700">
                             <div className="flex items-center justify-between">
                               <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
-                              {/* TODO: Ensure this input value reflects the actual cache capacity */}
                               <input
                                 type="number"
                                 value={highResPageCacheSize}
