@@ -671,6 +671,10 @@ SETPOINT
             // Semaphore-based concurrency limiters (avoids hardcoded delays)
             this.lowResSemaphore = { active: 0, waiting: [] };
             this.highResSemaphore = { active: 0, waiting: [] };
+
+            // Viewport-priority queue for on-demand high-res rendering
+            this.renderQueue = new Map(); // Key: "pageNum_resolution" → { pageNum, resolution, priority, requestTime }
+            this.queueProcessor = null; // Debounced queue processor
           }
 
           /**
@@ -982,6 +986,106 @@ SETPOINT
               console.log(`  Low-res cache: ${sizes.lowResSize} pages (for complete minimap coverage)`);
               console.log(`  High-res cache: ${sizes.highResSize} pages (viewport + predictive buffer)`);
               console.log(`  Device memory: ${navigator.deviceMemory || 'unknown'} GB`);
+            }
+          }
+
+          /**
+           * Queue a page render request with viewport priority
+           * Replaces immediate on-demand rendering with priority-based queue
+           */
+          queueRenderRequest(pageNum, resolution) {
+            const key = `${pageNum}_${resolution}`;
+
+            // Skip if already cached or currently rendering
+            if (this.hasPage(pageNum, resolution) || this.renderingInProgress.has(key)) {
+              return;
+            }
+
+            // Add to queue (or update priority if already queued)
+            this.renderQueue.set(key, {
+              pageNum,
+              resolution,
+              requestTime: Date.now()
+            });
+
+            // Debounce queue processing (collect multiple requests, then sort by priority)
+            if (this.queueProcessor) {
+              clearTimeout(this.queueProcessor);
+            }
+
+            this.queueProcessor = setTimeout(() => {
+              this.processRenderQueue();
+            }, 50); // 50ms debounce - collect burst of requests
+          }
+
+          /**
+           * Process render queue in viewport-priority order
+           * Visible pages render first, off-screen pages later
+           */
+          async processRenderQueue() {
+            if (this.renderQueue.size === 0) return;
+
+            // Convert queue to array
+            const requests = Array.from(this.renderQueue.values());
+
+            // Calculate viewport priority for each page
+            const viewer = window.osdViewerRef;
+            if (!viewer?.viewport) {
+              // Fallback: render in request order if viewport not available
+              console.warn('[Priority Queue] Viewport not available, rendering in request order');
+              for (const req of requests) {
+                this.renderQueue.delete(`${req.pageNum}_${req.resolution}`);
+                await this.renderPage(req.pageNum, req.resolution);
+              }
+              return;
+            }
+
+            // Get viewport center
+            const bounds = viewer.viewport.getBounds();
+            const centerX = bounds.x + bounds.width / 2;
+            const centerY = bounds.y + bounds.height / 2;
+
+            // Calculate priority (distance from viewport center) for each request
+            const numPages = this.pdfDoc.numPages;
+            const gridSize = Math.ceil(Math.sqrt(numPages));
+            const numRows = Math.ceil(numPages / gridSize);
+
+            requests.forEach(req => {
+              const pageIndex = req.pageNum - 1;
+              const row = Math.floor(pageIndex / gridSize);
+              const col = pageIndex % gridSize;
+
+              // Page center in normalized coordinates
+              const pageX = (col + 0.5) / gridSize;
+              const pageY = (row + 0.5) / numRows;
+
+              // Distance from viewport center (lower = higher priority)
+              req.distance = Math.sqrt(
+                Math.pow(pageX - centerX, 2) +
+                Math.pow(pageY - centerY, 2)
+              );
+            });
+
+            // Sort by distance (closest first)
+            requests.sort((a, b) => a.distance - b.distance);
+
+            if (CONFIG.VERBOSE_LOGGING) {
+              const pageOrder = requests.map(r => `${r.pageNum}(d=${r.distance.toFixed(2)})`).join(', ');
+              console.log(`[Priority Queue] Rendering ${requests.length} pages in viewport order: ${pageOrder}`);
+            }
+
+            // Render in priority order
+            for (const req of requests) {
+              this.renderQueue.delete(`${req.pageNum}_${req.resolution}`);
+              try {
+                await this.renderPage(req.pageNum, req.resolution);
+                // Increment on-demand render stats
+                if (window.tileStreamerRef) {
+                  window.tileStreamerRef.stats.onDemandHits++;
+                }
+              } catch (err) {
+                console.warn(`[Priority Queue] Failed to render page ${req.pageNum} at ${req.resolution}:`, err);
+              }
             }
           }
         }
@@ -2526,29 +2630,9 @@ SETPOINT
                   window.__L0OnDemandTracking.triggered.push({pageNum, resolution, time: Date.now()});
                 }
 
-                // Fire async render
-                ts.pageStreamer.renderPage(pageNum, resolution)
-                  .then(() => {
-                    ts.stats.onDemandHits++;
-
-                    if (level === 0) {
-                      window.__L0OnDemandTracking.completed.push({pageNum, resolution, time: Date.now()});
-                    }
-
-                    if (CONFIG.VERBOSE_LOGGING) {
-                      console.log(`[On-Demand] Rendered page ${pageNum} at ${resolution}, scheduling tile refresh`);
-                    }
-
-                    // Invalidate cached tiles and refresh
-                    ts.cacheManager._invalidateTilesUsingPages([pageNum], resolution);
-                    ts.cacheManager.scheduleRedraw();
-                  })
-                  .catch(err => {
-                    if (level === 0) {
-                      window.__L0OnDemandTracking.failed.push({pageNum, resolution, error: err.message, time: Date.now()});
-                    }
-                    console.warn(`[On-Demand] Failed to render page ${pageNum} at ${resolution}:`, err);
-                  });
+                // Queue render with viewport priority (visible pages first)
+                // Stats tracking and invalidation happen in processRenderQueue and renderPage
+                ts.pageStreamer.queueRenderRequest(pageNum, resolution);
               }
             }
 
@@ -3560,6 +3644,11 @@ SETPOINT
                   }
                 }
               }
+            }
+
+            // Trigger OSD redraw to display completed tiles
+            if (jobsToComplete.length > 0 && window.osdViewerRef) {
+              window.osdViewerRef.world.needsDraw();
             }
           }
 
@@ -6201,52 +6290,11 @@ SETPOINT
                         <div className="mb-2">
                           <div className="flex flex-wrap gap-1 sm:gap-2">
                             <button
-                              onClick={() => setUpfrontRendering(!upfrontRendering)}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                upfrontRendering
-                                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Render all pages before viewer starts (prevents blank tiles)"
+                              disabled
+                              className="px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold bg-gray-800 text-gray-500 cursor-not-allowed opacity-60"
+                              title="Velocity-based predictive page loading (experimental - currently inactive)"
                             >
-                              Upfront
-                            </button>
-                            <button
-                              onClick={() => setParallelRendering(!parallelRendering)}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                parallelRendering
-                                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Parallel viewport-aware rendering"
-                            >
-                              Parallel
-                            </button>
-                            <button
-                              onClick={() => setOnDemandRendering(!onDemandRendering)}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                onDemandRendering
-                                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Render pages on-demand when tiles need them"
-                            >
-                              On-Demand
-                            </button>
-                            <button
-                              onClick={() => setPredictiveRendering(!predictiveRendering)}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                predictiveRendering
-                                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Velocity-based predictive page loading"
-                            >
-                              Predictive
+                              Predictive (TODO)
                             </button>
                           </div>
                         </div>
@@ -6257,6 +6305,7 @@ SETPOINT
                           <div className="space-y-0.5 pt-2 border-t border-gray-700">
                             <div className="flex items-center justify-between">
                               <label className="text-gray-400" title="Low-res page cache for minimap">LowRes Pages:</label>
+                              {/* TODO: Ensure this input value reflects the actual cache capacity */}
                               <input
                                 type="number"
                                 value={lowResPageCacheSize}
@@ -6278,6 +6327,7 @@ SETPOINT
                           <div className="space-y-0.5 pt-2 border-t border-gray-700">
                             <div className="flex items-center justify-between">
                               <label className="text-gray-400" title="High-res page cache for deep zoom">HighRes Pages:</label>
+                              {/* TODO: Ensure this input value reflects the actual cache capacity */}
                               <input
                                 type="number"
                                 value={highResPageCacheSize}
@@ -6292,23 +6342,6 @@ SETPOINT
                             <div className="pl-2 text-gray-400">
                               <span className="text-white">{stats.pages.high}</span> pages cached
                               {memoryStats && <span className="text-gray-500"> • {memoryStats.highResPageCacheMB} MB (avg {memoryStats.avgHighResPageMB} MB)</span>}
-                            </div>
-                          </div>
-
-                          {/* Viewport Radius */}
-                          <div className="pt-2 border-t border-gray-700">
-                            <div className="flex items-center justify-between">
-                              <label className="text-gray-400" title="Pages within N pages of viewport = high priority">Viewport Radius:</label>
-                              <input
-                                type="number"
-                                value={viewportRadius}
-                                onChange={(e) => setViewportRadius(parseInt(e.target.value) || 0)}
-                                min="1"
-                                max="10"
-                                step="1"
-                                className="w-16 sm:w-20 px-1 py-0.5 text-[9px] sm:text-[10px] bg-gray-800 text-white border border-gray-600 rounded"
-                                style={{ pointerEvents: 'auto' }}
-                              />
                             </div>
                           </div>
 
