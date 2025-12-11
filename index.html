@@ -4647,8 +4647,12 @@ SETPOINT
                 }
               }
 
-              // Initialize viewer (navigator auto-hidden on touch devices)
-              initializeViewer(pdf.numPages, pageWidth, pageHeight, undefined, filename);
+              // Check for ?nav URL parameter to force navigator visibility
+              const navParams = new URLSearchParams(window.location.search);
+              const forceNav = navParams.has('nav') && navParams.get('nav') !== 'false' && navParams.get('nav') !== '0';
+
+              // Initialize viewer (navigator auto-hidden on touch devices unless ?nav)
+              initializeViewer(pdf.numPages, pageWidth, pageHeight, forceNav || undefined, filename);
 
               // Background: Render remaining low-res pages, then add navigator when ready
               setTimeout(async () => {

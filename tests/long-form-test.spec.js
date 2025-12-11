@@ -2,9 +2,11 @@
  * Long-Form Test (LFT)
  *
  * Detects visual flicker by capturing screenshots at key moments.
- * Outputs HTML report to test-results/lft-report.html
+ * Outputs JSON results to test-results/lft-results.json
  *
- * Phases: Load -> Settle (Grid/Detail temporarily disabled)
+ * Phases: Load -> Settle -> Pan -> Grid -> Detail
+ *
+ * Content verification: Each phase checks for actual pixel content, not just stability.
  */
 
 const { test, expect } = require('@playwright/test');
@@ -12,7 +14,7 @@ const { setupOfflineRoutes } = require('./test-helpers');
 const fs = require('fs');
 const path = require('path');
 
-const TEST_PDF = process.env.TEST_PDF || 'demo/ginger-pickles.pdf';
+const TEST_PDF = process.env.TEST_PDF || 'demo/test-pattern.pdf';
 const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
 const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
@@ -75,6 +77,57 @@ async function compareScreenshots(page, shot1, shot2) {
   }, [shot1, shot2]);
 }
 
+// Verify content exists anywhere in image - returns { hasContent, uniqueColors, nonBgPercent }
+async function verifyContent(page, b64) {
+  return await page.evaluate((b64Data) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+
+        // Check entire image (excluding top 50px for header)
+        const x = 0;
+        const y = 50;
+        const w = img.width;
+        const h = img.height - 50;
+
+        const data = ctx.getImageData(x, y, w, h).data;
+        const colors = new Set();
+        let nonBgPixels = 0;
+        const totalPixels = w * h;
+
+        // Background color (dark slate from app ~rgb(30,41,59))
+        const bgR = 30, bgG = 41, bgB = 59;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i], g = data[i+1], b = data[i+2];
+          // Quantize to reduce noise
+          const colorKey = `${Math.floor(r/16)},${Math.floor(g/16)},${Math.floor(b/16)}`;
+          colors.add(colorKey);
+
+          // Check if pixel is significantly different from background
+          const dr = Math.abs(r - bgR);
+          const dg = Math.abs(g - bgG);
+          const db = Math.abs(b - bgB);
+          if (dr > 30 || dg > 30 || db > 30) nonBgPixels++;
+        }
+
+        const nonBgPercent = (nonBgPixels / totalPixels) * 100;
+        resolve({
+          hasContent: colors.size > 10 && nonBgPercent > 5,
+          uniqueColors: colors.size,
+          nonBgPercent: parseFloat(nonBgPercent.toFixed(1))
+        });
+      };
+      img.src = 'data:image/png;base64,' + b64Data;
+    });
+  }, b64);
+}
+
 test.describe('LFT: Long-Form Test', () => {
 
   test.beforeEach(async ({ page }) => {
@@ -92,6 +145,7 @@ test.describe('LFT: Long-Form Test', () => {
       phases: [],
       errors: [],
       totalFlickers: 0,
+      totalContentFailures: 0,
       totalDuration: 0,
       passed: false
     };
@@ -109,7 +163,7 @@ test.describe('LFT: Long-Form Test', () => {
 
     // === PHASE 1: LOAD ===
     const p1Start = Date.now();
-    await page.goto(`${BASE_URL}/?pdf=${TEST_PDF}`);
+    await page.goto(`${BASE_URL}/?pdf=${TEST_PDF}&nav`);
     await page.waitForFunction(() => window.viewer && window.tileStreamerRef, { timeout: 30000 });
 
     const loadShots = [];
@@ -153,12 +207,12 @@ test.describe('LFT: Long-Form Test', () => {
       screenshots: loadShots
     });
 
-    // === PHASE 2: SETTLE (flicker detection) ===
-    const p2Start = Date.now();
+    // === PHASE 1A: SETTLE (flicker detection) ===
+    const p1aStart = Date.now();
     const settleShots = [];
     const flickerDiffs = [];
-    const SAMPLE_INTERVAL = 250; // ms between samples (doubled from 500)
-    const SAMPLE_COUNT = 10;     // number of samples (doubled from 5)
+    const SAMPLE_INTERVAL = 250; // ms between samples
+    const SAMPLE_COUNT = 10;     // number of samples
     let prevBuffer = null;
 
     // Take 10 screenshots over 2.5 seconds to detect flicker
@@ -166,7 +220,7 @@ test.describe('LFT: Long-Form Test', () => {
       await page.waitForTimeout(SAMPLE_INTERVAL);
       const shot = await page.screenshot({ type: 'png' });
       const b64 = shot.toString('base64');
-      const filename = `p2-settle-${String(i+1).padStart(2, '0')}.png`;
+      const filename = `p1a-settle-${String(i+1).padStart(2, '0')}.png`;
       const filepath = saveScreenshot(shot, filename);
 
       // Compare to previous frame
@@ -186,103 +240,256 @@ test.describe('LFT: Long-Form Test', () => {
       prevBuffer = shot;
     }
 
-    const p2Flickers = flickerDiffs.filter(d => d >= FLICKER_THRESHOLD).length;
+    const p1aFlickers = flickerDiffs.filter(d => d >= FLICKER_THRESHOLD).length;
     results.phases.push({
-      name: 'Phase 2: Settle (Flicker Check)',
-      duration: Date.now() - p2Start,
-      flickers: p2Flickers,
+      name: 'Phase 1A: Settle',
+      duration: Date.now() - p1aStart,
+      flickers: p1aFlickers,
       threshold: FLICKER_THRESHOLD,
       diffs: flickerDiffs.map(d => parseFloat(d.toFixed(1))),
       screenshots: settleShots
     });
 
-    // === PHASE 2B: PAN (TEMPORARILY DISABLED) ===
-    // const panPositions = [
-    //   { x: 0.55, y: 0.40 },
-    //   { x: 0.60, y: 0.50 },
-    //   { x: 0.65, y: 0.60 },
-    // ];
-    // const panShots = [];
-    //
-    // for (let i = 0; i < panPositions.length; i++) {
-    //   const pos = panPositions[i];
-    //   await page.evaluate((p) => {
-    //     window.viewer.viewport.panTo(new OpenSeadragon.Point(p.x, p.y), false);
-    //   }, pos);
-    //
-    //   await page.waitForTimeout(1000);
-    //   const shot = await page.screenshot({ type: 'png' });
-    //   panShots.push({
-    //     label: `Pan ${i+1}: (${pos.x}, ${pos.y})`,
-    //     data: shot.toString('base64')
-    //   });
-    // }
-    //
-    // results.phases.push({
-    //   name: 'Phase 2B: Pan',
-    //   duration: panPositions.length * 1000,
-    //   flickers: 0,
-    //   note: 'Pan to 3 positions',
-    //   screenshots: panShots
-    // });
+    // === PHASE 2: PAN ===
+    const p2Start = Date.now();
+    const panShots = [];
+    const panDiffs = [];
+    const panContentChecks = [];
+    let panPrevBuffer = null;
+    let panContentFailures = 0;
 
-    // === PHASE 3: GRID (TEMPORARILY DISABLED) ===
-    // const p3Start = Date.now();
-    // const beforeGrid = await page.screenshot({ type: 'png' });
-    //
-    // await page.evaluate(() => {
-    //   const ts = window.tileStreamerRef;
-    //   if (ts?.gridDims) {
-    //     const ar = ts.gridDims.totalHeight / ts.gridDims.totalWidth;
-    //     window.viewer.viewport.fitBounds(new OpenSeadragon.Rect(0, 0, 1, ar), false);
-    //   } else {
-    //     window.viewer.viewport.goHome(false);
-    //   }
-    // });
-    //
-    // await page.waitForTimeout(2000);
-    // const afterGrid = await page.screenshot({ type: 'png' });
-    //
-    // await page.waitForTimeout(1000);
-    // const gridSettled = await page.screenshot({ type: 'png' });
-    //
-    // results.phases.push({
-    //   name: 'Phase 3: Grid Overview',
-    //   duration: Date.now() - p3Start,
-    //   flickers: 0,
-    //   note: 'Zoom to show all pages',
-    //   screenshots: [
-    //     { label: 'Before', data: beforeGrid.toString('base64') },
-    //     { label: 'After (2s)', data: afterGrid.toString('base64') },
-    //     { label: 'Settled (+1s)', data: gridSettled.toString('base64') }
-    //   ]
-    // });
+    // Pan from page 1 (top row) straight down to middle of grid in 4 steps
+    // Get current center (should be showing content) and pan down from there
+    const panPositions = await page.evaluate(() => {
+      const ts = window.tileStreamerRef;
+      const viewer = window.viewer;
+      if (!ts?.gridDims || !viewer) return null;
 
-    // === PHASE 4: DETAIL (TEMPORARILY DISABLED) ===
-    // const p4Start = Date.now();
-    // const beforeDetail = await page.screenshot({ type: 'png' });
-    //
-    // await page.evaluate(() => {
-    //   window.viewer.viewport.zoomTo(4, new OpenSeadragon.Point(0.5, 0.5), false);
-    // });
-    //
-    // await page.waitForTimeout(2000);
-    // const afterDetail = await page.screenshot({ type: 'png' });
-    //
-    // results.phases.push({
-    //   name: 'Phase 4: Detail Zoom',
-    //   duration: Date.now() - p4Start,
-    //   flickers: 0,
-    //   note: 'Zoom into center',
-    //   screenshots: [
-    //     { label: 'Before', data: beforeDetail.toString('base64') },
-    //     { label: 'After (2s)', data: afterDetail.toString('base64') }
-    //   ]
-    // });
+      const ar = ts.gridDims.totalHeight / ts.gridDims.totalWidth;
+      // Use current X position (should be centered on content)
+      const currentCenter = viewer.viewport.getCenter();
+      const x = currentCenter.x;
+
+      // Y positions: start near top, pan straight down to middle
+      const yStart = ar * 0.12;  // Near top, page 1 visible
+      const yEnd = ar * 0.5;     // Middle of grid
+      const yStep = (yEnd - yStart) / 3;
+
+      return [
+        { x, y: yStart },
+        { x, y: yStart + yStep },
+        { x, y: yStart + yStep * 2 },
+        { x, y: yEnd },
+      ];
+    }) || [
+      // Fallback positions
+      { x: 0.25, y: 0.15 },
+      { x: 0.25, y: 0.35 },
+      { x: 0.25, y: 0.55 },
+      { x: 0.25, y: 0.75 },
+    ];
+
+    for (let i = 0; i < panPositions.length; i++) {
+      const pos = panPositions[i];
+      await page.evaluate((p) => {
+        window.viewer.viewport.panTo(new OpenSeadragon.Point(p.x, p.y), false);
+      }, pos);
+
+      await page.waitForTimeout(800); // Wait for pan + tile loading
+      const shot = await page.screenshot({ type: 'png' });
+      const b64 = shot.toString('base64');
+      const filename = `p2-pan-${String(i+1).padStart(2, '0')}.png`;
+      const filepath = saveScreenshot(shot, filename);
+
+      // Content verification: check that we see actual content after pan
+      const contentCheck = await verifyContent(page, b64);
+      panContentChecks.push(contentCheck);
+      if (!contentCheck.hasContent) {
+        panContentFailures++;
+        results.totalContentFailures++;
+      }
+
+      // Compare to previous (expect diff due to pan - this is expected, not flicker)
+      if (panPrevBuffer) {
+        const prevB64 = panPrevBuffer.toString('base64');
+        const diff = await compareScreenshots(page, prevB64, b64);
+        panDiffs.push(diff);
+        panShots.push({
+          label: `Pan ${i+1}/4: y=${pos.y.toFixed(2)} (${diff.toFixed(1)}%, ${contentCheck.nonBgPercent}% content)`,
+          file: filepath
+        });
+      } else {
+        panShots.push({
+          label: `Pan ${i+1}/4: y=${pos.y.toFixed(2)} (baseline, ${contentCheck.nonBgPercent}% content)`,
+          file: filepath
+        });
+      }
+      panPrevBuffer = shot;
+    }
+
+    // After all pans complete, check for flicker (stability check)
+    // Take two consecutive screenshots - they should be identical if stable
+    await page.waitForTimeout(1000);
+    const panSettleShot1 = await page.screenshot({ type: 'png' });
+    await page.waitForTimeout(500);
+    const panSettleShot2 = await page.screenshot({ type: 'png' });
+    const panSettleDiff = await compareScreenshots(
+      page,
+      panSettleShot1.toString('base64'),
+      panSettleShot2.toString('base64')
+    );
+    const panFlickers = panSettleDiff >= FLICKER_THRESHOLD ? 1 : 0;
+    if (panFlickers) results.totalFlickers++;
+
+    results.phases.push({
+      name: 'Phase 2: Pan',
+      duration: Date.now() - p2Start,
+      flickers: panFlickers,
+      contentFailures: panContentFailures,
+      note: 'Pan top to middle in 4 steps, verify content visible, check stability',
+      diffs: panDiffs.map(d => parseFloat(d.toFixed(1))),
+      settleDiff: parseFloat(panSettleDiff.toFixed(1)),
+      contentChecks: panContentChecks,
+      screenshots: panShots
+    });
+
+    // === PHASE 3: GRID OVERVIEW ===
+    const p3Start = Date.now();
+    const beforeGrid = await page.screenshot({ type: 'png' });
+    const beforeGridPath = saveScreenshot(beforeGrid, 'p3-grid-before.png');
+
+    await page.evaluate(() => {
+      const ts = window.tileStreamerRef;
+      if (ts?.gridDims) {
+        const ar = ts.gridDims.totalHeight / ts.gridDims.totalWidth;
+        window.viewer.viewport.fitBounds(new OpenSeadragon.Rect(0, 0, 1, ar), false);
+      } else {
+        window.viewer.viewport.goHome(false);
+      }
+    });
+
+    await page.waitForTimeout(1500);
+    const afterGrid = await page.screenshot({ type: 'png' });
+    const afterGridB64 = afterGrid.toString('base64');
+    const afterGridPath = saveScreenshot(afterGrid, 'p3-grid-after.png');
+
+    // Content verification: in grid view, we should see page content
+    const gridContentCheck = await verifyContent(page, afterGridB64);
+    const gridContentFailure = !gridContentCheck.hasContent ? 1 : 0;
+    if (gridContentFailure) results.totalContentFailures++;
+
+    // Check for flicker after grid settles
+    await page.waitForTimeout(500);
+    const gridSettled = await page.screenshot({ type: 'png' });
+    const gridSettledB64 = gridSettled.toString('base64');
+    const gridSettledPath = saveScreenshot(gridSettled, 'p3-grid-settled.png');
+
+    const gridSettleDiff = await compareScreenshots(page, afterGridB64, gridSettledB64);
+    const gridFlickers = gridSettleDiff >= FLICKER_THRESHOLD ? 1 : 0;
+    if (gridFlickers) results.totalFlickers++;
+
+    results.phases.push({
+      name: 'Phase 3: Grid Overview',
+      duration: Date.now() - p3Start,
+      flickers: gridFlickers,
+      contentFailures: gridContentFailure,
+      note: 'Zoom to show all pages, verify content visible',
+      diffs: [parseFloat(gridSettleDiff.toFixed(1))],
+      contentCheck: gridContentCheck,
+      screenshots: [
+        { label: 'Before', file: beforeGridPath },
+        { label: `After (1.5s) (${gridContentCheck.nonBgPercent}% content)`, file: afterGridPath },
+        { label: `Settled (+0.5s) (${gridSettleDiff.toFixed(1)}%${gridFlickers ? ' FLICKER' : ''})`, file: gridSettledPath }
+      ]
+    });
+
+    // === PHASE 4: DETAIL ZOOM ===
+    const p4Start = Date.now();
+    const beforeDetail = await page.screenshot({ type: 'png' });
+    const beforeDetailPath = saveScreenshot(beforeDetail, 'p4-detail-before.png');
+
+    // Zoom to show a quarter of a page, centered on page 1's center
+    await page.evaluate(() => {
+      const ts = window.tileStreamerRef;
+      const viewer = window.viewer;
+
+      // Go home first
+      viewer.viewport.goHome(false);
+    });
+    await page.waitForTimeout(500);
+
+    // Pan to center of page 1, then zoom to quarter-page
+    await page.evaluate(() => {
+      const ts = window.tileStreamerRef;
+      const viewer = window.viewer;
+
+      if (!ts?.gridDims) {
+        viewer.viewport.zoomTo(12, undefined, false);
+        return;
+      }
+
+      const gd = ts.gridDims;
+      const pageW = gd.pageWidth / gd.totalWidth;
+      const pageH = gd.pageHeight / gd.totalHeight;
+
+      // After goHome, viewport is centered on grid
+      // Page 1's center is offset by half a page from where corners meet
+      const currentCenter = viewer.viewport.getCenter();
+
+      // Move up and left by half a page to center on page 1
+      // (goHome shows corners, so we offset to get a page center)
+      const page1Center = new OpenSeadragon.Point(
+        currentCenter.x - pageW / 2,
+        currentCenter.y - pageH / 2
+      );
+
+      // Zoom to show ~quarter page
+      const quarterPageZoom = 4 / pageW;
+
+      viewer.viewport.panTo(page1Center, false);
+      viewer.viewport.zoomTo(quarterPageZoom, undefined, false);
+    });
+
+    await page.waitForTimeout(1500);
+    const afterDetail = await page.screenshot({ type: 'png' });
+    const afterDetailB64 = afterDetail.toString('base64');
+    const afterDetailPath = saveScreenshot(afterDetail, 'p4-detail-after.png');
+
+    // Content verification: at 4x zoom, we should see detailed page content
+    const detailContentCheck = await verifyContent(page, afterDetailB64);
+    const detailContentFailure = !detailContentCheck.hasContent ? 1 : 0;
+    if (detailContentFailure) results.totalContentFailures++;
+
+    // Check for flicker after detail settles
+    await page.waitForTimeout(500);
+    const detailSettled = await page.screenshot({ type: 'png' });
+    const detailSettledB64 = detailSettled.toString('base64');
+    const detailSettledPath = saveScreenshot(detailSettled, 'p4-detail-settled.png');
+
+    const detailSettleDiff = await compareScreenshots(page, afterDetailB64, detailSettledB64);
+    const detailFlickers = detailSettleDiff >= FLICKER_THRESHOLD ? 1 : 0;
+    if (detailFlickers) results.totalFlickers++;
+
+    results.phases.push({
+      name: 'Phase 4: Detail Zoom',
+      duration: Date.now() - p4Start,
+      flickers: detailFlickers,
+      contentFailures: detailContentFailure,
+      note: 'Zoom to quarter-page detail on page 1, verify content visible',
+      diffs: [parseFloat(detailSettleDiff.toFixed(1))],
+      contentCheck: detailContentCheck,
+      screenshots: [
+        { label: 'Before', file: beforeDetailPath },
+        { label: `After (1.5s) (${detailContentCheck.nonBgPercent}% content)`, file: afterDetailPath },
+        { label: `Settled (+0.5s) (${detailSettleDiff.toFixed(1)}%${detailFlickers ? ' FLICKER' : ''})`, file: detailSettledPath }
+      ]
+    });
 
     // === FINALIZE ===
     results.totalDuration = Date.now() - startTime;
-    results.passed = results.errors.length === 0 && results.totalFlickers === 0;
+    results.passed = results.errors.length === 0 &&
+                     results.totalFlickers === 0 &&
+                     results.totalContentFailures === 0;
 
     // === WRITE JSON RESULTS ===
     if (!fs.existsSync(RESULTS_DIR)) {
@@ -291,10 +498,11 @@ test.describe('LFT: Long-Form Test', () => {
     const jsonPath = path.join(RESULTS_DIR, 'lft-results.json');
     fs.writeFileSync(jsonPath, JSON.stringify(results, null, 2));
     console.log(`\nResults: ${jsonPath}`);
-    console.log(`Flickers detected: ${results.totalFlickers}\n`);
+    console.log(`Flickers: ${results.totalFlickers}, Content failures: ${results.totalContentFailures}\n`);
 
     // === ASSERTIONS ===
-    expect(results.totalFlickers, 'Flickers detected during settle phase').toBe(0);
+    expect(results.totalFlickers, 'Flickers detected').toBe(0);
+    expect(results.totalContentFailures, 'Content verification failures').toBe(0);
     expect(results.errors.length, 'Console errors detected').toBe(0);
   });
 });
