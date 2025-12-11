@@ -191,23 +191,6 @@ Test waits should be calculated based on input file characteristics, not hardcod
 
 ### Future Enhancements
 
-**Vector 8: Re-enable Disabled LFT Phases**
-
-The Pan, Grid, and Detail phases were disabled during debugging. Now that base flicker is fixed, re-enable to ensure no flicker during navigation operations.
-
-| Phase  | Operation                  | Status   |
-|--------|----------------------------|----------|
-| Pan    | Pan to 3 positions         | Disabled |
-| Grid   | Zoom to show all pages     | Disabled |
-| Detail | Zoom into center at 4x     | Disabled |
-
----
-
-**Vector 9: Performance Metrics**
-
-Add timing metrics to LFT: time-to-first-tile, time-to-fully-loaded, memory usage during load.
-
----
 
 **Vector 10: OSD placeholderFillStyle**
 
@@ -314,16 +297,14 @@ For even smoother progressive loading, consider graduated PDF scales:
 
 ## Code Analysis (2024-12-01)
 
-### Dead Code Identified
-
-The async `downloadTileStart` pattern (v1.11.0) does not generate stripe placeholders. The following code is now dead:
+### Dead Code Removed
 
 | Component                    | Purpose                        | Status                              |
 |------------------------------|--------------------------------|-------------------------------------|
-| `_renderBlankTile()`         | Red stripe placeholder         | Dead - never called                 |
-| `inspectVisual()`            | Stripe pattern detector        | Dead - no stripes to detect         |
-| Auto-Inspector               | Periodic stripe check + heal   | Dead - triggers on non-existent     |
-| `FALLBACK_RENDERING_ENABLED` | Config toggle                  | Dead - fallback logic unused        |
+| `_renderBlankTile()`         | Red stripe placeholder         | Removed (no stripes in async pattern) |
+| `inspectVisual()`            | Stripe pattern detector        | Removed                             |
+| Auto-Inspector               | Periodic stripe check + heal   | Removed                             |
+| `FALLBACK_RENDERING_ENABLED` | Config toggle                  | Removed (fallback logic eliminated) |
 
 ### Potential Flicker Sources
 

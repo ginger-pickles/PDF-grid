@@ -229,7 +229,6 @@ SETPOINT
           // - Detail tier: 4x scale, JPEG compressed, for deep zoom only
           RESOLUTION_MODE: 'dual',             // Keep 'dual' for now - will be simplified in refactor
           PAGE_CACHE_JPEG_QUALITY: 0.92,       // JPEG compression quality for page cache (150x memory reduction)
-          FALLBACK_RENDERING_ENABLED: true,    // Use other tier as placeholder while correct tier renders
 
           // OpenSeadragon
           OSD_MIN_ZOOM: null, // Let minZoomImageRatio control minimum zoom
@@ -2666,7 +2665,7 @@ SETPOINT
               return false; // Abort - tile should be queued via pendingJobs
             }
 
-            ts.stats.tilesRenderedFull++;
+            ts.stats.tilesRendered++;
 
             // Calculate intersection region in grid coordinates
             const intersectLeft = Math.max(tileLeft, pageLeft);
@@ -3091,20 +3090,17 @@ SETPOINT
             // Maps jobKey (level_x_y) to {context, canvas, ctx, missingPages, resolution, ...}
             this.pendingJobs = new Map();
 
-            // Diagnostics: Track fallback tiles vs full tiles
+            // Diagnostics: Track tile rendering
             this.stats = {
-              tilesRenderedFull: 0,      // Tiles rendered with all pages at correct resolution
-              tilesRenderedFallback: 0,  // Tiles rendered with fallback to other resolution
+              tilesRendered: 0,          // Tiles rendered successfully
               cacheMisses: 0,            // Pages requested but not in cache
               onDemandRenders: 0,        // Pages rendered on-demand (triggered by cache miss)
               onDemandHits: 0,           // On-demand renders that completed before tile re-render
               // Render rate tracking (tiles/second)
               renderRateWindowMs: 1000,  // Time window for rate calculation (1 second)
               renderWindowStart: Date.now(), // Timestamp when current window started
-              fullRendersInWindow: 0,    // Full renders in current time window
-              fallbackRendersInWindow: 0, // Fallback renders in current time window
-              fullRenderRate: 0,         // Calculated tiles/sec for full renders
-              fallbackRenderRate: 0      // Calculated tiles/sec for fallback renders
+              rendersInWindow: 0,        // Renders in current time window
+              renderRate: 0              // Calculated tiles/sec
             };
 
             // Tile size = (page + spacing) / renderScale
@@ -3171,38 +3167,33 @@ SETPOINT
            * Unified render rate window management
            * Consolidates duplicated logic from _updateRenderRate() and _checkRenderRateIdle()
            *
-           * @param {number} fullIncrement - Number of full renders to add to window (0 for idle check)
-           * @param {number} fallbackIncrement - Number of fallback renders to add to window (0 for idle check)
+           * @param {number} increment - Number of renders to add to window (0 for idle check)
            */
-          _updateRenderRateWindow(fullIncrement, fallbackIncrement) {
+          _updateRenderRateWindow(increment) {
             const now = Date.now();
             const elapsed = now - this.stats.renderWindowStart;
 
-            // Increment counters for current window
-            this.stats.fullRendersInWindow += fullIncrement;
-            this.stats.fallbackRendersInWindow += fallbackIncrement;
+            // Increment counter for current window
+            this.stats.rendersInWindow += increment;
 
             // If window has elapsed, calculate rate and reset window
             if (elapsed >= this.stats.renderRateWindowMs) {
               const seconds = elapsed / 1000;
 
-              // Calculate rates (tiles per second)
-              this.stats.fullRenderRate = this.stats.fullRendersInWindow / seconds;
-              this.stats.fallbackRenderRate = this.stats.fallbackRendersInWindow / seconds;
+              // Calculate rate (tiles per second)
+              this.stats.renderRate = this.stats.rendersInWindow / seconds;
 
               // Reset window
               this.stats.renderWindowStart = now;
-              this.stats.fullRendersInWindow = 0;
-              this.stats.fallbackRendersInWindow = 0;
+              this.stats.rendersInWindow = 0;
             }
           }
 
           /**
            * Update render rate after a tile render completes
-           * @param {boolean} isFull - True if full resolution render, false if fallback
            */
-          _updateRenderRate(isFull) {
-            this._updateRenderRateWindow(isFull ? 1 : 0, isFull ? 0 : 1);
+          _updateRenderRate() {
+            this._updateRenderRateWindow(1);
           }
 
           /**
@@ -3210,7 +3201,7 @@ SETPOINT
            * Called periodically to ensure rate drops to zero when idle
            */
           _checkRenderRateIdle() {
-            this._updateRenderRateWindow(0, 0);
+            this._updateRenderRateWindow(0);
           }
 
           /**
@@ -4061,7 +4052,6 @@ SETPOINT
           const [onDemandRendering, setOnDemandRendering] = usePersistedState('ondemand_rendering', CONFIG.ON_DEMAND_RENDERING_ENABLED);
           const [predictiveRendering, setPredictiveRendering] = usePersistedState('predictive_rendering', CONFIG.PREDICTIVE_RENDERING_ENABLED);
           const [upfrontRendering, setUpfrontRendering] = usePersistedState('upfront_rendering', CONFIG.UPFRONT_RENDERING_ENABLED);
-          const [fallbackRendering, setFallbackRendering] = usePersistedState('fallback_rendering', CONFIG.FALLBACK_RENDERING_ENABLED);
           const [resolutionMode, setResolutionMode] = usePersistedState('resolution_mode', CONFIG.RESOLUTION_MODE, 'string');
 
           // Cache size parameters - NOT persisted, recalculated per-PDF on load
@@ -4356,7 +4346,6 @@ SETPOINT
           React.useEffect(() => { CONFIG.ON_DEMAND_RENDERING_ENABLED = onDemandRendering; }, [onDemandRendering]);
           React.useEffect(() => { CONFIG.PREDICTIVE_RENDERING_ENABLED = predictiveRendering; }, [predictiveRendering]);
           React.useEffect(() => { CONFIG.UPFRONT_RENDERING_ENABLED = upfrontRendering; }, [upfrontRendering]);
-          React.useEffect(() => { CONFIG.FALLBACK_RENDERING_ENABLED = fallbackRendering; }, [fallbackRendering]);
           React.useEffect(() => { CONFIG.RESOLUTION_MODE = resolutionMode; }, [resolutionMode]);
 
           // Sync CONFIG with cache parameters (persistence handled by usePersistedState hook)
@@ -4467,7 +4456,6 @@ SETPOINT
             setOnDemandRendering(true);
             setPredictiveRendering(true);
             setUpfrontRendering(true);
-            setFallbackRendering(true);
             setResolutionMode('dual');
 
             // Reset cache sizes to platform defaults
@@ -4486,7 +4474,6 @@ SETPOINT
             localStorage.removeItem('pdfgrid_ondemand_rendering');
             localStorage.removeItem('pdfgrid_predictive_rendering');
             localStorage.removeItem('pdfgrid_upfront_rendering');
-            localStorage.removeItem('pdfgrid_fallback_rendering');
             localStorage.removeItem('pdfgrid_resolution_mode');
             localStorage.removeItem('pdfgrid_tile_cache_size');
             localStorage.removeItem('pdfgrid_lowres_cache_size');
@@ -5521,8 +5508,7 @@ SETPOINT
 
                 const pageStats = pageStreamer?.getCacheStats() || { low: 0, high: 0 };
                 const tileStats = tileStreamer?.stats || {
-                  tilesRenderedFull: 0,
-                  tilesRenderedFallback: 0,
+                  tilesRendered: 0,
                   cacheMisses: 0,
                   onDemandRenders: 0,
                   onDemandHits: 0
@@ -5535,12 +5521,7 @@ SETPOINT
                   },
                   tiles: tileStreamer?.tileCache.cache.size || 0,
                   tileRenderStats: {
-                    fullRate: tileStats.fullRenderRate,
-                    fallbackRate: tileStats.fallbackRenderRate,
-                    totalRate: tileStats.fullRenderRate + tileStats.fallbackRenderRate,
-                    fallbackPercentage: (tileStats.fullRenderRate + tileStats.fallbackRenderRate) > 0
-                      ? ((tileStats.fallbackRenderRate / (tileStats.fullRenderRate + tileStats.fallbackRenderRate)) * 100).toFixed(1)
-                      : 0
+                    fullRate: tileStats.renderRate || 0
                   },
                   cacheMisses: tileStats.cacheMisses,
                   onDemandRenders: tileStats.onDemandRenders,
@@ -5663,7 +5644,7 @@ SETPOINT
               showDebug: () => {
                 const stats = window.__PDFGridDiagnostics.getCacheStats();
                 const tileDebug = window.__tileCacheDebug ? '\n\nRecent tiles:\n' + window.__tileCacheDebug.join('\n') : '';
-                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nRender Rate:\n  Full: ${stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec\n  Fallback: ${stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec\n  Fallback %: ${stats.tileRenderStats.fallbackPercentage}%\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
+                alert(`PageCache: ${stats.pages.low} low-res, ${stats.pages.high} high-res\nTileCache: ${stats.tiles}\n\nRender Rate: ${stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec\nCache Misses: ${stats.cacheMisses}\n\nminimapMaxLvl: ${stats.minimapMaxLevel}\nRender: ${stats.renderScale}x, LowRes: ${stats.lowResScale}x\niOS: ${isIOSSafari ? 'YES' : 'NO'}\nDEBUG: ${CONFIG.VERBOSE_LOGGING ? 'ON' : 'OFF'}${tileDebug}`);
               },
               // Test tile intersection calculation
               getTileIntersections: (level, x, y) => {
@@ -6467,18 +6448,6 @@ SETPOINT
                             >
                               Dual
                             </button>
-                            <button
-                              onClick={() => setFallbackRendering(!fallbackRendering)}
-                              className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded text-[10px] sm:text-xs font-bold transition-colors ${
-                                fallbackRendering
-                                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                              }`}
-                              style={{ pointerEvents: 'auto' }}
-                              title="Allow fallback to low-res when high-res unavailable"
-                            >
-                              Fallback
-                            </button>
                           </div>
                         </div>
 
@@ -6503,7 +6472,7 @@ SETPOINT
                               {memoryStats && <span className="text-gray-500"> • {memoryStats.tileCacheMB} MB (avg {memoryStats.avgTileMB} MB)</span>}
                             </div>
                             <div className="pl-2 text-gray-400">
-                              Render Rate: <span className="text-white">Full: {stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec, Fallback: {stats.tileRenderStats.fallbackRate.toFixed(1)} tiles/sec ({stats.tileRenderStats.fallbackPercentage}%)</span>
+                              Render Rate: <span className="text-white">{stats.tileRenderStats.fullRate.toFixed(1)} tiles/sec</span>
                             </div>
                             <div className="pl-2 text-gray-400">
                               Cache Misses: <span className="text-white">{stats.cacheMisses}</span>
