@@ -1,6 +1,13 @@
 # Deployment scripts (contain credentials/server info)
 *deploy*.sh
 
+# Large demo PDFs (keep repo small)
+demo/TheRadioAmateursHandbook_ARRL_FrancisEdwardHandy_Ed1_1926.pdf
+demo/Popular_Mechanics_10_1950.pdf
+demo/natgeo-1969-05.pdf
+demo/Marie Neurath - Machines Which Seem To Think.pdf
+demo/Hiemstra_Jesse_M_201411_MAS_thesis.pdf
+
 # OS files
 .DS_Store
 Thumbs.db
