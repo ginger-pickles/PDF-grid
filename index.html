@@ -2894,57 +2894,28 @@ SETPOINT
           constructor(tileStreamer) {
             this.tileStreamer = tileStreamer;
             this._pendingRequests = new Set();
-            this._resetTimeout = null;
-            this._lastResetTime = 0;
+            this._redrawTimeout = null;
           }
 
           /**
-           * Schedule a debounced TiledImage reset
-           * Uses aggressive debouncing (500ms) to batch page renders, then resets.
-           * After reset, forces OSD to re-request tiles with fresh content.
-           */
-          _scheduleReset() {
-            // Clear any pending reset
-            if (this._resetTimeout) {
-              clearTimeout(this._resetTimeout);
-            }
-
-            // Wait 500ms after last page render to allow batch to complete
-            this._resetTimeout = setTimeout(() => {
-              this._resetTimeout = null;
-
-              try {
-                if (!window.osdViewerRef || !window.osdViewerRef.world) return;
-
-                const tiledImage = window.osdViewerRef.world.getItemAt(0);
-                if (!tiledImage) return;
-
-                // Reset clears OSD's internal tile cache
-                // DISABLED: tiledImage.reset() causes visual flicker
-                // tiledImage.reset();
-                this._lastResetTime = Date.now();
-
-                // Force OSD to re-request tiles with fresh content
-                // Use requestAnimationFrame to ensure reset completes first
-                requestAnimationFrame(() => {
-                  if (window.osdViewerRef) {
-                    window.osdViewerRef.world.needsDraw();
-                    window.osdViewerRef.forceRedraw();
-                  }
-                });
-              } catch (err) {
-                // Silently ignore if OSD not ready yet
-              }
-            }, 500);
-          }
-
-          /**
-           * Schedule a debounced tile redraw
+           * Schedule a debounced redraw
+           * Debounces 100ms to batch multiple page renders before triggering OSD redraw.
            */
           scheduleRedraw() {
-            // Use _scheduleReset() which does tiledImage.reset() to force OSD to re-request tiles
-            // forceRedraw() alone doesn't work - OSD keeps using its cached tiles
-            this._scheduleReset();
+            if (this._redrawTimeout) {
+              clearTimeout(this._redrawTimeout);
+            }
+            this._redrawTimeout = setTimeout(() => {
+              this._redrawTimeout = null;
+              try {
+                if (window.osdViewerRef?.world) {
+                  window.osdViewerRef.world.needsDraw();
+                  window.osdViewerRef.forceRedraw();
+                }
+              } catch (err) {
+                // Silently ignore if OSD not ready
+              }
+            }, 100);
           }
 
           /**
@@ -5772,13 +5743,6 @@ SETPOINT
                 }
                 const visible = tileStreamer.getVisibleTiles();
                 console.log(`[Viewport Query] Found ${visible.length} visible tiles`);
-                const incomplete = visible.filter(t => t.status === 'fallback');
-                if (incomplete.length > 0) {
-                  console.log(`[Viewport Query] ${incomplete.length} tiles have missing pages:`);
-                  incomplete.forEach(t => {
-                    console.log(`  ${t.key}: missing ${t.missingPages.length} pages: [${t.missingPages.join(',')}]`);
-                  });
-                }
                 return visible;
               }
             };

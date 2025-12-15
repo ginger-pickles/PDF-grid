@@ -85,7 +85,7 @@ npm run test:report      # View HTML report
 ## Diagnostics API
 
 ```javascript
-window.__PDFGridDiagnostics.getCacheStats()     // Cache sizes, fallback stats
+window.__PDFGridDiagnostics.getCacheStats()     // Cache sizes
 window.__PDFGridDiagnostics.getMemoryEstimate() // Memory estimate (MB)
 window.__PDFGridDiagnostics.getCurrentZoom()    // Current zoom level
 window.__PDFGridDiagnostics.clearCaches()       // Clear all caches

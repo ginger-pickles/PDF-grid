@@ -6,8 +6,6 @@
 
 Exploit periodicity when constructing multi-page tiles.
 
-Handle poor low-hi res fallback performance - improve resolution switching and fallback behavior
-
 Render low-res tiles for minimap (0.X scale) in clever order; and substitute nearest available rendered page for otherwise blank tiles; replacing when ready. Result: Minimap is populated in scattered fashion amongst dispersed pages instead of sequentially; unrendered gaps are temporarily filled with nearest neighbour and replaced as appropriate, progressively resolving to complete picture.
 
 
