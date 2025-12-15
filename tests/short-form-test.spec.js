@@ -9,7 +9,7 @@
  */
 
 const { test, expect } = require('@playwright/test');
-const { setupOfflineRoutes } = require('./test-helpers');
+const { setupOfflineRoutes, waitForFullyLoaded, waitForVisualStability } = require('./test-helpers');
 const fs = require('fs');
 const path = require('path');
 const { PNG } = require('pngjs');
@@ -389,8 +389,8 @@ test.describe('SFT: Short-Form Test', () => {
       return pendingCount === 0 && hasLowResPages;
     }, { timeout: 15000 });
 
-    // Settle time for OSD to complete render pass after tiles loaded
-    await page.waitForTimeout(300);
+    // Wait for OSD to report all visible tiles loaded
+    await waitForFullyLoaded(page, 10000);
 
     // Capture 2: Stable - after async jobs complete
     const state1Data = await page.evaluate(() => {
@@ -507,7 +507,8 @@ test.describe('SFT: Short-Form Test', () => {
     });
 
     // Wait for grid animation to complete and tiles to render
-    await page.waitForTimeout(1000);
+    await waitForFullyLoaded(page, 10000, 500);
+    await waitForVisualStability(page, { timeout: 10000, interval: 500, threshold: 2 });
 
     const state2Data = await page.evaluate(() => ({
       zoom: window.viewer.viewport.getZoom(),

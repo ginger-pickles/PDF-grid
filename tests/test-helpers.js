@@ -125,6 +125,42 @@ async function waitForTilesComplete(page, timeout = 30000) {
 }
 
 /**
+ * Wait for OSD to report all visible tiles are loaded (fullyLoaded)
+ * Combines event-based waiting with a settle period for resolution upgrades.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {number} timeout - Timeout in ms
+ * @param {number} settleMs - Additional settle time for resolution upgrades (default 300ms)
+ */
+async function waitForFullyLoaded(page, timeout = 30000, settleMs = 300) {
+  await page.waitForFunction(
+    () => {
+      const tiledImage = window.osdViewerRef?.world?.getItemAt(0);
+      return tiledImage?.getFullyLoaded() === true;
+    },
+    { timeout }
+  );
+  // Allow time for resolution upgrades (low-res → high-res tiles)
+  if (settleMs > 0) {
+    await page.waitForTimeout(settleMs);
+  }
+}
+
+/**
+ * Wait for viewer to be fully ready: viewer initialized + tiles fully loaded
+ * Replaces arbitrary waitForTimeout calls with event-based waiting
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {number} timeout - Timeout in ms
+ */
+async function waitForViewerFullyReady(page, timeout = 30000) {
+  // First wait for viewer to initialize
+  await waitForViewerReady(page, timeout);
+  // Then wait for OSD to report all visible tiles loaded
+  await waitForFullyLoaded(page, timeout);
+}
+
+/**
  * Wait for settled state: viewer ready + tiles complete + visual stability
  *
  * @param {import('@playwright/test').Page} page
@@ -144,6 +180,94 @@ async function waitForSettled(page, options = {}) {
 
   // Verify tiles still complete after stability period
   await waitForTilesComplete(page, 5000);
+}
+
+/**
+ * Wait for visual stability by comparing consecutive screenshots
+ * Waits until the display stops changing (within threshold).
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {Object} options
+ * @param {number} options.timeout - Max time to wait in ms (default 15000)
+ * @param {number} options.interval - Time between checks in ms (default 500)
+ * @param {number} options.threshold - Max % diff to consider stable (default 1)
+ * @param {number} options.stableChecks - How many consecutive stable checks needed (default 2)
+ * @returns {Promise<{stable: boolean, lastDiff: number, checks: number}>}
+ */
+async function waitForVisualStability(page, options = {}) {
+  const {
+    timeout = 15000,
+    interval = 500,
+    threshold = 1,
+    stableChecks = 2
+  } = options;
+
+  const startTime = Date.now();
+  let lastScreenshot = await page.screenshot({ type: 'png' });
+  let consecutiveStable = 0;
+  let checks = 0;
+  let lastDiff = 100;
+
+  while (Date.now() - startTime < timeout) {
+    await page.waitForTimeout(interval);
+    const currentScreenshot = await page.screenshot({ type: 'png' });
+    checks++;
+
+    // Compare screenshots in browser
+    const diff = await page.evaluate(([b64_1, b64_2]) => {
+      return new Promise((resolve) => {
+        const img1 = new Image();
+        const img2 = new Image();
+        let loaded = 0;
+
+        const onLoad = () => {
+          loaded++;
+          if (loaded < 2) return;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = img1.width;
+          canvas.height = img1.height;
+          const ctx = canvas.getContext('2d');
+
+          ctx.drawImage(img1, 0, 0);
+          const data1 = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          ctx.drawImage(img2, 0, 0);
+          const data2 = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+          let diffPixels = 0;
+          const totalPixels = canvas.width * canvas.height;
+          for (let i = 0; i < data1.length; i += 4) {
+            const dr = Math.abs(data1[i] - data2[i]);
+            const dg = Math.abs(data1[i+1] - data2[i+1]);
+            const db = Math.abs(data1[i+2] - data2[i+2]);
+            if (dr > 10 || dg > 10 || db > 10) diffPixels++;
+          }
+          resolve((diffPixels / totalPixels) * 100);
+        };
+
+        img1.onload = onLoad;
+        img2.onload = onLoad;
+        img1.src = 'data:image/png;base64,' + b64_1;
+        img2.src = 'data:image/png;base64,' + b64_2;
+      });
+    }, [lastScreenshot.toString('base64'), currentScreenshot.toString('base64')]);
+
+    lastDiff = diff;
+
+    if (diff <= threshold) {
+      consecutiveStable++;
+      if (consecutiveStable >= stableChecks) {
+        return { stable: true, lastDiff: diff, checks };
+      }
+    } else {
+      consecutiveStable = 0;
+    }
+
+    lastScreenshot = currentScreenshot;
+  }
+
+  // Timeout - return current state
+  return { stable: false, lastDiff, checks };
 }
 
 /**
@@ -342,7 +466,10 @@ module.exports = {
   setupOfflineRoutes,
   waitForViewerReady,
   waitForTilesComplete,
+  waitForFullyLoaded,
+  waitForViewerFullyReady,
   waitForSettled,
+  waitForVisualStability,
   captureCanvas,
   compareCanvases,
   captureFrameSequence,

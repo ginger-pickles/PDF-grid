@@ -10,7 +10,7 @@
  */
 
 const { test, expect } = require('@playwright/test');
-const { setupOfflineRoutes } = require('./test-helpers');
+const { setupOfflineRoutes, waitForFullyLoaded, waitForVisualStability } = require('./test-helpers');
 const fs = require('fs');
 const path = require('path');
 
@@ -295,7 +295,7 @@ test.describe('LFT: Long-Form Test', () => {
         window.viewer.viewport.panTo(new OpenSeadragon.Point(p.x, p.y), false);
       }, pos);
 
-      await page.waitForTimeout(800); // Wait for pan + tile loading
+      await waitForFullyLoaded(page, 10000, 500);
       const shot = await page.screenshot({ type: 'png' });
       const b64 = shot.toString('base64');
       const filename = `p2-pan-${String(i+1).padStart(2, '0')}.png`;
@@ -328,10 +328,10 @@ test.describe('LFT: Long-Form Test', () => {
     }
 
     // After all pans complete, check for flicker (stability check)
-    // Take two consecutive screenshots - they should be identical if stable
-    await page.waitForTimeout(1000);
+    // Wait for tiles to fully load, then take two consecutive screenshots
+    await waitForFullyLoaded(page, 10000, 800);
     const panSettleShot1 = await page.screenshot({ type: 'png' });
-    await page.waitForTimeout(500);
+    await waitForFullyLoaded(page, 5000, 500);
     const panSettleShot2 = await page.screenshot({ type: 'png' });
     const panSettleDiff = await compareScreenshots(
       page,
@@ -368,7 +368,9 @@ test.describe('LFT: Long-Form Test', () => {
       }
     });
 
-    await page.waitForTimeout(1500);
+    // Grid view: wait for visual stability (tiles upgrade from low-res to high-res)
+    await waitForFullyLoaded(page, 15000, 500);
+    await waitForVisualStability(page, { timeout: 10000, interval: 500, threshold: 2 });
     const afterGrid = await page.screenshot({ type: 'png' });
     const afterGridB64 = afterGrid.toString('base64');
     const afterGridPath = saveScreenshot(afterGrid, 'p3-grid-after.png');
@@ -378,7 +380,7 @@ test.describe('LFT: Long-Form Test', () => {
     const gridContentFailure = !gridContentCheck.hasContent ? 1 : 0;
     if (gridContentFailure) results.totalContentFailures++;
 
-    // Check for flicker after grid settles
+    // Check for flicker after grid settles - should be 0 after visual stability wait
     await page.waitForTimeout(500);
     const gridSettled = await page.screenshot({ type: 'png' });
     const gridSettledB64 = gridSettled.toString('base64');
@@ -416,7 +418,7 @@ test.describe('LFT: Long-Form Test', () => {
       // Go home first
       viewer.viewport.goHome(false);
     });
-    await page.waitForTimeout(500);
+    await waitForFullyLoaded(page, 5000);
 
     // Pan to center of page 1, then zoom to quarter-page
     await page.evaluate(() => {
@@ -450,7 +452,9 @@ test.describe('LFT: Long-Form Test', () => {
       viewer.viewport.zoomTo(quarterPageZoom, undefined, false);
     });
 
-    await page.waitForTimeout(1500);
+    // Detail view: wait for visual stability (high-res tiles loading)
+    await waitForFullyLoaded(page, 15000, 500);
+    await waitForVisualStability(page, { timeout: 10000, interval: 500, threshold: 2 });
     const afterDetail = await page.screenshot({ type: 'png' });
     const afterDetailB64 = afterDetail.toString('base64');
     const afterDetailPath = saveScreenshot(afterDetail, 'p4-detail-after.png');
@@ -460,7 +464,7 @@ test.describe('LFT: Long-Form Test', () => {
     const detailContentFailure = !detailContentCheck.hasContent ? 1 : 0;
     if (detailContentFailure) results.totalContentFailures++;
 
-    // Check for flicker after detail settles
+    // Check for flicker after detail settles - should be 0 after visual stability wait
     await page.waitForTimeout(500);
     const detailSettled = await page.screenshot({ type: 'png' });
     const detailSettledB64 = detailSettled.toString('base64');
