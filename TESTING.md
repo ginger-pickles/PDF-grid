@@ -85,8 +85,10 @@ npm run test:report      # View HTML report
 ## Diagnostics API
 
 ```javascript
-window.__PDFGridDiagnostics.getCacheStats()     // Cache sizes
-window.__PDFGridDiagnostics.getMemoryEstimate() // Memory estimate (MB)
-window.__PDFGridDiagnostics.getCurrentZoom()    // Current zoom level
-window.__PDFGridDiagnostics.clearCaches()       // Clear all caches
+window.__PDFGridDiagnostics.getCacheStats()       // Cache sizes
+window.__PDFGridDiagnostics.getMemoryEstimate()   // Memory estimate (MB)
+window.__PDFGridDiagnostics.getCurrentZoom()      // Current zoom level
+window.__PDFGridDiagnostics.clearCaches()         // Clear all caches
+window.__PDFGridDiagnostics.getLastDrawnAnalysis() // OSD lastDrawn tiles + quality issues
+window.__PDFGridDiagnostics.getDrawnPriorityPages() // Pages to prioritize based on lastDrawn
 ```

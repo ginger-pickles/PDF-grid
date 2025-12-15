@@ -56,6 +56,7 @@ Comprehensive flicker detection using page screenshots.
 | **V2**: Composition Integrity | Incomplete tiles delivered with missing/wrong-res pages | Abort + queue in `pendingJobs` until all pages ready |
 | **V3**: Reset Elimination | `tiledImage.reset()` caused flicker | Removed; tiles wait instead of reset + retry |
 | **V12**: Resolution Fallback | Wrong-res tiles cached and stuck | No fallback; OSD scales lower levels while waiting |
+| **V13**: lastDrawn Feedback | Viewport prediction inaccurate; pages rendered for wrong tiles | Use OSD `lastDrawn` as feed-forward (priority) and feed-back (quality) |
 
 ---
 

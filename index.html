@@ -1019,7 +1019,7 @@ SETPOINT
 
           /**
            * Process render queue in viewport-priority order
-           * Visible pages render first, off-screen pages later
+           * Uses OSD lastDrawn as feed-forward signal: pages for visible tiles get highest priority
            */
           async processRenderQueue() {
             if (this.renderQueue.size === 0) return;
@@ -1039,6 +1039,14 @@ SETPOINT
               return;
             }
 
+            // Feed-forward: Get pages that OSD is actively trying to draw but are missing
+            // These get highest priority (distance = -1)
+            const drawnPrioritySet = new Set();
+            if (window.tileStreamerRef?.getDrawnPriorityPages) {
+              const drawnPriority = window.tileStreamerRef.getDrawnPriorityPages();
+              drawnPriority.forEach(p => drawnPrioritySet.add(`${p.pageNum}_${p.resolution}`));
+            }
+
             // Get viewport center
             const bounds = viewer.viewport.getBounds();
             const centerX = bounds.x + bounds.width / 2;
@@ -1050,6 +1058,14 @@ SETPOINT
             const numRows = Math.ceil(numPages / gridSize);
 
             requests.forEach(req => {
+              const key = `${req.pageNum}_${req.resolution}`;
+
+              // Pages in lastDrawn incomplete tiles get highest priority
+              if (drawnPrioritySet.has(key)) {
+                req.distance = -1; // Highest priority
+                return;
+              }
+
               const pageIndex = req.pageNum - 1;
               const row = Math.floor(pageIndex / gridSize);
               const col = pageIndex % gridSize;
@@ -1065,7 +1081,7 @@ SETPOINT
               );
             });
 
-            // Sort by distance (closest first)
+            // Sort by distance (closest first, -1 = highest priority)
             requests.sort((a, b) => a.distance - b.distance);
 
             if (CONFIG.VERBOSE_LOGGING) {
@@ -1981,6 +1997,109 @@ SETPOINT
             }
 
             return issues;
+          }
+
+          /**
+           * Get OSD's lastDrawn tiles with analysis
+           * Feed-forward: What tiles does OSD currently need?
+           * Feed-back: Are those tiles at correct resolution?
+           * @returns {Object} { tiles, pagesNeeded, qualityIssues }
+           */
+          getLastDrawnAnalysis() {
+            if (!window.osdViewerRef?.world) {
+              return { tiles: [], pagesNeeded: [], qualityIssues: [] };
+            }
+
+            const tiledImage = window.osdViewerRef.world.getItemAt(0);
+            if (!tiledImage?._lastDrawn) {
+              return { tiles: [], pagesNeeded: [], qualityIssues: [] };
+            }
+
+            const ts = this.tileStreamer;
+            const lastDrawn = tiledImage._lastDrawn;
+            const tiles = [];
+            const pagesNeededSet = new Set();
+            const qualityIssues = [];
+
+            for (const tile of lastDrawn) {
+              if (!tile.loaded) continue;
+
+              const level = tile.level;
+              const x = tile.x;
+              const y = tile.y;
+
+              // Calculate which pages this tile needs
+              const scale = Math.pow(2, level - ts.maxLevel);
+              const tileWidthInGrid = ts.tileWidth / scale;
+              const tileHeightInGrid = ts.tileHeight / scale;
+              const tileLeft = x * tileWidthInGrid;
+              const tileTop = y * tileHeightInGrid;
+              const tileRight = Math.min(tileLeft + tileWidthInGrid, ts.gridDims.totalWidth);
+              const tileBottom = Math.min(tileTop + tileHeightInGrid, ts.gridDims.totalHeight);
+
+              const neededPages = ts._calculateIntersectingPages(tileLeft, tileTop, tileRight, tileBottom);
+              const expectedResolution = level <= ts.minimapMaxLevel ? 'low' : 'high';
+
+              // Feed-forward: collect pages needed for visible tiles
+              neededPages.forEach(p => pagesNeededSet.add(`${p}_${expectedResolution}`));
+
+              // Feed-back: check if tile is at correct resolution
+              const pageCache = ts.pageStreamer._getPageCache(expectedResolution);
+              const missingPages = neededPages.filter(p => !pageCache.has(`${p}_${expectedResolution}`));
+
+              const tileInfo = {
+                level, x, y,
+                key: `L${level}(${x},${y})`,
+                neededPages,
+                expectedResolution,
+                missingPages,
+                isComplete: missingPages.length === 0
+              };
+              tiles.push(tileInfo);
+
+              // Quality issue: tile visible but missing pages (blurry/incomplete)
+              if (missingPages.length > 0) {
+                qualityIssues.push({
+                  ...tileInfo,
+                  issue: 'incomplete',
+                  description: `Tile at L${level} missing ${missingPages.length} ${expectedResolution}-res pages`
+                });
+              }
+            }
+
+            // Convert Set to sorted array
+            const pagesNeeded = Array.from(pagesNeededSet).map(key => {
+              const [pageNum, resolution] = key.split('_');
+              return { pageNum: parseInt(pageNum), resolution };
+            }).sort((a, b) => a.pageNum - b.pageNum);
+
+            return { tiles, pagesNeeded, qualityIssues };
+          }
+
+          /**
+           * Get priority pages based on what OSD is actually drawing
+           * More accurate than viewport prediction - uses actual tile requests
+           * @returns {Array<{pageNum, resolution}>} Pages to prioritize, in order
+           */
+          getDrawnPriorityPages() {
+            const { pagesNeeded, qualityIssues } = this.getLastDrawnAnalysis();
+
+            // Prioritize pages for incomplete tiles (they're visible but blurry)
+            const incompletePages = new Set();
+            qualityIssues.forEach(issue => {
+              issue.missingPages.forEach(p => incompletePages.add(`${p}_${issue.expectedResolution}`));
+            });
+
+            // Sort: incomplete tiles first (visible but wrong), then other needed pages
+            return pagesNeeded.sort((a, b) => {
+              const aKey = `${a.pageNum}_${a.resolution}`;
+              const bKey = `${b.pageNum}_${b.resolution}`;
+              const aIncomplete = incompletePages.has(aKey);
+              const bIncomplete = incompletePages.has(bKey);
+              if (aIncomplete && !bIncomplete) return -1;
+              if (!aIncomplete && bIncomplete) return 1;
+              return a.pageNum - b.pageNum;
+            });
           }
         }
 
@@ -3679,6 +3798,20 @@ SETPOINT
            */
           _identifyRequiredTiles(level) {
             return this.qualityInspector._identifyRequiredTiles(level);
+          }
+
+          /**
+           * Get lastDrawn analysis - feed-forward and feed-back signals
+           */
+          getLastDrawnAnalysis() {
+            return this.qualityInspector.getLastDrawnAnalysis();
+          }
+
+          /**
+           * Get priority pages based on what OSD is actually drawing
+           */
+          getDrawnPriorityPages() {
+            return this.qualityInspector.getDrawnPriorityPages();
           }
 
           /**
@@ -5744,6 +5877,21 @@ SETPOINT
                 const visible = tileStreamer.getVisibleTiles();
                 console.log(`[Viewport Query] Found ${visible.length} visible tiles`);
                 return visible;
+              },
+              // Get OSD lastDrawn analysis (feed-forward and feed-back signals)
+              getLastDrawnAnalysis: () => {
+                if (!tileStreamer) {
+                  console.error('[LastDrawn] TileStreamer not available');
+                  return { tiles: [], pagesNeeded: [], qualityIssues: [] };
+                }
+                return tileStreamer.getLastDrawnAnalysis();
+              },
+              // Get priority pages based on what OSD is actually drawing
+              getDrawnPriorityPages: () => {
+                if (!tileStreamer) {
+                  return [];
+                }
+                return tileStreamer.getDrawnPriorityPages();
               }
             };
 
