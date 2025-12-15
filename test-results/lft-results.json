@@ -1,7 +1,7 @@
 {
   "testType": "lft",
-  "pdf": "demo/ginger-pickles.pdf",
-  "timestamp": "2025-12-02T03:53:49.459Z",
+  "pdf": "demo/test-pattern.pdf",
+  "timestamp": "2025-12-15T01:01:35.699Z",
   "viewport": {
     "width": 375,
     "height": 667
@@ -9,20 +9,20 @@
   "phases": [
     {
       "name": "Phase 1: Load",
-      "duration": 7252,
+      "duration": 8310,
       "flickers": 0,
       "note": "Content building during load",
       "diffs": [
+        2.8,
         0.2,
         0.2,
-        39.7,
         0.2,
-        21.3,
-        3.8,
-        0.9,
-        0.9,
-        0.9,
-        0.1,
+        2.5,
+        2.5,
+        2.5,
+        2.5,
+        0,
+        0,
         0
       ],
       "screenshots": [
@@ -31,7 +31,7 @@
           "file": "screenshots/p1-load-01.png"
         },
         {
-          "label": "+500ms (0.2%)",
+          "label": "+500ms (2.8%)",
           "file": "screenshots/p1-load-02.png"
         },
         {
@@ -39,7 +39,7 @@
           "file": "screenshots/p1-load-03.png"
         },
         {
-          "label": "+1000ms (39.7%)",
+          "label": "+1000ms (0.2%)",
           "file": "screenshots/p1-load-04.png"
         },
         {
@@ -47,27 +47,27 @@
           "file": "screenshots/p1-load-05.png"
         },
         {
-          "label": "+1500ms (21.3%)",
+          "label": "+1500ms (2.5%)",
           "file": "screenshots/p1-load-06.png"
         },
         {
-          "label": "+1750ms (3.8%)",
+          "label": "+1750ms (2.5%)",
           "file": "screenshots/p1-load-07.png"
         },
         {
-          "label": "+2000ms (0.9%)",
+          "label": "+2000ms (2.5%)",
           "file": "screenshots/p1-load-08.png"
         },
         {
-          "label": "+2250ms (0.9%)",
+          "label": "+2250ms (2.5%)",
           "file": "screenshots/p1-load-09.png"
         },
         {
-          "label": "+2500ms (0.9%)",
+          "label": "+2500ms (0.0%)",
           "file": "screenshots/p1-load-10.png"
         },
         {
-          "label": "+2750ms (0.1%)",
+          "label": "+2750ms (0.0%)",
           "file": "screenshots/p1-load-11.png"
         },
         {
@@ -77,8 +77,8 @@
       ]
     },
     {
-      "name": "Phase 2: Settle (Flicker Check)",
-      "duration": 3496,
+      "name": "Phase 1A: Settle",
+      "duration": 3149,
       "flickers": 0,
       "threshold": 5,
       "diffs": [
@@ -95,49 +95,161 @@
       "screenshots": [
         {
           "label": "+250ms (baseline)",
-          "file": "screenshots/p2-settle-01.png"
+          "file": "screenshots/p1a-settle-01.png"
         },
         {
           "label": "+500ms (0.0%)",
-          "file": "screenshots/p2-settle-02.png"
+          "file": "screenshots/p1a-settle-02.png"
         },
         {
           "label": "+750ms (0.0%)",
-          "file": "screenshots/p2-settle-03.png"
+          "file": "screenshots/p1a-settle-03.png"
         },
         {
           "label": "+1000ms (0.0%)",
-          "file": "screenshots/p2-settle-04.png"
+          "file": "screenshots/p1a-settle-04.png"
         },
         {
           "label": "+1250ms (0.0%)",
-          "file": "screenshots/p2-settle-05.png"
+          "file": "screenshots/p1a-settle-05.png"
         },
         {
           "label": "+1500ms (0.0%)",
-          "file": "screenshots/p2-settle-06.png"
+          "file": "screenshots/p1a-settle-06.png"
         },
         {
           "label": "+1750ms (0.0%)",
-          "file": "screenshots/p2-settle-07.png"
+          "file": "screenshots/p1a-settle-07.png"
         },
         {
           "label": "+2000ms (0.0%)",
-          "file": "screenshots/p2-settle-08.png"
+          "file": "screenshots/p1a-settle-08.png"
         },
         {
           "label": "+2250ms (0.0%)",
-          "file": "screenshots/p2-settle-09.png"
+          "file": "screenshots/p1a-settle-09.png"
         },
         {
           "label": "+2500ms (0.0%)",
-          "file": "screenshots/p2-settle-10.png"
+          "file": "screenshots/p1a-settle-10.png"
+        }
+      ]
+    },
+    {
+      "name": "Phase 2: Pan",
+      "duration": 5713,
+      "flickers": 0,
+      "contentFailures": 0,
+      "note": "Pan top to middle in 4 steps, verify content visible, check stability",
+      "diffs": [
+        90.1,
+        89.4,
+        90.1
+      ],
+      "settleDiff": 0,
+      "contentChecks": [
+        {
+          "hasContent": true,
+          "uniqueColors": 1056,
+          "nonBgPercent": 93.1
+        },
+        {
+          "hasContent": true,
+          "uniqueColors": 1084,
+          "nonBgPercent": 97.4
+        },
+        {
+          "hasContent": true,
+          "uniqueColors": 1132,
+          "nonBgPercent": 97.2
+        },
+        {
+          "hasContent": true,
+          "uniqueColors": 1108,
+          "nonBgPercent": 97.1
+        }
+      ],
+      "screenshots": [
+        {
+          "label": "Pan 1/4: y=0.15 (baseline, 93.1% content)",
+          "file": "screenshots/p2-pan-01.png"
+        },
+        {
+          "label": "Pan 2/4: y=0.32 (90.1%, 97.4% content)",
+          "file": "screenshots/p2-pan-02.png"
+        },
+        {
+          "label": "Pan 3/4: y=0.48 (89.4%, 97.2% content)",
+          "file": "screenshots/p2-pan-03.png"
+        },
+        {
+          "label": "Pan 4/4: y=0.65 (90.1%, 97.1% content)",
+          "file": "screenshots/p2-pan-04.png"
+        }
+      ]
+    },
+    {
+      "name": "Phase 3: Grid Overview",
+      "duration": 2295,
+      "flickers": 0,
+      "contentFailures": 0,
+      "note": "Zoom to show all pages, verify content visible",
+      "diffs": [
+        0
+      ],
+      "contentCheck": {
+        "hasContent": true,
+        "uniqueColors": 1452,
+        "nonBgPercent": 60.4
+      },
+      "screenshots": [
+        {
+          "label": "Before",
+          "file": "screenshots/p3-grid-before.png"
+        },
+        {
+          "label": "After (1.5s) (60.4% content)",
+          "file": "screenshots/p3-grid-after.png"
+        },
+        {
+          "label": "Settled (+0.5s) (0.0%)",
+          "file": "screenshots/p3-grid-settled.png"
+        }
+      ]
+    },
+    {
+      "name": "Phase 4: Detail Zoom",
+      "duration": 2751,
+      "flickers": 0,
+      "contentFailures": 0,
+      "note": "Zoom to quarter-page detail on page 1, verify content visible",
+      "diffs": [
+        0
+      ],
+      "contentCheck": {
+        "hasContent": true,
+        "uniqueColors": 949,
+        "nonBgPercent": 99
+      },
+      "screenshots": [
+        {
+          "label": "Before",
+          "file": "screenshots/p4-detail-before.png"
+        },
+        {
+          "label": "After (1.5s) (99% content)",
+          "file": "screenshots/p4-detail-after.png"
+        },
+        {
+          "label": "Settled (+0.5s) (0.0%)",
+          "file": "screenshots/p4-detail-settled.png"
         }
       ]
     }
   ],
   "errors": [],
   "totalFlickers": 0,
-  "totalDuration": 10748,
+  "totalContentFailures": 0,
+  "totalDuration": 22219,
   "passed": true
 }
