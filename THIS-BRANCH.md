@@ -174,6 +174,42 @@ viewer.addHandler('tile-load-failed', function(event) {
 
 ---
 
+## Performance Opportunities
+
+### Current Pipeline
+
+```
+PDF.js → Canvas → JPEG → Image Cache → Tile Composition → JPEG → Tile Cache → OSD
+         ^                                    ^
+         |                                    |
+   Semaphore throttled              Single shared canvas
+   (5 high-res, 10 low-res)         iterates ALL grid cells
+```
+
+### Analysis (2025-12-19)
+
+| Area | Current | Opportunity | Impact |
+|------|---------|-------------|--------|
+| **Grid periodicity** | Full grid scan per tile | Pre-compute repeating patterns | High - O(n²) → O(1) |
+| **Canvas pooling** | New canvas per render | Reuse pool of canvases | Medium - reduce GC |
+| **Web Workers** | Main thread renders | OffscreenCanvas in workers | High - unblock UI |
+| **Spatial indexing** | O(rows×cols) per tile | R-tree or grid hash | Medium - faster lookups |
+| **Tile batching** | One tile at a time | Batch tiles sharing pages | Medium - reduce lookups |
+
+### Quick Wins
+
+1. Tune semaphore limits based on device capability
+2. Prefetch pages for tiles OSD will request next (extrapolate from lastDrawn)
+3. Reduce JPEG quality for minimap tiles (currently same as high-res)
+
+### Deeper Work
+
+1. **Exploit periodicity** - diagonal pattern repeats; tiles at equivalent positions share identical page combinations
+2. **Canvas pooling** - avoid allocation churn during page rendering
+3. **Web Worker offloading** - requires OffscreenCanvas support
+
+---
+
 ## Code Analysis
 
 ### Dead Code Removed
