@@ -16,7 +16,6 @@ const { PNG } = require('pngjs');
 const GridOracle = require('../lib/grid-oracle.js');
 
 const TEST_PDF = process.env.TEST_PDF || 'demo/test-pattern.pdf';
-const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
 const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
 const VIEWPORT = { width: 375, height: 667 };
@@ -370,7 +369,7 @@ test.describe('SFT: Short-Form Test', () => {
     });
 
     // === LOAD ===
-    await page.goto(`${BASE_URL}/?pdf=${TEST_PDF}`);
+    await page.goto(`/?pdf=${TEST_PDF}`);
     await page.waitForFunction(() => window.viewer && window.tileStreamerRef, { timeout: 30000 });
 
     // === PHASE 1: INITIAL VIEW ===

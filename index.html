@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
 ================================================================================
-  PDF GRID VIEWER v1.10.2
+  PDF GRID VIEWER v1.11.1
 ================================================================================
 
 SETPOINT
@@ -153,9 +153,6 @@ SETPOINT
           TILE_LABELS: false,  // Enable custom tile labels (level numbers and cache keys)
           VERBOSE_LOGGING: false, // Enable verbose console logging for cache operations
           DEBUG_INITIAL_VIEW_WHOLE_GRID: false, // Show entire grid on load (true) or center on page 1 (false)
-
-          // Auto-load
-          AUTO_LOAD_PDF: null, // Set to null to disable auto-load, or filename to try loading
 
           // CORS Proxy for external PDFs
           // Use when loading PDFs from servers that don't send CORS headers
@@ -4260,12 +4257,11 @@ SETPOINT
             };
           }, []); // Empty deps - stable listener, uses functional update to avoid stale closure
 
-          // Auto-load PDF on mount
-          // Separated concerns: URL parameters always work, config auto-load is optional
+          // Load PDF on mount: URL parameters or restore from previous session
           React.useEffect(() => {
             let mounted = true; // Track if component is still mounted
 
-            // Handle URL parameters - ALWAYS runs (independent of CONFIG.AUTO_LOAD_PDF)
+            // Handle URL parameters (?url= or ?pdf=)
             const handleURLParameters = async () => {
               if (!mounted) return false; // Exit if unmounted
               const { url: urlParam, pdf: pdfParam } = URLManager.getParams();
@@ -4391,46 +4387,16 @@ SETPOINT
               return false; // No stored PDF or failed to restore
             };
 
-            // Auto-load demo PDF - ONLY runs if CONFIG.AUTO_LOAD_PDF is set
-            const autoLoadDemo = async () => {
-              if (!mounted) return; // Exit if unmounted
-
-              if (!CONFIG.AUTO_LOAD_PDF) {
-                if (CONFIG.VERBOSE_LOGGING) console.log('No PDF to auto-load. Waiting for manual upload or URL parameters.');
-                return;
-              }
-
-              // Skip auto-load for file:// protocol (browser security restrictions)
-              if (window.location.protocol === 'file:') {
-                if (CONFIG.VERBOSE_LOGGING) console.log('Auto-load disabled for file:// protocol. Please serve via HTTP (e.g., python -m http.server) to use auto-load, or drag & drop a PDF to get started.');
-                return;
-              }
-
-              try {
-                if (CONFIG.VERBOSE_LOGGING) console.log(`Attempting to auto-load demo: ${CONFIG.AUTO_LOAD_PDF}`);
-                if (!mounted) return; // Check before async operation
-                await loadPDFFromURL(CONFIG.AUTO_LOAD_PDF, false, true); // skipHistory=false, suppressAlerts=true
-              } catch (error) {
-                if (CONFIG.VERBOSE_LOGGING) console.log(`Auto-load failed (${error.message}). Waiting for manual upload.`);
-                // Silently fail - user can upload manually
-              }
-            };
-
-            // Run loading sequence
+            // Run loading sequence: URL parameters first, then try restoring from storage
             (async () => {
-              if (!mounted) return; // Check at start
+              if (!mounted) return;
 
-              // First, check for URL parameters (highest priority, always runs)
+              // First, check for URL parameters (highest priority)
               const handledByURL = await handleURLParameters();
               if (!mounted || handledByURL) return;
 
-              // Second, try to restore stored PDF from previous session (always runs)
-              const restoredFromStorage = await restoreStoredPDF();
-              if (!mounted || restoredFromStorage) return;
-
-              // Finally, auto-load demo if configured (only if CONFIG.AUTO_LOAD_PDF is set)
-              if (!mounted) return;
-              await autoLoadDemo();
+              // Second, try to restore stored PDF from previous session
+              await restoreStoredPDF();
             })();
 
             // Cleanup function - mark component as unmounted
@@ -5399,7 +5365,7 @@ SETPOINT
               setIsLoading(false);
               setLoadingStatus('');
               if (error.message !== 'Loading cancelled by user') {
-                throw error; // Re-throw for auto-load handler
+                throw error; // Re-throw for caller to handle
               }
             }
           };

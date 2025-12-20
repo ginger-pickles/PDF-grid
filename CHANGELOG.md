@@ -4,6 +4,32 @@ Notable changes to PDF Grid Viewer.
 
 ---
 
+## [1.11.1] - 2025-12-19
+
+### Changed
+- **Modal page dimensions** - Grid layout now uses most common page size across document
+  - Samples multiple pages to find modal (most common) dimensions
+  - Handles mixed-size PDFs (cover pages, landscape pages, appendices)
+- **Event-based test waiting** - Replaced arbitrary timeouts with `fullyLoaded` event
+  - New `waitForVisualStability()` helper compares consecutive screenshots
+  - Tests now wait for actual tile completion, not fixed delays
+- **Simplified auto-loading** - Removed CONFIG.AUTO_LOAD_PDF demo feature
+  - Loading sequence: URL parameters → restore from session storage
+- **Test infrastructure** - Tests now use nginx server (pdf.cats.local)
+  - Configurable via `TEST_BASE_URL` environment variable
+
+### Added
+- **lastDrawn feedback** - Feed-forward and feed-back signals from OSD tile drawing
+  - `getLastDrawnAnalysis()` - tile visibility and quality issues
+  - `getDrawnPriorityPages()` - prioritize pages OSD is actively drawing
+  - Integrated into render queue for smarter tile priority
+
+### Removed
+- Dead code: `_scheduleReset()`, fallback status check in `getVisibleTiles()`
+- Historical docs archived to `tests/posterity/`
+
+---
+
 ## [1.11.0] - 2025-11-30
 
 ### Changed

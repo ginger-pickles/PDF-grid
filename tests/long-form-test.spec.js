@@ -15,7 +15,6 @@ const fs = require('fs');
 const path = require('path');
 
 const TEST_PDF = process.env.TEST_PDF || 'demo/test-pattern.pdf';
-const BASE_URL = 'http://localhost:8000';
 const RESULTS_DIR = path.join(__dirname, '..', 'test-results');
 const SCREENSHOTS_DIR = path.join(RESULTS_DIR, 'screenshots');
 const FLICKER_THRESHOLD = 5; // % of pixels changed to count as flicker
@@ -163,7 +162,7 @@ test.describe('LFT: Long-Form Test', () => {
 
     // === PHASE 1: LOAD ===
     const p1Start = Date.now();
-    await page.goto(`${BASE_URL}/?pdf=${TEST_PDF}&nav`);
+    await page.goto(`/?pdf=${TEST_PDF}&nav`);
     await page.waitForFunction(() => window.viewer && window.tileStreamerRef, { timeout: 30000 });
 
     const loadShots = [];

@@ -35,8 +35,8 @@ module.exports = defineConfig({
 
   // Shared settings for all the projects below
   use: {
-    // Base URL for tests (assumes dev server running on port 8000)
-    baseURL: 'http://localhost:8000',
+    // Base URL for tests (nginx server or override with TEST_BASE_URL env var)
+    baseURL: process.env.TEST_BASE_URL || 'http://pdf.cats.local',
 
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
